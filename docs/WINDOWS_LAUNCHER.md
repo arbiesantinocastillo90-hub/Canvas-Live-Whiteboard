@@ -22,7 +22,7 @@ Canvas Live/
 
 You can move or copy this complete folder. Close the launcher before moving or replacing its folder. Double-clicking the executable again reopens the same running instance. Closing the browser tab leaves the local server running. Right-click the Canvas Live icon in the Windows tray and choose **Close Canvas Live** to stop it. The tray icon may be in the tray's overflow area.
 
-The usual address is `http://127.0.0.1:4173/`. If that port is occupied, the launcher chooses an available local port and opens that address. This is a local website on your laptop. The package now includes themes, Options, Projects and Work; see [UI_WORKSPACE.md](UI_WORKSPACE.md) for the latest behavior. Drawing, canvas document saving and AI editing remain upcoming features.
+The usual address is `http://127.0.0.1:4173/`. If that port is occupied, the launcher chooses an available local port and opens that address. This is a local website on your laptop. The package includes themes, Options, Projects, Work and the LCANVAS file organizer/viewer; see [LCANVAS.md](LCANVAS.md). Files and preferences belong to the browser origin, including the port. Export LCANVAS backups to transfer them between browsers/ports; moving this folder does not transfer browser data. Drawing and AI editing remain upcoming features.
 
 ## Build and test
 

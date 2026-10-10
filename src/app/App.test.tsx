@@ -67,7 +67,7 @@ describe('workspace navigation and appearance', () => {
       screen.getByRole('heading', { name: 'New roadmap', level: 1 }),
     ).toBeInTheDocument()
     expect(
-      screen.getByText(/Canvas editing and file saving are not available yet/),
+      screen.getByText(/Drawing and AI editing are the next steps/),
     ).toBeInTheDocument()
   })
 
@@ -118,7 +118,7 @@ describe('workspace navigation and appearance', () => {
     expect(
       screen.getByRole('heading', { name: 'My project', level: 1 }),
     ).toBeInTheDocument()
-    expect(document.querySelector('.canvas-placeholder')).toHaveAttribute(
+    expect(document.querySelector('.viewer-empty')).toHaveAttribute(
       'data-grid',
       'lines',
     )

@@ -34,7 +34,9 @@ Open `http://127.0.0.1:5173`. Dev startup uses a strict port; if it is occupied,
 
 The suite now includes workspace metadata validation/storage tests and UI flows for project creation, naming, reopening, search, theme persistence/reset, live system appearance and unavailable storage. It checks the supplied logo reference and keeps canvas editing/AI states explicit. These tests verify the section/theme behavior, not drawing or AI control. See [UI_WORKSPACE.md](UI_WORKSPACE.md) for actual results and browser checks.
 
-There are no canvas document persistence, MCP, synchronization or automated real-browser end-to-end tests yet because those features have not been implemented. Browser-local project metadata is tested separately. jsdom does not verify browser rendering or engine history; this update also receives a browser UI check. Future canvas features require their own runtime tests.
+The LCANVAS suite adds strict import/export validation, project-scoped file storage with a transaction fixture, reload and quota/session recovery, atomic opening metadata, pan/zoom bounds, navigation history and component flows for files/tabs/panels/current AI context. A 125-file test verifies that the earlier project-count cap does not become a file-count cap. Native browser IndexedDB receives a separate browser reload smoke check; the transaction fixture is not a substitute for native browser verification. See [LCANVAS.md](LCANVAS.md).
+
+There are no MCP, synchronization or automated real-browser end-to-end tests yet. jsdom does not verify browser rendering or drawing-engine history. Actual browser checks and the final executed test totals are recorded in the LCANVAS task report. Drawing and AI features require separate runtime tests.
 
 The Windows launcher has a separate integration test. Run `npm.cmd run package:windows`, then `npm.cmd run test:launcher`. It copies the package to a temporary folder with spaces and checks startup from an unrelated working directory, packaged assets/notices, HTTP restrictions, occupied-port fallback, repeated launch, restart recovery and missing-file errors. The executed result was **24 passed checks**. It uses `--no-browser` and force-stops its own processes; it does not exercise the tray's Close action or observe the operating system's default-browser window. See [WINDOWS_LAUNCHER.md](WINDOWS_LAUNCHER.md) for the normal-launch browser check and coverage limits.
 
@@ -47,3 +49,5 @@ The Windows launcher has a separate integration test. Run `npm.cmd run package:w
 - This checkout is on a filesystem without recorded ownership. For scoped Git commands, use `git -c safe.directory='D:/Canvas OS/Canvas Live (Project)/Canvas-Live-Whiteboard' ...`; no wildcard exception is needed.
 
 Actual executed results, resolved failures and remaining scope are recorded in [MILESTONE_0.md](MILESTONE_0.md).
+
+The current LCANVAS viewer result is **129 passed application tests** and **24 passed launcher checks**, plus a native-browser save/reload/import/export smoke check. See [LCANVAS_VERIFICATION.md](LCANVAS_VERIFICATION.md).

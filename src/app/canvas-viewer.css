@@ -1,0 +1,167 @@
+.canvas-viewer {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 52px;
+  grid-template-rows: minmax(0, 1fr) auto;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 280px;
+  overflow: hidden;
+  color: var(--ink);
+  background: var(--panel);
+}
+.lcanvas-stage {
+  position: relative;
+  overflow: hidden;
+  min-width: 0;
+  min-height: 0;
+  cursor: grab;
+  touch-action: none;
+  background-color: var(--panel);
+  background-size: var(--canvas-grid-size) var(--canvas-grid-size);
+  background-position: var(--canvas-grid-x) var(--canvas-grid-y);
+}
+.lcanvas-stage[data-grid='dots'] {
+  background-image: radial-gradient(var(--grid) 1px, transparent 1px);
+}
+.lcanvas-stage[data-grid='lines'] {
+  background-image:
+    linear-gradient(var(--grid) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+}
+.lcanvas-stage[data-dragging='true'] {
+  cursor: grabbing;
+}
+.lcanvas-stage:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -3px;
+}
+.lcanvas-drawing {
+  display: block;
+  width: 100%;
+  height: 100%;
+  user-select: none;
+}
+.lcanvas-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 10px;
+  padding: 32px;
+  pointer-events: none;
+  text-align: center;
+  user-select: none;
+}
+.lcanvas-empty-symbol {
+  width: 54px;
+  height: 54px;
+  display: grid;
+  place-items: center;
+  font-size: 29px;
+  border-radius: 16px;
+  border: 1px solid var(--line);
+  color: var(--accent-text);
+  background: var(--tint);
+}
+.lcanvas-empty h2 {
+  margin: 8px 0 0;
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: -0.5px;
+}
+.lcanvas-empty p,
+.lcanvas-empty small {
+  margin: 0;
+  max-width: 300px;
+  color: var(--muted);
+  line-height: 1.6;
+}
+.lcanvas-empty p {
+  font-size: 13px;
+}
+.lcanvas-empty small {
+  font-size: 11px;
+}
+.canvas-view-rail {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 7px;
+  padding: 14px 6px;
+  border-left: 1px solid var(--line);
+  background: var(--rail);
+}
+.canvas-view-rail button {
+  width: 38px;
+  height: 38px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  color: var(--ink);
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: transparent;
+}
+.canvas-view-rail button:hover:not(:disabled),
+.canvas-view-rail button.active {
+  border-color: var(--line);
+  color: var(--accent-text);
+  background: var(--tint);
+}
+.canvas-view-rail button:focus-visible {
+  outline-offset: 0;
+}
+.canvas-view-rail button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.canvas-rail-divider {
+  width: 22px;
+  height: 1px;
+  margin: 5px 0;
+  background: var(--line);
+}
+.canvas-rail-spacer {
+  flex: 1;
+  min-height: 16px;
+}
+.canvas-view-status {
+  grid-column: 1 / -1;
+  min-height: 35px;
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  padding: 8px 13px;
+  border-top: 1px solid var(--line);
+  background: var(--rail);
+  color: var(--muted);
+  font-size: 10px;
+}
+.canvas-view-status p {
+  flex: 1;
+  margin: 0;
+}
+.canvas-view-status span {
+  white-space: nowrap;
+}
+.canvas-view-status output {
+  min-width: 34px;
+  color: var(--ink);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+@media (max-width: 600px) {
+  .canvas-view-status p {
+    font-size: 0;
+  }
+  .canvas-view-status p::after {
+    content: 'Drag to pan · Scroll to zoom';
+    font-size: 10px;
+  }
+  .lcanvas-empty {
+    padding: 20px;
+  }
+}

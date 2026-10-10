@@ -1,5 +1,6 @@
 import { useEffect, useState, type CSSProperties } from 'react'
 import AppearanceOptions from './AppearanceOptions'
+import FileWorkspace from './FileWorkspace'
 import Icon from './Icon'
 import ProjectDialog from './ProjectDialog'
 import {
@@ -353,108 +354,47 @@ export default function App() {
               <div className="section-footnote">
                 <Icon name="device" />
                 <p>
-                  Your project list stays on this device. Canvas editing and
-                  LCANVAS files are coming next.
+                  Each project organizes its LCANVAS files. Import, view and
+                  export your canvases from Work.
                 </p>
               </div>
             </section>
           )}
-          {section === 'work' && (
-            <section className="page work-page" aria-labelledby="work-title">
-              {activeProject ? (
-                <>
-                  <div className="page-heading">
-                    <div>
-                      <p className="eyebrow">Back to your ideas</p>
-                      <h1 id="work-title">{activeProject.name}</h1>
-                      <p className="page-description">
-                        A little room to think. A little space to explore.
-                      </p>
-                    </div>
-                    <button
-                      className="button secondary"
-                      onClick={() =>
-                        setPrompt({ kind: 'rename', project: activeProject })
-                      }
-                    >
-                      <Icon name="edit" />
-                      Rename project
-                    </button>
-                  </div>
-                  <div className="canvas-preview">
-                    <div className="canvas-header">
-                      <span>
-                        <Icon name="canvas" />
-                        Your canvas
-                      </span>
-                      <span className="preview-label">Preview</span>
-                    </div>
-                    <div
-                      className="canvas-placeholder"
-                      data-grid={workspace.preferences.grid}
-                    >
-                      <div className="canvas-empty-card">
-                        <span className="canvas-empty-icon">
-                          <Icon name="canvas" />
-                        </span>
-                        <h2>Room for what’s next.</h2>
-                        <p>
-                          This is your project’s canvas preview.
-                          <br />
-                          Drawing tools and canvas controls are coming next.
-                        </p>
-                      </div>
-                      <span className="canvas-corner-label">CANVAS LIVE</span>
-                    </div>
-                    <div className="canvas-footer">
-                      <span className="status-dot" />
-                      <p>
-                        {storageError
-                          ? 'Project name kept in this session'
-                          : 'Project name remembered'}{' '}
-                        · Canvas editing and file saving are not available yet.
-                      </p>
-                    </div>
-                  </div>
-                  <div className="work-note">
-                    <Icon name="folder" />
-                    <span>Looking for another idea?</span>
-                    <button
-                      className="text-button"
-                      onClick={() => navigate('projects')}
-                    >
-                      Browse your projects
-                      <Icon name="arrow" />
-                    </button>
-                  </div>
-                </>
-              ) : (
-                <>
-                  <p className="eyebrow">Your work space</p>
-                  <h1 id="work-title">
-                    A fresh start<span className="heading-dot">.</span>
-                  </h1>
-                  <div className="empty-projects work-empty">
-                    <span className="canvas-empty-icon">
-                      <Icon name="work" />
-                    </span>
-                    <h2>Your latest project will open here.</h2>
-                    <p>
-                      Create a project to get started. Work will bring you back
-                      to the last project you opened.
-                    </p>
-                    <button
-                      className="button primary"
-                      onClick={() => setPrompt({ kind: 'create' })}
-                    >
-                      <Icon name="plus" />
-                      Create project
-                    </button>
-                  </div>
-                </>
-              )}
-            </section>
-          )}
+          {section === 'work' &&
+            (activeProject ? (
+              <FileWorkspace
+                key={activeProject.id}
+                project={activeProject}
+                preferences={workspace.preferences}
+                onRenameProject={() =>
+                  setPrompt({ kind: 'rename', project: activeProject })
+                }
+              />
+            ) : (
+              <section className="page work-page" aria-labelledby="work-title">
+                <p className="eyebrow">Your work space</p>
+                <h1 id="work-title">
+                  A fresh start<span className="heading-dot">.</span>
+                </h1>
+                <div className="empty-projects work-empty">
+                  <span className="canvas-empty-icon">
+                    <Icon name="work" />
+                  </span>
+                  <h2>Your latest project will open here.</h2>
+                  <p>
+                    Create a project to get started. Work will bring you back to
+                    the last project you opened.
+                  </p>
+                  <button
+                    className="button primary"
+                    onClick={() => setPrompt({ kind: 'create' })}
+                  >
+                    <Icon name="plus" />
+                    Create project
+                  </button>
+                </div>
+              </section>
+            ))}
         </main>
         <footer className="workspace-footer">
           <span>Space to explore. Room to connect.</span>

@@ -34,6 +34,15 @@
 - Use the owner's supplied logo PNG unchanged in the sidebar and favicon. Preserve the original bytes and verify their hash. The executable's existing Windows icon is unchanged in this task.
 - Use a clean physical C: verification copy with the same lockfile and exact final source after D: test-worker startup timeouts. Record source equality and actual command results; do not present earlier startup failures as executed assertions.
 
+## 2026-10-10 — LCANVAS viewing and project file containers
+
+- The owner requested many LCANVAS files per project and focused this step on viewing. Add a strict independent LCANVAS v1 JSON format and original SVG viewer, keeping the drawing-engine proof pending. No dependencies or paid services were added.
+- Store files individually in IndexedDB, indexed and validated by project. Retain the existing v1 project/theme metadata without migration or replacement. Storage failures produce an explicitly labelled session overlay; LCANVAS export is the portable backup.
+- Support blank creation, validated multi-file import, naming, tabs, a collapsible file explorer and workspace AI context. Closing a tab or panel never deletes files. The AI panel reports disconnected/unavailable state because there is no MCP service yet.
+- Keep Undo view, Reset view, Redo view and zoom controls on the right rail independently of the AI panel. History applies to navigation only; drawing, object mutations and engine/agent undo remain future work. Viewport changes use explicit Save; new/imported files and names save immediately.
+- Bound imports to 10 MiB, 5,000 supported objects, finite geometry and plain text; reject unknown fields/types/versions instead of losing unsupported data. No fixed file-count cap is imposed. Browser quota/device memory remain practical limits.
+- Preserve browser-origin storage boundaries, including launcher fallback ports. Export/import transfers files between origins; the executable folder does not contain the browser library. Cross-tab conflict resolution and project-folder persistence are not implemented.
+
 ## Remaining open decisions
 
 - Whether SIL OFL 1.1 is acceptable specifically for engine fonts, or a supported replacement is needed.

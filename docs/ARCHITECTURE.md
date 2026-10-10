@@ -6,7 +6,11 @@
 
 Vite serves the app on loopback. Vitest uses the same React plugin with a jsdom test environment. TypeScript checks application and configuration code; Oxlint and Prettier provide code/format checks. `scripts/check-licenses.mjs` generates an inventory from the resolved dependency lockfile and flags unknown/unaccepted license metadata.
 
-There is no canvas-engine integration, canvas document storage, MCP service or communication bridge yet. Browser metadata remembers names and recent openings; it is separate from future LCANVAS saving/import. See [UI_WORKSPACE.md](UI_WORKSPACE.md) for the current data boundary and verification.
+`FileWorkspace.tsx` organizes project-scoped files, open tabs, name dialogs, import/export, explicit view saving and panel context. `lcanvas.ts` validates the independent, versioned LCANVAS viewing format. `canvasFiles.ts` stores each record in IndexedDB with a project index and checks ownership on every read/write. Failed storage retains a session overlay and reports the limitation. Existing localStorage v1 project/theme metadata is unchanged. Files have no arbitrary count cap; document size and element counts are bounded. There is no cross-tab conflict resolution yet.
+
+`CanvasViewer.tsx` renders validated shapes and literal text in SVG. `canvasViewport.ts` implements bounded pan/zoom and navigation history, independent of any MCP transport. Closing tabs never deletes files. View changes stay in memory until Save; export includes the current view. Reopening Work restores the most recently opened saved file, while additional tabs and undo history are session state. See [LCANVAS.md](LCANVAS.md) for the contract.
+
+There is no drawing-engine integration, MCP service or communication bridge yet. The collapsible AI panel reports the current project/file and an unavailable MCP service; it sends no document data. This bounded file viewer does not replace the pending engine evaluation.
 
 ## Implemented Windows launcher
 
@@ -14,7 +18,7 @@ There is no canvas-engine integration, canvas document storage, MCP service or c
 
 The launcher hosts an exact whitelist of packaged static files through a loopback-only TCP listener, then asks Windows to open the local URL in the default browser. It supports GET/HEAD, validates Host and paths, bounds headers and simultaneous connections, and provides a read-only instance health endpoint. A per-user, per-folder mutex and health check make repeated launches reopen the existing instance. A Windows tray menu provides Open and Close actions. Its endpoint/error files live under `%LOCALAPPDATA%/Canvas Live/launchers/<package-key>`.
 
-The preferred port is 4173; an occupied port selects an available loopback port. Future browser persistence must account for the different origin when a port changes. The launcher has no board mutation, filesystem browsing, shell execution or MCP endpoint. A later authenticated bridge must be designed and tested separately. Implementation details and executed checks are in [WINDOWS_LAUNCHER.md](WINDOWS_LAUNCHER.md).
+The preferred port is 4173; an occupied port selects an available loopback port. Browser metadata and IndexedDB files are scoped to that origin, including the port; a fallback port opens a separate file library. LCANVAS exports are portable backups. The launcher has no board mutation, filesystem browsing, shell execution or MCP endpoint. A later authenticated bridge must be designed and tested separately. Implementation details and executed checks are in [WINDOWS_LAUNCHER.md](WINDOWS_LAUNCHER.md).
 
 ## Later architecture under evaluation
 

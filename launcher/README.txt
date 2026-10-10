@@ -18,5 +18,9 @@ If that port is busy, Canvas Live chooses another local port automatically.
 
 This package includes Options, Projects, Work, and customizable themes.
 Appearance preferences and project names are remembered in this browser.
-Drawing, canvas saving, LCANVAS files, and AI editing are still upcoming features.
+Each project organizes multiple LCANVAS files with create, import, save and export.
+Canvas viewing includes pan, zoom, navigation undo/redo, tabs and closable panels.
+Files stay in this browser's local storage. Export .lcanvas copies for portable backups.
+A different browser or local port opens a separate file library.
+Drawing and AI editing are still upcoming features. The AI/MCP panel reports disconnected.
 Original project code is MIT licensed; keep the included license notices with the folder.
