@@ -17,6 +17,15 @@
 - Use system fonts and locally authored CSS decorations. No redistributed font/icon packages are installed. Excalidraw remains outside the scaffold until its font policy and runtime proof are resolved.
 - Keep `docs/INSPECTION.md` as the historical initial inspection; these current decisions and roadmap supersede its resolved setup blockers. Copy current milestone findings to `D:\Canvas Live` after verification, without assuming automatic synchronization.
 
+## 2026-10-09 — Requested Windows executable
+
+- The owner requested an executable inside a folder that opens the website directly. Build a portable folder containing a small native launcher and the current production website.
+- Use Windows' installed .NET Framework 4.8 runtime/compiler for the launcher. This avoids bundling Node.js or introducing another dependency. Original launcher code remains under the project's MIT license; the Microsoft runtime is not redistributed.
+- Serve only packaged static files over loopback and open the URL through Windows' default browser handler. Keep this launcher separate from the future MCP bridge and canvas operations.
+- Prefer port 4173 and fall back to an available local port when occupied. This is intentional for the packaged launcher; development and Vite preview retain strict ports. Revisit browser-origin stability when persistence is implemented.
+- Retain prior package folders during rebuilds. Use staging, verified in-folder paths, same-directory renames and a final executable check. Explicitly ignore both `release` and `dist` directory roots/descendants in the Vite watcher to prevent the observed Windows packaging lock.
+- Record the 24 executed integration checks and distinguish forced-process shutdown from the untested tray Close action. See [WINDOWS_LAUNCHER.md](WINDOWS_LAUNCHER.md).
+
 ## Open decisions
 
 - Whether SIL OFL 1.1 is acceptable specifically for engine fonts, or a supported replacement is needed.

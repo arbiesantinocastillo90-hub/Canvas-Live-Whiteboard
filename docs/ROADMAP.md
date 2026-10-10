@@ -17,3 +17,5 @@ The owner authorized initiation of the Milestone 0–1 plan on 2026-10-09. Work 
 Milestone 1 should verify labelled shapes, arrows, stable-ID edits, round-trip restoration, and mixed manual/programmatic undo/redo. Excalidraw adoption requires a documented result, including bundled-font notices; its MIT code license alone is insufficient for that gate.
 
 The current preview is a startup shell, not an editable or persistent whiteboard. No future milestone is implied complete by a working build.
+
+The owner also requested a Windows executable. The completed portable launcher opens the current preview from `release/Canvas Live/Canvas Live.exe`; see [WINDOWS_LAUNCHER.md](WINDOWS_LAUNCHER.md) for its 24-check verification and limits. Milestone 1 remains the next engine task.

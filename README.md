@@ -12,12 +12,19 @@ Milestone 0 provides a React/TypeScript app shell and development checks. The pr
 - [Roadmap](docs/ROADMAP.md)
 - [Setup and testing](docs/TESTING.md)
 - [Milestone 0 verification results](docs/MILESTONE_0.md)
+- [Windows executable and verification](docs/WINDOWS_LAUNCHER.md)
 - [Architecture](docs/ARCHITECTURE.md)
 - [Dependencies and licenses](docs/LICENSES.md)
 
 Project brain: `D:\Canvas Live`. Initial AI client: ChatGPT. The MVP is local-first and single-user, with external AI editing through MCP. Multi-user collaboration is a later milestone.
 
 ## Run on Windows
+
+For the packaged version, open `release/Canvas Live` and double-click **Canvas Live.exe**. It starts the local website and opens your default browser. Keep the complete folder together, including `app/` and the executable configuration file. This package runs without Node.js or a terminal. Right-click its Windows tray icon and choose **Close Canvas Live** when finished.
+
+The package contains the current foundation preview. Drawing, saving and AI editing remain upcoming features. See [WINDOWS_LAUNCHER.md](docs/WINDOWS_LAUNCHER.md) for rebuilding, testing and verification limits.
+
+### Development
 
 Install Node.js 24 LTS (24.15 or newer in the 24.x line), then use PowerShell in the repository:
 

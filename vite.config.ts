@@ -9,7 +9,9 @@ export default defineConfig({
     host: '127.0.0.1',
     port: 5173,
     strictPort: true,
-    watch: { ignored: ['**/dist', '**/dist/**'] },
+    watch: {
+      ignored: ['**/dist', '**/dist/**', '**/release', '**/release/**'],
+    },
   },
   preview: { host: '127.0.0.1', port: 4173, strictPort: true },
   test: {
