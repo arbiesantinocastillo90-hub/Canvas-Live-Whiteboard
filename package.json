@@ -1,0 +1,45 @@
+{
+  "name": "canvas-live-whiteboard",
+  "private": true,
+  "version": "0.1.0",
+  "description": "A local-first whiteboard foundation for external AI collaboration.",
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=24.15.0 <25"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "npm run licenses && tsc -b && vite build && node scripts/package-notices.mjs",
+    "preview": "vite preview",
+    "package:windows": "npm run build && powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/package-windows.ps1",
+    "typecheck": "tsc -b",
+    "lint": "oxlint src tests scripts vite.config.ts --deny-warnings",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:launcher": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/test-windows-launcher.ps1",
+    "licenses": "node scripts/check-licenses.mjs",
+    "check": "npm run typecheck && npm run lint && npm run format:check && npm run test && npm run build"
+  },
+  "dependencies": {
+    "react": "19.3.0",
+    "react-dom": "19.3.0"
+  },
+  "devDependencies": {
+    "@testing-library/dom": "10.4.2",
+    "@testing-library/jest-dom": "7.0.1",
+    "@testing-library/react": "16.3.3",
+    "@types/node": "24.19.2",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@vitejs/plugin-react": "5.2.0",
+    "jsdom": "30.1.2",
+    "oxlint": "1.87.0",
+    "prettier": "3.9.9",
+    "typescript": "6.0.3",
+    "vite": "7.3.7",
+    "vitest": "5.0.3"
+  }
+}
