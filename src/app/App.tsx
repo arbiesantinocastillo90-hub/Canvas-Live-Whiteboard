@@ -1,6 +1,7 @@
 import { useEffect, useState, type CSSProperties } from 'react'
 import AppearanceOptions from './AppearanceOptions'
 import FileWorkspace from './FileWorkspace'
+import { useCanvasDraftProtection } from './canvasDrafts'
 import Icon from './Icon'
 import ProjectDialog from './ProjectDialog'
 import {
@@ -39,6 +40,7 @@ function openedDate(timestamp: number) {
 }
 
 export default function App() {
+  useCanvasDraftProtection()
   const [workspace, setWorkspace] = useState(loadWorkspace)
   const [section, setSection] = useState<Section>(() =>
     workspace.lastProjectId ? 'work' : 'projects',
@@ -46,6 +48,7 @@ export default function App() {
   const [prompt, setPrompt] = useState<ProjectPrompt | null>(null)
   const [search, setSearch] = useState('')
   const [storageError, setStorageError] = useState(false)
+  const [canvasFocused, setCanvasFocused] = useState(false)
   const [systemDark, setSystemDark] = useState(
     () => window.matchMedia?.('(prefers-color-scheme: dark)').matches ?? false,
   )
@@ -115,12 +118,18 @@ export default function App() {
       data-theme={theme}
       data-density={workspace.preferences.density}
       data-motion={workspace.preferences.reduceMotion ? 'reduced' : 'normal'}
+      data-focused={canvasFocused}
       style={colors}
     >
       <a className="skip-link" href="#main-content">
         Skip to content
       </a>
-      <aside className="sidebar" aria-label="Workspace sidebar">
+      <aside
+        className="sidebar"
+        aria-label="Workspace sidebar"
+        inert={canvasFocused}
+        aria-hidden={canvasFocused}
+      >
         <a className="brand" href="/" aria-label="Canvas Live home">
           <span className="brand-mark">
             <img src="/canvas-live-logo.png" alt="" />
@@ -366,6 +375,7 @@ export default function App() {
                 key={activeProject.id}
                 project={activeProject}
                 preferences={workspace.preferences}
+                onFocusChange={setCanvasFocused}
                 onRenameProject={() =>
                   setPrompt({ kind: 'rename', project: activeProject })
                 }

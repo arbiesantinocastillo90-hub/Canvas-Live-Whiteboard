@@ -22,7 +22,7 @@ Canvas Live/
 
 You can move or copy this complete folder. Close the launcher before moving or replacing its folder. Double-clicking the executable again reopens the same running instance. Closing the browser tab leaves the local server running. Right-click the Canvas Live icon in the Windows tray and choose **Close Canvas Live** to stop it. The tray icon may be in the tray's overflow area.
 
-The usual address is `http://127.0.0.1:4173/`. If that port is occupied, the launcher chooses an available local port and opens that address. This is a local website on your laptop. The package includes themes, Options, Projects, Work and the LCANVAS file organizer/viewer; see [LCANVAS.md](LCANVAS.md). Files and preferences belong to the browser origin, including the port. Export LCANVAS backups to transfer them between browsers/ports; moving this folder does not transfer browser data. Drawing and AI editing remain upcoming features.
+The usual address is `http://127.0.0.1:4173/`. If that port is occupied, the launcher chooses an available local port and opens that address. This is a local website on your laptop. The package includes themes, Options, Projects, Work and the LCANVAS file organizer/editor; see [LCANVAS.md](LCANVAS.md). Files and preferences belong to the browser origin, including the port. Export LCANVAS backups to transfer them between browsers/ports; moving this folder does not transfer browser data. Manual shapes, text, areas, layers and connections are available; live AI editing remains upcoming. See [EDITOR.md](EDITOR.md).
 
 ## Build and test
 
@@ -59,3 +59,7 @@ A normal launch of the final executable also started the server at port 4173. Th
 The integration tests use `--no-browser` and force-stop only their own launcher processes. They verify listening-port release after termination, but do not exercise the tray menu's graceful Close action. They do not prove drawing, persistence, AI editing or ChatGPT connectivity.
 
 Rebuilding while Vite watched generated release folders initially caused a Windows folder lock, allowing a move operation to nest the staged package in the output folder. This was resolved by excluding the roots and descendants of both `dist` and `release` from the watcher, using same-directory renames for package placement, and checking the final executable before reporting success. Packaging was then verified with the development server running, followed by the successful 24-check run. Existing packages were retained.
+
+## Editor package verification — 2026-10-10
+
+The executable folder was rebuilt with the verified LCANVAS v2 editor. All **24 launcher integration checks** passed again, and the packaged website passed **16 isolated Chrome scenarios** covering editing, fullscreen, layers, areas, connections, Save/reload and v1 import/v2 export. The application passed **203 tests**, types, lint, formatting, the unchanged dependency-license gate and production build. See [EDITOR_VERIFICATION.md](EDITOR_VERIFICATION.md) for evidence and remaining scope. Default-browser opening and the tray's graceful Close action were not retested in this step.

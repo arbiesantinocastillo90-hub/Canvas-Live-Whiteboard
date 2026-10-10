@@ -50,6 +50,10 @@ describe('canvas view navigation', () => {
         height: 100,
         color: '#000000',
         fill: null,
+        text: '',
+        fontSize: 20,
+        layerId: 'layer-main',
+        areaId: null,
       },
       {
         id: 'line',
@@ -59,6 +63,8 @@ describe('canvas view navigation', () => {
         x2: 0,
         y2: 10,
         color: '#000000',
+        layerId: 'layer-main',
+        areaId: null,
       },
     ]
     const view = fitView(elements, 400, 300, 20)
@@ -82,6 +88,10 @@ describe('canvas view navigation', () => {
         height: 1_000_000,
         color: '#000000',
         fill: null,
+        text: '',
+        fontSize: 20,
+        layerId: 'layer-main',
+        areaId: null,
       },
     ]
     expect(fitView(elements, 20, 20).zoom).toBe(0.1)
@@ -94,6 +104,8 @@ describe('canvas view navigation', () => {
         x2: 1_000_000,
         y2: 1_000_000,
         color: '#000000',
+        layerId: 'layer-main',
+        areaId: null,
       },
     ]
     expect(fitView(one, 1_000, 1_000)).toEqual({

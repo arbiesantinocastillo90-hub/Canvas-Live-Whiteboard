@@ -9,6 +9,11 @@ import {
   type CanvasDocument,
   type CanvasElement,
 } from './lcanvas'
+import {
+  assignElementArea,
+  connectElements,
+  createElement,
+} from './canvasOperations'
 
 function populatedDocument(): CanvasDocument {
   return {
@@ -24,6 +29,10 @@ function populatedDocument(): CanvasDocument {
         height: 80,
         color: '#123aBc',
         fill: null,
+        text: '',
+        fontSize: 20,
+        layerId: 'layer-main',
+        areaId: null,
       },
       {
         id: 'ellipse',
@@ -34,6 +43,10 @@ function populatedDocument(): CanvasDocument {
         height: 80,
         color: '#000000',
         fill: '#FFFFFF',
+        text: 'Within a shape',
+        fontSize: 20,
+        layerId: 'layer-main',
+        areaId: null,
       },
       {
         id: 'label',
@@ -45,6 +58,8 @@ function populatedDocument(): CanvasDocument {
         text: '<script>literal</script>\nSecond line\t✓',
         color: '#AABBCC',
         fontSize: 24,
+        layerId: 'layer-main',
+        areaId: null,
       },
       {
         id: 'edge',
@@ -54,12 +69,160 @@ function populatedDocument(): CanvasDocument {
         x2: 250,
         y2: -70,
         color: '#FF0000',
+        layerId: 'layer-main',
+        areaId: null,
       },
     ],
   }
 }
 
-describe('LCANVAS version 1', () => {
+describe('LCANVAS version 2', () => {
+  it('migrates validated version 1 shapes, labels, lines and view into Main without mutating input', () => {
+    const legacy = {
+      format: 'LCANVAS',
+      version: 1,
+      name: 'Old',
+      viewport: { x: 30, y: 90, zoom: 2 },
+      elements: [
+        {
+          id: 'old-shape',
+          type: 'rectangle',
+          x: 10,
+          y: 20,
+          width: 100,
+          height: 90,
+          color: '#112233',
+          fill: null,
+        },
+        {
+          id: 'old-text',
+          type: 'text',
+          x: -10,
+          y: -20,
+          width: 100,
+          height: 90,
+          color: '#112233',
+          text: 'Preserved',
+          fontSize: 32,
+        },
+        {
+          id: 'old-line',
+          type: 'line',
+          x: 0,
+          y: 10,
+          x2: 90,
+          y2: -80,
+          color: '#112233',
+        },
+      ],
+    }
+    const original = JSON.stringify(legacy)
+    const migrated = parseLCANVAS(original)
+    expect(migrated.version).toBe(2)
+    expect(migrated.viewport).toEqual(legacy.viewport)
+    expect(migrated.layers).toEqual([
+      { id: 'layer-main', name: 'Main', visible: true, locked: false },
+    ])
+    expect(migrated.elements[0]).toMatchObject({
+      ...legacy.elements[0],
+      text: '',
+      fontSize: 20,
+      layerId: 'layer-main',
+      areaId: null,
+    })
+    expect(migrated.elements[1]).toMatchObject(legacy.elements[1])
+    expect(JSON.stringify(legacy)).toBe(original)
+    expect(parseLCANVAS(serializeLCANVAS(migrated))).toEqual(migrated)
+    expect(() =>
+      validateCanvasDocument({
+        ...legacy,
+        elements: [{ ...legacy.elements[0], onclick: 'bad' }],
+      }),
+    ).toThrow()
+  })
+
+  it('round-trips diamond labels, area relationships, explicit layers and bound connection styles', () => {
+    let document = createCanvasDocument('Organized')
+    document = createElement(document, {
+      id: 'area',
+      type: 'area',
+      x: 0,
+      y: 0,
+      width: 600,
+      height: 500,
+      name: 'Planning',
+      fill: '#102030',
+    })
+    document = createElement(document, {
+      id: 'diamond',
+      type: 'diamond',
+      x: 40,
+      y: 70,
+      width: 140,
+      height: 100,
+      text: 'Decision',
+      areaId: 'area',
+    })
+    document = createElement(document, {
+      id: 'text',
+      type: 'text',
+      x: 300,
+      y: 70,
+      width: 140,
+      height: 100,
+      text: 'Result',
+      areaId: 'area',
+    })
+    document = connectElements(document, 'diamond', 'text', {
+      id: 'connection',
+      style: 'elbow',
+      startArrow: true,
+      endArrow: false,
+      areaId: 'area',
+    })
+    expect(parseLCANVAS(serializeLCANVAS(document))).toEqual(document)
+  })
+
+  it('rejects unknown layers, empty layers, duplicate layers, nesting and dangling bound connections', () => {
+    const document = populatedDocument()
+    expect(() => validateCanvasDocument({ ...document, layers: [] })).toThrow(
+      '1–100',
+    )
+    expect(() =>
+      validateCanvasDocument({
+        ...document,
+        layers: [document.layers[0], document.layers[0]],
+      }),
+    ).toThrow('duplicate')
+    expect(() =>
+      validateCanvasDocument({
+        ...document,
+        elements: [{ ...document.elements[0], layerId: 'missing' }],
+      }),
+    ).toThrow('unknown layer')
+    expect(() => connectElements(document, 'rect', 'missing')).toThrow(
+      'no longer exists',
+    )
+    const withArea = createElement(document, {
+      id: 'area',
+      type: 'area',
+      x: -100,
+      y: -100,
+      width: 600,
+      height: 600,
+    })
+    expect(() => assignElementArea(withArea, 'area', 'area')).toThrow('nested')
+    expect(() => assignElementArea(withArea, 'rect', 'missing')).toThrow(
+      'no longer exists',
+    )
+    const nestedArea = { ...withArea.elements.at(-1), areaId: 'area' }
+    expect(() =>
+      validateCanvasDocument({
+        ...withArea,
+        elements: [...document.elements, nestedArea],
+      }),
+    ).toThrow('nested')
+  })
   it('round-trips every supported element and viewport without executing text', () => {
     const document = populatedDocument()
     expect(parseLCANVAS(serializeLCANVAS(document))).toEqual(document)
@@ -78,10 +241,13 @@ describe('LCANVAS version 1', () => {
     expect(source.elements[0].color).toBe('#123aBc')
     expect(createCanvasDocument('  First  ')).toEqual({
       format: 'LCANVAS',
-      version: 1,
+      version: 2,
       name: 'First',
       viewport: { x: 0, y: 0, zoom: 1 },
       elements: [],
+      layers: [
+        { id: 'layer-main', name: 'Main', visible: true, locked: false },
+      ],
     })
   })
 
@@ -90,7 +256,7 @@ describe('LCANVAS version 1', () => {
     (raw) => expect(() => parseLCANVAS(raw)).toThrow(),
   )
 
-  it.each([0, 2, '1', null])('rejects unsupported versions: %j', (version) => {
+  it.each([0, 3, '1', null])('rejects unsupported versions: %j', (version) => {
     expect(() =>
       validateCanvasDocument({ ...populatedDocument(), version }),
     ).toThrow('version is not supported')
@@ -210,6 +376,8 @@ describe('LCANVAS version 1', () => {
         color: '#000000',
         fontSize: 16,
         text,
+        layerId: 'layer-main',
+        areaId: null,
       })),
     }
     const serialized = serializeLCANVAS(document)

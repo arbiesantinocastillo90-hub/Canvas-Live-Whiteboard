@@ -1,4 +1,11 @@
-import { act, fireEvent, render, screen, within } from '@testing-library/react'
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import App from './App'
 import { STORAGE_KEY, createProject, EMPTY_STATE } from './workspace'
@@ -14,11 +21,89 @@ function createNamedProject(name: string) {
   )
 }
 
+async function createEditableCanvas() {
+  createNamedProject('Editing project')
+  await waitFor(() =>
+    expect(
+      screen.getAllByRole('button', { name: 'New canvas' })[0],
+    ).toBeEnabled(),
+  )
+  fireEvent.click(screen.getAllByRole('button', { name: 'New canvas' })[0])
+  fireEvent.change(screen.getByLabelText('Canvas name'), {
+    target: { value: 'Editing canvas' },
+  })
+  fireEvent.click(screen.getByRole('button', { name: 'Create canvas' }))
+  await screen.findByRole('button', { name: 'Add rectangle' })
+}
+
 describe('workspace navigation and appearance', () => {
   beforeEach(() => {
     localStorage.clear()
     vi.restoreAllMocks()
     vi.unstubAllGlobals()
+  })
+
+  it('protects unsaved canvas edits while Options is open and restores them on return', async () => {
+    render(<App />)
+    await createEditableCanvas()
+    fireEvent.click(screen.getByRole('button', { name: 'Add ellipse' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Options' }))
+    const unload = new Event('beforeunload', { cancelable: true })
+    fireEvent(window, unload)
+    expect(unload.defaultPrevented).toBe(true)
+    fireEvent.click(screen.getByRole('button', { name: 'Work' }))
+    await screen.findByLabelText('Editing canvas: 1 visible objects')
+    expect(
+      screen.getByText('Unsaved changes · Save to remember'),
+    ).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() =>
+      expect(
+        screen.queryByText('Unsaved changes · Save to remember'),
+      ).not.toBeInTheDocument(),
+    )
+    const cleanUnload = new Event('beforeunload', { cancelable: true })
+    fireEvent(window, cleanUnload)
+    expect(cleanUnload.defaultPrevented).toBe(false)
+  })
+
+  it('focuses the current file while keeping editing and save controls available, then restores navigation', async () => {
+    const view = render(<App />)
+    await createEditableCanvas()
+    const fullScreen = screen.getByRole('button', {
+      name: 'Full screen canvas',
+    })
+    fullScreen.focus()
+    fireEvent.click(fullScreen)
+    expect(view.container.firstChild).toHaveAttribute('data-focused', 'true')
+    expect(view.container.querySelector('.sidebar')).toHaveAttribute('inert')
+    expect(
+      screen.queryByRole('complementary', { name: 'Project files' }),
+    ).not.toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: 'Exit full screen' }),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: 'Add rectangle' }),
+    ).toBeInTheDocument()
+    const focusHeader = view.container.querySelector(
+      '.focus-file-header',
+    ) as HTMLElement
+    expect(
+      within(focusHeader).getByRole('button', { name: 'Save' }),
+    ).toBeEnabled()
+    expect(
+      within(focusHeader).getByRole('button', { name: 'Export' }),
+    ).toBeEnabled()
+    fireEvent.keyDown(window, { key: 'Escape' })
+    expect(view.container.firstChild).toHaveAttribute('data-focused', 'false')
+    expect(view.container.querySelector('.sidebar')).not.toHaveAttribute(
+      'inert',
+    )
+    expect(fullScreen).toHaveFocus()
+    expect(
+      screen.getByRole('complementary', { name: 'Project files' }),
+    ).toBeInTheDocument()
   })
 
   it('starts with genuine empty projects, navigation and the supplied logo', () => {
@@ -66,9 +151,7 @@ describe('workspace navigation and appearance', () => {
     expect(
       screen.getByRole('heading', { name: 'New roadmap', level: 1 }),
     ).toBeInTheDocument()
-    expect(
-      screen.getByText(/Drawing and AI editing are the next steps/),
-    ).toBeInTheDocument()
+    expect(screen.getByText(/LCANVAS editor · Add shapes/)).toBeInTheDocument()
   })
 
   it('filters projects and clears an empty search', () => {

@@ -15,7 +15,11 @@ import {
   type CanvasFileResult,
   type CanvasFileStore,
 } from './canvasFiles'
-import { createCanvasDocument, serializeLCANVAS } from './lcanvas'
+import {
+  createCanvasDocument,
+  DEFAULT_LAYER_ID,
+  serializeLCANVAS,
+} from './lcanvas'
 import { DEFAULT_PREFERENCES, type Project } from './workspace'
 
 const project: Project = {
@@ -125,6 +129,10 @@ describe('LCANVAS project workspace', () => {
         {
           id: 'rectangle',
           type: 'rectangle' as const,
+          layerId: DEFAULT_LAYER_ID,
+          areaId: null,
+          text: '',
+          fontSize: 18,
           x: 10,
           y: 10,
           width: 120,
@@ -139,7 +147,7 @@ describe('LCANVAS project workspace', () => {
         files: [
           upload('diagram.LCANVAS', serializeLCANVAS(imported)),
           upload('broken.lcanvas', '{'),
-          upload('future.lcanvas', JSON.stringify({ ...imported, version: 2 })),
+          upload('future.lcanvas', JSON.stringify({ ...imported, version: 3 })),
         ],
       },
     })
@@ -155,7 +163,7 @@ describe('LCANVAS project workspace', () => {
       screen.getByRole('button', { name: 'Open canvas Existing canvas' }),
     ).toBeInTheDocument()
     expect(
-      screen.getByRole('img', { name: 'Imported diagram: 1 objects' }),
+      screen.getByLabelText('Imported diagram: 1 visible objects'),
     ).toBeInTheDocument()
     const records = (await store.list(project.id)).value
     expect(records).toHaveLength(2)
@@ -279,13 +287,7 @@ describe('LCANVAS project workspace', () => {
     expect(
       screen.queryByRole('complementary', { name: 'Workspace AI' }),
     ).not.toBeInTheDocument()
-    for (const name of [
-      'Undo view',
-      'Reset view',
-      'Redo view',
-      'Zoom in',
-      'Zoom out',
-    ])
+    for (const name of ['Undo', 'Reset view', 'Redo', 'Zoom in', 'Zoom out'])
       expect(screen.getByRole('button', { name })).toBeVisible()
     fireEvent.click(
       screen.getByRole('button', { name: 'Open AI workspace panel' }),
@@ -313,22 +315,22 @@ describe('LCANVAS project workspace', () => {
     const view = await mount(store)
     fireEvent.click(screen.getByRole('button', { name: 'Zoom in' }))
     expect(
-      screen.getByText('View changed · Save to remember'),
+      screen.getByText('Unsaved changes · Save to remember'),
     ).toBeInTheDocument()
     expect(screen.getByLabelText('Canvas zoom')).toHaveTextContent('120%')
     expect(
       (await store.get(project.id, 'first')).value?.document.viewport.zoom,
     ).toBe(1)
-    fireEvent.click(screen.getByRole('button', { name: 'Undo view' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Undo' }))
     expect(
-      screen.queryByText('View changed · Save to remember'),
+      screen.queryByText('Unsaved changes · Save to remember'),
     ).not.toBeInTheDocument()
     expect(screen.getByLabelText('Canvas zoom')).toHaveTextContent('100%')
     fireEvent.click(screen.getByRole('button', { name: 'Zoom out' }))
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
     await waitFor(() =>
       expect(
-        screen.queryByText('View changed · Save to remember'),
+        screen.queryByText('Unsaved changes · Save to remember'),
       ).not.toBeInTheDocument(),
     )
     const saved = (await store.get(project.id, 'first')).value
@@ -336,10 +338,79 @@ describe('LCANVAS project workspace', () => {
     view.unmount()
     await mount(store)
     expect(screen.getByLabelText('Canvas zoom')).toHaveTextContent('83%')
-    expect(screen.getByRole('button', { name: 'Undo view' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Undo' })).toBeDisabled()
     expect(
       screen.getByText('Session only · Export a backup'),
     ).toBeInTheDocument()
+  })
+
+  it('saves actual canvas edits and reopens the same objects, labels and layers', async () => {
+    const store = createCanvasFileStore({ indexedDB: null })
+    await store.save(canvas('First canvas', 'first'))
+    const view = await mount(store)
+    fireEvent.click(screen.getByRole('button', { name: 'Add rectangle' }))
+    expect(
+      screen.getByText('Unsaved changes · Save to remember'),
+    ).toBeInTheDocument()
+    expect(
+      (await store.get(project.id, 'first')).value?.document.elements,
+    ).toHaveLength(0)
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Open object properties' }),
+    )
+    fireEvent.change(screen.getByLabelText('Text inside shape'), {
+      target: { value: 'First milestone' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Apply properties' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() =>
+      expect(
+        screen.queryByText('Unsaved changes · Save to remember'),
+      ).not.toBeInTheDocument(),
+    )
+    const saved = (await store.get(project.id, 'first')).value?.document
+    expect(saved?.version).toBe(2)
+    expect(saved?.elements[0]).toMatchObject({
+      type: 'rectangle',
+      text: 'First milestone',
+      layerId: DEFAULT_LAYER_ID,
+    })
+    view.unmount()
+    await mount(store)
+    expect(
+      screen.getByRole('button', { name: 'rectangle First milestone' }),
+    ).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Undo' })).toBeDisabled()
+  })
+
+  it('retains unsaved content through navigation and warns before a reload until saved', async () => {
+    const store = createCanvasFileStore({ indexedDB: null })
+    await store.save(canvas('First canvas', 'first'))
+    const view = await mount(store)
+    fireEvent.click(screen.getByRole('button', { name: 'Add diamond' }))
+    const unload = new Event('beforeunload', { cancelable: true })
+    fireEvent(window, unload)
+    expect(unload.defaultPrevented).toBe(true)
+    view.unmount()
+    await mount(store)
+    expect(
+      screen.getByLabelText('First canvas: 1 visible objects'),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByText('Unsaved changes · Save to remember'),
+    ).toBeInTheDocument()
+    expect(
+      (await store.get(project.id, 'first')).value?.document.elements,
+    ).toHaveLength(0)
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() =>
+      expect(
+        screen.queryByText('Unsaved changes · Save to remember'),
+      ).not.toBeInTheDocument(),
+    )
+    const cleanUnload = new Event('beforeunload', { cancelable: true })
+    fireEvent(window, cleanUnload)
+    expect(cleanUnload.defaultPrevented).toBe(false)
   })
 
   it('ignores a previous project load that finishes after switching to another keyed workspace', async () => {

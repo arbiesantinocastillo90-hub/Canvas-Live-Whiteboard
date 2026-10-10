@@ -6,11 +6,13 @@
 
 Vite serves the app on loopback. Vitest uses the same React plugin with a jsdom test environment. TypeScript checks application and configuration code; Oxlint and Prettier provide code/format checks. `scripts/check-licenses.mjs` generates an inventory from the resolved dependency lockfile and flags unknown/unaccepted license metadata.
 
-`FileWorkspace.tsx` organizes project-scoped files, open tabs, name dialogs, import/export, explicit view saving and panel context. `lcanvas.ts` validates the independent, versioned LCANVAS viewing format. `canvasFiles.ts` stores each record in IndexedDB with a project index and checks ownership on every read/write. Failed storage retains a session overlay and reports the limitation. Existing localStorage v1 project/theme metadata is unchanged. Files have no arbitrary count cap; document size and element counts are bounded. There is no cross-tab conflict resolution yet.
+`FileWorkspace.tsx` organizes project-scoped files, open tabs, name dialogs, import/export, explicit document saving and panel context. `lcanvas.ts` validates LCANVAS v2 and migrates valid v1 files in memory. `canvasFiles.ts` stores each record in IndexedDB with a project index and checks ownership on every read/write. Opening a v1 record updates its recency without rewriting its payload; Save writes v2. Failed storage retains a session overlay and reports the limitation. Existing localStorage v1 project/theme metadata is unchanged. Files have no arbitrary count cap; documents are bounded to 10 MiB, 5,000 elements and 100 layers. There is no cross-tab conflict resolution yet.
 
-`CanvasViewer.tsx` renders validated shapes and literal text in SVG. `canvasViewport.ts` implements bounded pan/zoom and navigation history, independent of any MCP transport. Closing tabs never deletes files. View changes stay in memory until Save; export includes the current view. Reopening Work restores the most recently opened saved file, while additional tabs and undo history are session state. See [LCANVAS.md](LCANVAS.md) for the contract.
+`CanvasEditor.tsx` renders original SVG geometry and literal text with pointer and keyboard editing. `CanvasInspector.tsx` applies properties and manages layers. Both use the pure validated `canvasOperations.ts` functions for stable-ID creation, updates, movement, resizing, deletion, containment and connections. Geometry and ordering helpers also serve the retained read-only viewer. `editorHistory.ts` combines content and viewport transactions with at most 100 retained snapshots and a 32 MiB history estimate; large documents retain fewer steps. The operations and history are independent of any MCP transport.
 
-There is no drawing-engine integration, MCP service or communication bridge yet. The collapsible AI panel reports the current project/file and an unavailable MCP service; it sends no document data. This bounded file viewer does not replace the pending engine evaluation.
+Closing tabs never deletes files. Content and view changes stay in memory until Save; export includes the current state. `canvasDrafts.ts` retains unsaved drafts through section/project navigation and protects page unload while the app remains open. Reopening a file starts new undo history. `useCanvasFocus.ts` hides surrounding layout, requests native fullscreen when available, fits the canvas and restores layout on exit; embedded browsers retain an app focus fallback. See [LCANVAS.md](LCANVAS.md) and [EDITOR.md](EDITOR.md).
+
+No third-party drawing engine, MCP service or communication bridge has been adopted. The collapsible AI panel reports the current project/file and unavailable MCP service; it sends no document data. The requested manual editing step extends the existing renderer without new dependencies. Excalidraw licensing/runtime evaluation remains separate from this implemented editor.
 
 ## Implemented Windows launcher
 
@@ -22,7 +24,7 @@ The preferred port is 4173; an occupied port selects an available loopback port.
 
 ## Later architecture under evaluation
 
-The browser will own the active document and editor history. Shared validated operations will serve manual controls and AI requests. A local companion will provide a narrow authenticated bridge to the active board; MCP handlers will forward bounded requests and wait for acknowledged results. Stale document/session revisions and ambiguous active tabs must be rejected.
+The browser already owns the active document, history and shared validated operations. A future local companion will provide a narrow authenticated bridge to the active board; MCP handlers will forward bounded requests to those operations and wait for acknowledged results. Stale document/session revisions and ambiguous active tabs must be rejected.
 
 ChatGPT requires a reachable MCP transport and verified account eligibility. The local development server is not that endpoint. No application component should require paid model inference or a cloud database.
 

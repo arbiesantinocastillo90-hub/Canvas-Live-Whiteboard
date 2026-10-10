@@ -109,6 +109,8 @@ export function fitView(
   let maxX = -Infinity
   let maxY = -Infinity
   for (const element of elements) {
+    // Connections follow their bound objects, whose bounds already cover the view.
+    if (element.type === 'connection') continue
     const right =
       element.type === 'line' ? element.x2 : element.x + element.width
     const bottom =
@@ -118,6 +120,7 @@ export function fitView(
     maxX = Math.max(maxX, element.x, right)
     maxY = Math.max(maxY, element.y, bottom)
   }
+  if (!Number.isFinite(minX)) return { x: 0, y: 0, zoom: 1 }
   const zoom = Math.min(
     MAX_ZOOM,
     Math.max(

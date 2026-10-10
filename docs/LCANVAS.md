@@ -1,103 +1,71 @@
-# LCANVAS files and viewing
+# LCANVAS files
 
-## Current scope
+## Projects and saving
 
-A project organizes multiple `.lcanvas` files. Work opens the most recently opened project; its file explorer lists that project's files. Open files appear as tabs. Closing a tab or either side panel closes the view, without deleting the saved file. The file explorer can reopen a closed file.
+A project organizes multiple `.lcanvas` files. Work returns to the latest project and its most recently opened file. Open files appear as tabs. Closing a tab or panel never deletes a file; the file explorer reopens it.
 
 - **New canvas** creates and stores a blank file in the current project.
-- **Import** accepts one or more supported `.lcanvas` files and stores new copies in that project.
-- **Rename canvas** stores the new name without changing its objects.
-- **Save** stores the current viewport in this browser. The file status reports when a view has changed and still needs saving.
-- **Export** downloads the current file, including its current viewport, as a portable `.lcanvas` copy.
+- **Import** validates supported files and stores new copies in that project.
+- **Rename canvas** stores the new name and current contents.
+- **Save** stores the entire document: objects, layers, membership, connections and viewport. The indicator reports unsaved changes or failed storage.
+- **Export** downloads a portable copy of the current state, including unsaved changes.
 
-New/imported files and names are saved automatically; pan/zoom changes use the explicit Save action. On returning to a project, its most recently opened saved file is selected. The set of open tabs and view-navigation history are session state.
+Edits and navigation require explicit Save. Unsaved drafts survive section/project navigation in the current tab; the app warns before page unload when drafts remain. They are not a durable backup. Opening a different file starts a fresh undo session. See [EDITOR.md](EDITOR.md) for tools, fullscreen, layers and connections.
 
-The viewer displays the supported LCANVAS elements, supports panning and zooming, and keeps its right-side controls available when the AI panel is closed. Undo and redo restore **view changes** in this release. They do not undo drawing or object edits. Drawing, object selection/editing, and AI operations remain future work.
+Project names and appearance preferences retain their existing browser metadata. Individual files use project-scoped IndexedDB, with validated ownership on every read/write. Failed writes retain a clearly labelled session overlay. There is no arbitrary per-project file-count cap; browser quota and device memory are practical limits.
 
-The right panel identifies the current project and active file. It reports that AI is disconnected and the MCP service is unavailable. No MCP transport, authenticated bridge, ChatGPT session, or model API is introduced by this viewer. The scope shown there is context for a future connection, not a verified live connection.
+Browser data belongs to its profile and URL origin, including the port. Moving the executable folder does not carry browser documents. Export important files and import them into another browser or origin. Clearing site data removes local records. A downloaded file and a saved browser record are separate copies. There is no cross-tab conflict resolution yet.
 
-This is a bounded viewer and file-management step. It does not select or replace the future drawing engine, complete its license review, or satisfy the full manual-whiteboard milestone.
+## Version 2 format
 
-## Local storage and portable backups
-
-Project names and appearance preferences retain their existing versioned browser metadata record. LCANVAS documents use IndexedDB separately, so adding files does not enlarge that metadata record. Local file records belong to one project; a portable file does not grant access to another project.
-
-Browser storage belongs to an origin: protocol, host and port. The development URL, preview URL and a launcher fallback port can have different storage. Moving the executable folder does not move browser documents. Export important `.lcanvas` files and import them at the destination origin to carry them between installations or browsers. Clearing site data removes the browser's local records.
-
-The interface reports failed file writes. An export is the portable backup; a downloaded file and a browser record are separate copies. Import validates the whole supported document before adding it to the current project. Unsupported files are rejected with an error instead of partially loading their contents.
-
-There is no fixed per-project file-count limit in this step. Available browser storage and device memory remain practical limits. Each local record has its own generated file ID, project ID, creation/update/opening timestamps, and validated document. Import creates a new local record in the selected project; the portable document excludes those local identifiers and dates.
-
-## Version 1 format
-
-An `.lcanvas` file is UTF-8 JSON. Its exact root fields are `format`, `version`, `name`, `viewport`, and `elements`. Extra fields are rejected, including external resource URLs, executable markup, and unsupported engine payloads. This is the Canvas Live version 1 viewer format; it is not an Excalidraw file or a renamed arbitrary JSON document.
-
-This complete blank-file example is equivalent to `createCanvasDocument('Roadmap')`:
+LCANVAS is UTF-8 JSON with exact root fields `format`, `version`, `name`, `viewport`, `layers` and `elements`. Extra fields, external resource URLs, executable markup and unsupported payloads are rejected. It is an independent Canvas Live format. A complete blank file is:
 
 ```json
 {
   "format": "LCANVAS",
-  "version": 1,
+  "version": 2,
   "name": "Roadmap",
-  "viewport": {
-    "x": 0,
-    "y": 0,
-    "zoom": 1
-  },
+  "viewport": { "x": 0, "y": 0, "zoom": 1 },
+  "layers": [
+    { "id": "layer-main", "name": "Main", "visible": true, "locked": false }
+  ],
   "elements": []
 }
 ```
 
-The viewport maps a canvas point to screen pixels as `screenX = viewport.x + canvasX * zoom` and the equivalent expression for `y`. A zoom of `1` means 100%. Object positions and sizes use canvas coordinates.
+The viewport maps canvas coordinates to pixels as `screenX = viewport.x + canvasX * zoom`, likewise for Y. Zoom `1` is 100%. All elements require unique `id`, `type`, `color`, `layerId` and `areaId`. Layer IDs reference a declared layer; `areaId` is either `null` or an existing containing area. Elements use these additional exact fields:
 
-| Element type | Required fields in addition to `id`, `type`, `x`, `y`, `color` |
-| ------------ | -------------------------------------------------------------- |
-| `rectangle`  | `width`, `height`, `fill`                                      |
-| `ellipse`    | `width`, `height`, `fill`                                      |
-| `text`       | `width`, `height`, `text`, `fontSize`                          |
-| `line`       | `x2`, `y2`                                                     |
+| Type                              | Additional fields                                                    |
+| --------------------------------- | -------------------------------------------------------------------- |
+| `rectangle`, `ellipse`, `diamond` | `x`, `y`, `width`, `height`, `fill`, `text`, `fontSize`              |
+| `text`                            | `x`, `y`, `width`, `height`, `text`, `fontSize`                      |
+| `area`                            | `x`, `y`, `width`, `height`, `name`, `fill`; `areaId` must be `null` |
+| `line`                            | `x`, `y`, `x2`, `y2`                                                 |
+| `connection`                      | `fromId`, `toId`, `style`, `startArrow`, `endArrow`                  |
 
-For example, this rectangle may be placed in `elements`:
+Colors use `#RRGGBB`; fill may be a color or `null`. Shape text belongs to that object. Text is rendered literally in system fonts and clipped to its bounds. Connections reference distinct existing shapes, text items or areas. Their coordinates are derived from the endpoints, so moving/resizing endpoints preserves attachment. `style` is `straight` or `elbow`; arrow booleans select none, start, end or both ends. Legacy lines retain explicit endpoints.
 
-```json
-{
-  "id": "milestone-1",
-  "type": "rectangle",
-  "x": 80,
-  "y": 60,
-  "width": 240,
-  "height": 120,
-  "color": "#7C5CFC",
-  "fill": null
-}
-```
+Every member must fit inside its area. Areas cannot be nested. Connections can belong to an area only when both endpoint objects belong to it. Layer membership and area membership are independent. Layers order back to front in the document; areas render behind the other objects in their layer. Hidden area layers also hide their members; locked area layers prevent member edits. Hiding an endpoint hides its connections.
 
-Colors use `#RRGGBB`. A shape's `fill` is a color or `null` for no fill. Text is rendered as literal text in system fonts, with newlines and tabs allowed, inside its declared width and height. A line joins the two explicit endpoints; version 1 has no arrowhead, group, attachment, image, or connection-reference format.
+## Validation and migration
 
-The parser enforces these bounds before loading:
+The parser validates the whole document before use. Unknown versions, unsupported fields/types, duplicate IDs, dangling references, malformed colors, unsafe text and invalid geometry are rejected without replacing existing files.
 
-| Field            | Limit                                                                    |
-| ---------------- | ------------------------------------------------------------------------ |
-| Encoded file     | 10 MiB of UTF-8 JSON                                                     |
-| Elements         | At most 5,000                                                            |
-| Name             | Trimmed, 1–120 characters; no control characters                         |
-| Element ID       | Unique within the file, 1–200 characters, trimmed; no control characters |
-| Coordinates      | Finite values from −1,000,000 through 1,000,000                          |
-| Width and height | Greater than zero, at most 1,000,000                                     |
-| Zoom             | 0.1–4, or 10%–400%                                                       |
-| Text per element | At most 20,000 UTF-16 code units; plain text                             |
-| Font size        | 8–160                                                                    |
+| Field                        | Limit                                                                            |
+| ---------------------------- | -------------------------------------------------------------------------------- |
+| Encoded document             | 10 MiB of UTF-8 JSON                                                             |
+| Elements                     | 5,000                                                                            |
+| Layers                       | 1–100                                                                            |
+| Canvas, area and layer names | Trimmed, 1–120 characters; no control characters                                 |
+| IDs                          | Unique within their collection, trimmed, 1–200 characters; no control characters |
+| Coordinates                  | Finite values from −1,000,000 through 1,000,000                                  |
+| Width and height             | Greater than zero, at most 1,000,000                                             |
+| Zoom                         | 0.1–4 (10%–400%)                                                                 |
+| Text per element             | 20,000 UTF-16 code units; plain text, permitting newlines/tabs                   |
+| Font size                    | 8–160                                                                            |
 
-Unknown versions, malformed JSON, duplicate element IDs, non-finite/out-of-range values, and unsupported fields/types are rejected. Invalid files do not replace an existing file. Future schema changes require an explicit migration or another supported version; version 1 does not guess how to reinterpret a newer document.
+Valid version 1 files are still supported. Their original root fields are `format`, `version`, `name`, `viewport` and `elements`; supported objects are rectangles/ellipses without shape text, standalone text and explicit lines. Validation occurs before migration. The migration preserves IDs, geometry, colors, text and viewport, adds the visible unlocked Main layer, sets `areaId` to `null` and supplies empty shape text with the default font size. It does not guess unsupported data.
 
-## Viewing controls
+Reads return v2 models in memory. Opening an old browser record updates recency while preserving its original stored v1 payload. Save and export write v2. Original disk files are never overwritten by import. Portable documents contain no project IDs, local record IDs or timestamps.
 
-Drag the canvas to pan. Scroll over it to zoom. While the canvas has keyboard focus, arrow keys pan, `+`/`−` zoom, and `0` resets the view to fit supported objects within the zoom and coordinate bounds. Very widely spread objects can still extend beyond the visible area at the minimum zoom. The right rail contains Undo view, Reset view, Redo view, Zoom in, Zoom out, and the AI-panel toggle. It stays present independently of the file explorer and AI panel.
-
-`Ctrl`/`Cmd` + `Z` undoes a view change; `Ctrl`/`Cmd` + `Shift` + `Z`, or `Ctrl`/`Cmd` + `Y`, redoes it. A new view change clears redo history. A drag is one history step, and the viewer keeps at most 100 prior steps. The saved viewport belongs to the file. Navigation history is session state and is not part of the portable file.
-
-## Verification boundary
-
-Unit and component checks cover the supported format, file management and view controls. The task's completion report records the checks actually executed. No test in this step proves drawing-engine undo/redo or ChatGPT/MCP connectivity.
-
-See [LCANVAS_VERIFICATION.md](LCANVAS_VERIFICATION.md) for the 129-test result, 24 launcher checks, native IndexedDB reload and browser import/export verification. Switching files starts a fresh viewer navigation history.
+Undo/redo history is session state, excluded from portable files. Content and viewport share at most 100 retained snapshots and an estimated 32 MiB history budget. No live AI/MCP service is implemented by this format or editor. See the historical [viewer verification](LCANVAS_VERIFICATION.md) and current [editor verification](EDITOR_VERIFICATION.md).

@@ -1,7 +1,12 @@
 import { fireEvent, render, screen } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import CanvasViewer from './CanvasViewer'
-import { createCanvasDocument, type CanvasDocument } from './lcanvas'
+import { createElement, updateLayer } from './canvasOperations'
+import {
+  createCanvasDocument,
+  DEFAULT_LAYER_ID,
+  type CanvasDocument,
+} from './lcanvas'
 
 const bounds = {
   x: 0,
@@ -37,6 +42,25 @@ describe('LCANVAS viewer', () => {
     vi.restoreAllMocks()
     // jsdom has MouseEvent geometry but no PointerEvent constructor.
     vi.stubGlobal('PointerEvent', MouseEvent)
+  })
+
+  it('honors layer visibility when rendering and fitting version 2 documents', () => {
+    const document = createElement(createCanvasDocument('Roadmap'), {
+      type: 'diamond',
+      id: 'hidden-diamond',
+      x: 5000,
+      y: 5000,
+      width: 100,
+      height: 100,
+    })
+    const hidden = updateLayer(document, DEFAULT_LAYER_ID, { visible: false })
+    const { container, onViewportChange } = mount(hidden)
+    expect(
+      screen.getByRole('img', { name: 'Roadmap: 0 objects' }),
+    ).toBeInTheDocument()
+    expect(container.querySelector('polygon')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Reset view' }))
+    expect(onViewportChange).not.toHaveBeenCalled()
   })
 
   it('keeps view controls present while the AI panel is closed', () => {
@@ -139,6 +163,10 @@ describe('LCANVAS viewer', () => {
         {
           id: 'box',
           type: 'rectangle',
+          layerId: DEFAULT_LAYER_ID,
+          areaId: null,
+          text: '',
+          fontSize: 18,
           x: 10,
           y: 10,
           width: 80,
@@ -149,6 +177,10 @@ describe('LCANVAS viewer', () => {
         {
           id: 'ellipse',
           type: 'ellipse',
+          layerId: DEFAULT_LAYER_ID,
+          areaId: null,
+          text: '',
+          fontSize: 18,
           x: 100,
           y: 10,
           width: 60,
@@ -159,6 +191,8 @@ describe('LCANVAS viewer', () => {
         {
           id: 'line',
           type: 'line',
+          layerId: DEFAULT_LAYER_ID,
+          areaId: null,
           x: 50,
           y: 50,
           x2: 120,
@@ -168,6 +202,8 @@ describe('LCANVAS viewer', () => {
         {
           id: 'punctuation ) "',
           type: 'text',
+          layerId: DEFAULT_LAYER_ID,
+          areaId: null,
           x: 0,
           y: 90,
           width: 200,
@@ -201,6 +237,10 @@ describe('LCANVAS viewer', () => {
         {
           id: 'box',
           type: 'rectangle',
+          layerId: DEFAULT_LAYER_ID,
+          areaId: null,
+          text: '',
+          fontSize: 18,
           x: 0,
           y: 0,
           width: 300,
@@ -226,6 +266,10 @@ describe('LCANVAS viewer', () => {
         {
           id: 'box',
           type: 'rectangle',
+          layerId: DEFAULT_LAYER_ID,
+          areaId: null,
+          text: '',
+          fontSize: 18,
           x: 100,
           y: -50,
           width: 300,

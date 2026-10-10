@@ -176,6 +176,56 @@ describe('project canvas file store', () => {
     expect((await second.list('project-a')).value).toEqual([file()])
   })
 
+  it('loads old canvases as version 2 while keeping durable version 1 geometry untouched until save', async () => {
+    const fixture = indexedDBFixture()
+    const legacyDocument = {
+      format: 'LCANVAS',
+      version: 1,
+      name: 'Older canvas',
+      viewport: { x: -30, y: 80, zoom: 0.5 },
+      elements: [
+        {
+          id: 'old-box',
+          type: 'rectangle',
+          x: 20,
+          y: 50,
+          width: 180,
+          height: 90,
+          color: '#123456',
+          fill: null,
+        },
+      ],
+    }
+    const legacy = {
+      ...file(),
+      document: legacyDocument,
+    } as unknown as CanvasFileRecord
+    fixture.durable.set(legacy.id, legacy)
+    const store = createCanvasFileStore({ indexedDB: fixture.factory })
+    const loaded = await store.get('project-a', 'canvas-a')
+    expect(loaded.value?.document.version).toBe(2)
+    expect(loaded.value?.document.elements[0]).toMatchObject({
+      ...legacyDocument.elements[0],
+      layerId: 'layer-main',
+      areaId: null,
+      text: '',
+      fontSize: 20,
+    })
+    expect(fixture.durable.get('canvas-a')?.document).toEqual(legacyDocument)
+    const opened = await store.markOpened('project-a', 'canvas-a', 200)
+    expect(opened.value?.lastOpenedAt).toBe(200)
+    expect(opened.value?.document.version).toBe(2)
+    expect(fixture.durable.get('canvas-a')?.lastOpenedAt).toBe(200)
+    expect(fixture.durable.get('canvas-a')?.document).toEqual(legacyDocument)
+    expect((await store.list('project-a')).value[0].document.version).toBe(2)
+    if (!opened.value) throw new Error('Missing migrated canvas')
+    await store.save({ ...opened.value, updatedAt: 250 })
+    expect(fixture.durable.get('canvas-a')?.document.version).toBe(2)
+    expect(fixture.durable.get('canvas-a')?.document.elements[0]).toMatchObject(
+      legacyDocument.elements[0],
+    )
+  })
+
   it('indexes files by project and prevents cross-project reads or ownership changes', async () => {
     const fixture = indexedDBFixture()
     const store = createCanvasFileStore({ indexedDB: fixture.factory })
@@ -345,7 +395,7 @@ describe('project canvas file store', () => {
     const fixture = indexedDBFixture()
     fixture.durable.set('canvas-a', {
       ...file(),
-      document: { ...file().document, version: 2 },
+      document: { ...file().document, version: 3 },
     } as unknown as CanvasFileRecord)
     const store = createCanvasFileStore({ indexedDB: fixture.factory })
     const listing = await store.list('project-a')

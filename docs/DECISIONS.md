@@ -43,6 +43,17 @@
 - Bound imports to 10 MiB, 5,000 supported objects, finite geometry and plain text; reject unknown fields/types/versions instead of losing unsupported data. No fixed file-count cap is imposed. Browser quota/device memory remain practical limits.
 - Preserve browser-origin storage boundaries, including launcher fallback ports. Export/import transfers files between origins; the executable folder does not contain the browser library. Cross-tab conflict resolution and project-folder persistence are not implemented.
 
+## 2026-10-10 — Requested manual editing and fullscreen
+
+- The owner requested fullscreen for the active file, shapes and text, resizing, containing areas, explicit layers and configurable connections before live MCP integration. Extend the existing original SVG renderer and LCANVAS model for this authorized scope; adopt no new engine, fonts, dependencies or paid services.
+- Introduce strict LCANVAS v2 with an explicit validated v1 migration. Keep IDs, geometry and viewport stable. Opening old stored files updates recency without rewriting their raw document payload; Save/export writes v2.
+- Keep operations pure and transport independent. Validate the whole result and reject invalid geometry, missing references, containment violations or lock violations atomically. Use the same operations from canvas gestures and Properties.
+- Record explicit area membership separately from layers. Areas move all members together; member movement outside an area detaches it. Hidden/locked area layers propagate visibility/edit restrictions to members. Connections derive endpoints from stable object IDs.
+- Combine manual edits and navigation in one undo history, bounded to 100 retained snapshots and a 32 MiB estimated history budget. Commit completed drags once. History is session state, excluded from portable files.
+- Keep explicit Save for content/view changes and export the current state. Retain only dirty drafts across section/project navigation and protect page unload from the app root, including while Options is open. Naming stores the current contents as well as the new name.
+- Request native fullscreen when supported while keeping an in-app focus fallback. Hide surrounding navigation/files/tabs, fit the visible objects and preserve editing/Save/Export/exit controls. Guard against a native fullscreen request completing after Escape or unmount.
+- Preserve the honest disconnected AI panel. A live authenticated bridge and actual ChatGPT MCP calls remain the next task; shared manual operations are preparation, not proof of connectivity.
+
 ## Remaining open decisions
 
 - Whether SIL OFL 1.1 is acceptable specifically for engine fonts, or a supported replacement is needed.

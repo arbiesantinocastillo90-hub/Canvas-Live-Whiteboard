@@ -8,7 +8,7 @@ import {
   type PointerEvent,
   type ReactNode,
 } from 'react'
-import type { CanvasDocument, CanvasElement, CanvasViewport } from './lcanvas'
+import type { CanvasDocument, CanvasViewport } from './lcanvas'
 import {
   commitView,
   createViewHistory,
@@ -22,6 +22,8 @@ import {
   zoomAt,
   type ViewHistory,
 } from './canvasViewport'
+import { EditorObject } from './CanvasEditor'
+import { orderedVisibleElements } from './canvasOperations'
 import './canvas-viewer.css'
 
 export type CanvasViewerProps = {
@@ -50,93 +52,6 @@ function RailIcon({ children }: { children: ReactNode }) {
       {children}
     </svg>
   )
-}
-
-function CanvasObject({
-  element,
-  prefix,
-}: {
-  element: CanvasElement
-  prefix: string
-}) {
-  switch (element.type) {
-    case 'rectangle':
-      return (
-        <rect
-          x={element.x}
-          y={element.y}
-          width={element.width}
-          height={element.height}
-          rx="5"
-          fill={element.fill ?? 'none'}
-          stroke={element.color}
-          strokeWidth="2"
-          vectorEffect="non-scaling-stroke"
-        />
-      )
-    case 'ellipse':
-      return (
-        <ellipse
-          cx={element.x + element.width / 2}
-          cy={element.y + element.height / 2}
-          rx={element.width / 2}
-          ry={element.height / 2}
-          fill={element.fill ?? 'none'}
-          stroke={element.color}
-          strokeWidth="2"
-          vectorEffect="non-scaling-stroke"
-        />
-      )
-    case 'line':
-      return (
-        <line
-          x1={element.x}
-          y1={element.y}
-          x2={element.x2}
-          y2={element.y2}
-          stroke={element.color}
-          strokeWidth="2"
-          vectorEffect="non-scaling-stroke"
-        />
-      )
-    case 'text': {
-      const clipId = `${prefix}-text`
-      return (
-        <g>
-          <defs>
-            <clipPath id={clipId}>
-              <rect
-                x={element.x}
-                y={element.y}
-                width={element.width}
-                height={element.height}
-              />
-            </clipPath>
-          </defs>
-          <text
-            x={element.x}
-            y={element.y}
-            fill={element.color}
-            fontSize={element.fontSize}
-            fontFamily="'Segoe UI', system-ui, sans-serif"
-            dominantBaseline="text-before-edge"
-            clipPath={`url(#${clipId})`}
-            xmlSpace="preserve"
-          >
-            {element.text.split('\n').map((line, index) => (
-              <tspan
-                key={index}
-                x={element.x}
-                dy={index === 0 ? 0 : element.fontSize * 1.3}
-              >
-                {line || '\u00a0'}
-              </tspan>
-            ))}
-          </text>
-        </g>
-      )
-    }
-  }
 }
 
 export default function CanvasViewer({
@@ -199,7 +114,7 @@ export default function CanvasViewer({
     const bounds = stage.current?.getBoundingClientRect()
     changeView(
       fitView(
-        document.elements,
+        orderedVisibleElements(document),
         Math.max(0, (bounds?.width ?? 0) - rightInset),
         bounds?.height ?? 0,
       ),
@@ -358,24 +273,25 @@ export default function CanvasViewer({
         <svg
           className="lcanvas-drawing"
           role="img"
-          aria-label={`${document.name}: ${document.elements.length} objects`}
+          aria-label={`${document.name}: ${orderedVisibleElements(document).length} objects`}
         >
           <g transform={`translate(${view.x} ${view.y}) scale(${view.zoom})`}>
-            {document.elements.map((element, index) => (
-              <CanvasObject
+            {orderedVisibleElements(document).map((element, index) => (
+              <EditorObject
                 key={element.id}
+                document={document}
                 element={element}
                 prefix={`${prefix}-${index}`}
               />
             ))}
           </g>
         </svg>
-        {document.elements.length === 0 && (
+        {orderedVisibleElements(document).length === 0 && (
           <div className="lcanvas-empty" aria-hidden="true">
             <span className="lcanvas-empty-symbol">↗</span>
             <h2>Your canvas, ready to view.</h2>
             <p>Import an LCANVAS file to explore its objects.</p>
-            <small>Drawing tools will come in the next step.</small>
+            <small>Open a file in Work to edit its contents.</small>
           </div>
         )}
       </div>

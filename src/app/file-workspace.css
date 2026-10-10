@@ -3,6 +3,83 @@
   max-width: 1800px;
   margin: 0 auto;
 }
+.file-workspace[data-focus='true'] {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+  max-width: none;
+  padding: 0;
+  margin: 0;
+  background: var(--panel);
+}
+.file-workspace[data-focus='true'] .file-work-heading,
+.file-workspace[data-focus='true'] .file-work-toolbar,
+.file-workspace[data-focus='true'] .canvas-tabs,
+.file-workspace[data-focus='true'] .viewer-scope-note,
+.file-workspace[data-focus='true'] .file-statusbar,
+.file-workspace[data-focus='true'] .rename-canvas {
+  display: none;
+}
+.file-workspace[data-focus='true'] .canvas-editor {
+  min-height: 0;
+}
+.file-workspace[data-focus='true'] .workspace-deck {
+  flex: 1;
+  min-height: 0;
+  height: auto;
+  border: 0;
+  border-radius: 0;
+}
+.file-workspace[data-focus='true'] .workspace-ai-panel {
+  top: 0;
+}
+.focus-file-header {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  min-height: 60px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--line);
+}
+.focus-file-header > span {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+.focus-file-header strong {
+  font-size: 13px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.focus-file-header small {
+  font-size: 10px;
+  color: var(--muted);
+}
+.focus-file-header .button {
+  padding: 8px 10px;
+  font-size: 11px;
+}
+@media (max-width: 760px) {
+  .focus-file-header {
+    padding: 8px;
+    gap: 5px;
+  }
+  .focus-file-header small {
+    display: none;
+  }
+}
+@media (max-height: 600px) {
+  .focus-file-header {
+    min-height: 48px;
+    padding-block: 6px;
+  }
+}
 .file-work-heading {
   display: flex;
   align-items: center;

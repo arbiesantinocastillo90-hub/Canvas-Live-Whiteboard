@@ -1,5 +1,11 @@
 import { useEffect, useRef, useState, type ChangeEvent } from 'react'
-import CanvasViewer from './CanvasViewer'
+import CanvasEditor from './CanvasEditor'
+import useCanvasFocus from './useCanvasFocus'
+import {
+  projectDrafts,
+  useCanvasDraftProtection,
+  type CanvasDraft,
+} from './canvasDrafts'
 import Icon from './Icon'
 import ProjectDialog from './ProjectDialog'
 import {
@@ -12,17 +18,12 @@ import {
   createCanvasDocument,
   parseLCANVAS,
   serializeLCANVAS,
-  type CanvasViewport,
+  type CanvasDocument,
 } from './lcanvas'
 import type { Preferences, Project } from './workspace'
 import './file-workspace.css'
 
-type Entry = {
-  record: CanvasFileRecord
-  dirty: boolean
-  savedView: CanvasViewport
-  persistence: 'browser' | 'session'
-}
+type Entry = CanvasDraft
 type FilePrompt = { kind: 'create' } | { kind: 'rename'; id: string }
 
 function message(error: unknown) {
@@ -31,8 +32,8 @@ function message(error: unknown) {
     : 'The file could not be opened.'
 }
 
-function sameView(left: CanvasViewport, right: CanvasViewport) {
-  return left.x === right.x && left.y === right.y && left.zoom === right.zoom
+function sameDocument(left: CanvasDocument, right: CanvasDocument) {
+  return JSON.stringify(left) === JSON.stringify(right)
 }
 
 function openingTimestamp(entries: Entry[]) {
@@ -46,11 +47,13 @@ export default function FileWorkspace({
   preferences,
   onRenameProject,
   store = canvasFileStore,
+  onFocusChange,
 }: {
   project: Project
   preferences: Preferences
   onRenameProject: () => void
   store?: typeof canvasFileStore
+  onFocusChange?: (focused: boolean) => void
 }) {
   const [entries, setEntries] = useState<Entry[]>([])
   const [openIds, setOpenIds] = useState<string[]>([])
@@ -67,12 +70,20 @@ export default function FileWorkspace({
   const fileToggle = useRef<HTMLButtonElement>(null)
   const alive = useRef(false)
   const openingSequence = useRef(0)
+  const focusRoot = useRef<HTMLElement>(null)
+  const { focused, toggle } = useCanvasFocus(focusRoot, onFocusChange)
+  useCanvasDraftProtection(store)
   const active = entries.find((entry) => entry.record.id === activeId)
   const visible = entries.filter((entry) =>
     entry.record.document.name
       .toLocaleLowerCase()
       .includes(search.trim().toLocaleLowerCase()),
   )
+
+  function toggleFocus() {
+    if (!focused) setAiOpen(false)
+    void toggle()
+  }
 
   useEffect(() => {
     alive.current = true
@@ -88,13 +99,19 @@ export default function FileWorkspace({
           0,
           ...files.map((file) => file.lastOpenedAt),
         )
+        const cachedDrafts = projectDrafts(store).get(project.id) ?? []
         setEntries(
-          files.map((record) => ({
-            record,
-            dirty: false,
-            savedView: record.document.viewport,
-            persistence: result.persistence,
-          })),
+          files.map(
+            (record) =>
+              cachedDrafts.find(
+                (entry) => entry.record.id === record.id && entry.dirty,
+              ) ?? {
+                record,
+                dirty: false,
+                savedDocument: record.document,
+                persistence: result.persistence,
+              },
+          ),
         )
         setOpenIds(files.length ? [files[0].id] : [])
         setActiveId(files[0]?.id ?? null)
@@ -112,6 +129,14 @@ export default function FileWorkspace({
     }
   }, [project.id, store])
 
+  useEffect(() => {
+    if (!loading)
+      projectDrafts(store).set(
+        project.id,
+        entries.filter((entry) => entry.dirty),
+      )
+  }, [entries, loading, project.id, store])
+
   function accept(record: CanvasFileRecord, persistence: Entry['persistence']) {
     openingSequence.current = Math.max(
       openingSequence.current,
@@ -122,7 +147,7 @@ export default function FileWorkspace({
       {
         record,
         dirty: false,
-        savedView: record.document.viewport,
+        savedDocument: record.document,
         persistence,
       },
     ])
@@ -199,7 +224,7 @@ export default function FileWorkspace({
     const id = entry.record.id
     setOpenIds((current) => (current.includes(id) ? current : [...current, id]))
     setActiveId(id)
-    // Remember the open file without committing unsaved view changes.
+    // Remember the open file without committing unsaved canvas changes.
     const openedAt = Math.max(
       openingTimestamp(entries),
       openingSequence.current + 1,
@@ -246,17 +271,17 @@ export default function FileWorkspace({
     })
   }
 
-  function changeView(viewport: CanvasViewport) {
+  function changeDocument(document: CanvasDocument) {
     if (!activeId) return
     setEntries((current) =>
       current.map((entry) =>
         entry.record.id === activeId
           ? {
               ...entry,
-              dirty: !sameView(entry.savedView, viewport),
+              dirty: !sameDocument(entry.savedDocument, document),
               record: {
                 ...entry.record,
-                document: { ...entry.record.document, viewport },
+                document,
               },
             }
           : entry,
@@ -279,11 +304,8 @@ export default function FileWorkspace({
           entry.record.id === snapshot.id
             ? {
                 ...entry,
-                savedView: snapshot.document.viewport,
-                dirty: !sameView(
-                  entry.record.document.viewport,
-                  snapshot.document.viewport,
-                ),
+                savedDocument: snapshot.document,
+                dirty: !sameDocument(entry.record.document, snapshot.document),
                 persistence: result.persistence,
                 record: { ...entry.record, updatedAt: result.value.updatedAt },
               }
@@ -319,7 +341,51 @@ export default function FileWorkspace({
   }
 
   return (
-    <section className="file-workspace" aria-labelledby="work-title">
+    <section
+      ref={focusRoot}
+      className="file-workspace"
+      data-focus={focused}
+      aria-label={
+        focused
+          ? `${active?.record.document.name ?? 'Canvas'} fullscreen editor`
+          : undefined
+      }
+      aria-labelledby={focused ? undefined : 'work-title'}
+    >
+      {focused && (
+        <header className="focus-file-header">
+          <span>
+            <Icon name="canvas" />
+            <strong>{active?.record.document.name}</strong>
+            <small>
+              {active?.dirty
+                ? 'Unsaved changes'
+                : active?.persistence === 'browser'
+                  ? 'Saved in this browser'
+                  : 'Session only'}
+            </small>
+          </span>
+          <button
+            className="button secondary"
+            disabled={busy}
+            onClick={saveFile}
+          >
+            <Icon name="save" />
+            Save
+          </button>
+          <button className="button secondary" onClick={exportFile}>
+            <Icon name="export" />
+            Export
+          </button>
+          <button
+            className="button secondary"
+            onClick={toggleFocus}
+            aria-label="Exit fullscreen layout"
+          >
+            Exit fullscreen
+          </button>
+        </header>
+      )}
       <header className="file-work-heading">
         <div>
           <p className="eyebrow">Your project workspace</p>
@@ -376,7 +442,7 @@ export default function FileWorkspace({
           className="button secondary"
           disabled={!active || busy}
           onClick={saveFile}
-          title="Save the current view in this browser"
+          title="Save this canvas in your browser"
         >
           <Icon name="save" />
           <span>Save</span>
@@ -402,7 +468,7 @@ export default function FileWorkspace({
         </div>
       )}
       <div className="workspace-deck">
-        {filesOpen && (
+        {filesOpen && !focused && (
           <aside
             id="project-files"
             className="file-explorer"
@@ -458,7 +524,10 @@ export default function FileWorkspace({
                       <small>.lcanvas</small>
                     </span>
                     {entry.dirty && (
-                      <span className="file-dirty" aria-label="Unsaved view" />
+                      <span
+                        className="file-dirty"
+                        aria-label="Unsaved changes"
+                      />
                     )}
                   </button>
                 ))
@@ -494,7 +563,7 @@ export default function FileWorkspace({
                   >
                     <Icon name="canvas" />
                     <span>{entry.record.document.name}</span>
-                    {entry.dirty && <span aria-label="Unsaved view">•</span>}
+                    {entry.dirty && <span aria-label="Unsaved changes">•</span>}
                   </button>
                   <button
                     className="tab-close"
@@ -522,15 +591,16 @@ export default function FileWorkspace({
             }
           >
             {active ? (
-              <CanvasViewer
+              <CanvasEditor
                 key={active.record.id}
                 document={active.record.document}
-                initialViewport={active.record.document.viewport}
                 grid={preferences.grid}
                 aiOpen={aiOpen}
                 rightInset={aiOpen ? 260 : 0}
                 onToggleAI={() => setAiOpen(!aiOpen)}
-                onViewportChange={changeView}
+                onDocumentChange={changeDocument}
+                focusMode={focused}
+                onToggleFocus={toggleFocus}
               />
             ) : (
               <div className="viewer-empty" data-grid={preferences.grid}>
@@ -543,7 +613,7 @@ export default function FileWorkspace({
                     : 'Open a canvas. Make room for ideas.'}
                 </h2>
                 <p>
-                  Create a blank LCANVAS file or import one to start viewing.
+                  Create a blank LCANVAS file or import one to start creating.
                 </p>
                 <button
                   className="button primary"
@@ -569,7 +639,7 @@ export default function FileWorkspace({
             <span>
               {active
                 ? active.dirty
-                  ? 'View changed · Save to remember'
+                  ? 'Unsaved changes · Save to remember'
                   : active.persistence === 'browser'
                     ? 'Saved in this browser'
                     : 'Session only · Export a backup'
@@ -632,8 +702,8 @@ export default function FileWorkspace({
         )}
       </div>
       <p className="viewer-scope-note">
-        LCANVAS viewing · Drag to pan, scroll to zoom. Undo and redo restore
-        views. Drawing and AI editing are the next steps.
+        LCANVAS editor · Add shapes, text, areas and connections. Use Properties
+        for layers and object details. Save to remember your changes.
       </p>
       {prompt && (
         <ProjectDialog

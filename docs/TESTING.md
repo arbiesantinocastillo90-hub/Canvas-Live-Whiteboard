@@ -36,7 +36,7 @@ The suite now includes workspace metadata validation/storage tests and UI flows 
 
 The LCANVAS suite adds strict import/export validation, project-scoped file storage with a transaction fixture, reload and quota/session recovery, atomic opening metadata, pan/zoom bounds, navigation history and component flows for files/tabs/panels/current AI context. A 125-file test verifies that the earlier project-count cap does not become a file-count cap. Native browser IndexedDB receives a separate browser reload smoke check; the transaction fixture is not a substitute for native browser verification. See [LCANVAS.md](LCANVAS.md).
 
-There are no MCP, synchronization or automated real-browser end-to-end tests yet. jsdom does not verify browser rendering or drawing-engine history. Actual browser checks and the final executed test totals are recorded in the LCANVAS task report. Drawing and AI features require separate runtime tests.
+The editor suite adds v1-to-v2 migration, stable-ID shape/text operations, area membership, layer ordering/locking/visibility, attached connection geometry, combined bounded history, pointer movement/resizing/cancellation and Inspector properties. It also verifies explicit content saving, unsaved draft protection across Options navigation, fullscreen fallback/native exit and a pending fullscreen request completing after Escape. jsdom does not verify rendering; the editor task adds isolated automated Chrome UI checks and inspected screenshots. No MCP or synchronization test exists yet. See [EDITOR_VERIFICATION.md](EDITOR_VERIFICATION.md).
 
 The Windows launcher has a separate integration test. Run `npm.cmd run package:windows`, then `npm.cmd run test:launcher`. It copies the package to a temporary folder with spaces and checks startup from an unrelated working directory, packaged assets/notices, HTTP restrictions, occupied-port fallback, repeated launch, restart recovery and missing-file errors. The executed result was **24 passed checks**. It uses `--no-browser` and force-stops its own processes; it does not exercise the tray's Close action or observe the operating system's default-browser window. See [WINDOWS_LAUNCHER.md](WINDOWS_LAUNCHER.md) for the normal-launch browser check and coverage limits.
 
@@ -50,4 +50,4 @@ The Windows launcher has a separate integration test. Run `npm.cmd run package:w
 
 Actual executed results, resolved failures and remaining scope are recorded in [MILESTONE_0.md](MILESTONE_0.md).
 
-The current LCANVAS viewer result is **129 passed application tests** and **24 passed launcher checks**, plus a native-browser save/reload/import/export smoke check. See [LCANVAS_VERIFICATION.md](LCANVAS_VERIFICATION.md).
+The current editor passed **203 application tests**, **16 browser scenarios** and **24 launcher checks**; see [EDITOR_VERIFICATION.md](EDITOR_VERIFICATION.md). The historical viewer result remains in [LCANVAS_VERIFICATION.md](LCANVAS_VERIFICATION.md).

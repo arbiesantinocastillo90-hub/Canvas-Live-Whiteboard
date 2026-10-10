@@ -242,7 +242,10 @@ function markRecordOpened(
               ...existing,
               lastOpenedAt: Math.max(now, existing.lastOpenedAt),
             }
-            store.put(result)
+            // Opening a version 1 canvas updates recency without rewriting its
+            // document. Conversion is held in memory until an explicit save.
+            const raw = request.result as Record<string, unknown>
+            store.put({ ...result, document: raw.document })
           }
         }
       } catch (error) {

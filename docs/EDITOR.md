@@ -1,0 +1,41 @@
+# Canvas editing
+
+## Working in a file
+
+Open an LCANVAS file in Work. The drawing toolbar adds rectangles, ellipses, diamonds, standalone text and containment areas. New objects appear near the center of the current view on the active layer. Select an object and drag it to move; drag its lower-right corner to resize. Double-click the object, or open Properties, to edit text, exact position and dimensions, colors, its layer and its containing area. Text inside a shape belongs to that shape, moves with it and stays inside its bounds.
+
+Properties are drafts until **Apply properties**. Applying several changes together creates one undo step. Invalid dimensions, missing references and unsupported values are rejected with a visible error. Deleting a selected object is bounded; deleting a shape also removes its attached connections. Deleting an area preserves its members and removes their area assignment.
+
+**Full screen canvas** focuses on the current file, hides the project navigation, file explorer, tabs and auxiliary panels, and fits its visible objects into the available view. The canvas tools, save action, undo/redo, zoom and exit control remain available. The browser's native full-screen view is used when supported; the same focused app layout works when it is unavailable. Exit with the control or Escape to restore the surrounding layout.
+
+Choose **Pan** to drag the view. Middle mouse or Alt-drag also pans. Scrolling zooms around the pointer. The right rail keeps Undo, Reset view, Redo, Zoom in and Zoom out available. Reset view fits the visible objects. A complete drag is one history step; interrupted drags can be cancelled without saving partial changes.
+
+While the canvas has keyboard focus, arrow keys move a selected editable object, or pan when no object is selected. Shift uses larger movement steps. Delete/Backspace deletes the selected object. `+`/`−` zoom and `0` fits the view. `Ctrl`/`Cmd` + `Z` undoes; `Ctrl`/`Cmd` + `Shift` + `Z` or `Y` redoes. Typing inside property inputs uses ordinary text-input behavior.
+
+## Areas and layers
+
+An area is a named frame with explicit membership. Choose a containing area in the selected object's properties. The area must fully contain the member. Moving an area moves all its members in the same transaction, including attached connections. An area cannot contain another area. Resize cannot exclude existing members; moving a member outside an area detaches it. Connections can belong to an area when both of their endpoints belong to it.
+
+Layers organize every object, including text, areas and connections. Properties lists layers from front to back and shows each object's layer. Add and name a layer, select it for new objects, rename it, change its order, hide it or lock it. Hidden layers are omitted from the canvas, while their objects remain accessible in the object list. Hidden and locked layers cannot be edited. Hiding an area's layer hides its members; locking it prevents member editing even when members belong to another layer.
+
+Area membership and layer membership are independent. They are explicit LCANVAS fields, preserved by saving, export and import. The object list lets the user select an object by its name and layer.
+
+## Connections
+
+Choose **Connect objects**, then select a source and target shape, text item or area. Choose a straight or elbow path and no arrows, an end arrow, a start arrow or arrows at both ends. The connection tracks both objects as they move or resize. Selected connections expose the same path and arrow choices in Properties. Connection endpoints are stable object identifiers, not screen coordinates.
+
+## Saving and format compatibility
+
+Edits and view changes use the file's explicit Save action. Export includes the current state, including unsaved edits. The save indicator reports whether changes remain to be saved and whether browser storage failed. Unsaved content survives section/project navigation in the current tab. Switching files or navigating away starts fresh undo/redo history when the editor reopens; history is not included in portable files.
+
+The editor exports LCANVAS version 2, adding layers, diamond shapes, shape text, areas and reference-based connections. Existing version 1 files and browser records are validated and migrated to version 2 in memory: objects enter the visible, unlocked Main layer; shapes acquire empty text and the default font size; previous positions, colors, dimensions and view are preserved. Saving or exporting writes version 2. Unsupported versions or fields are rejected rather than guessed.
+
+Each document remains limited to 10 MiB and 5,000 objects, with at most 100 layers. IDs, references, coordinates, dimensions, text and colors are validated. The original browser storage and project ownership boundaries still apply. See [LCANVAS.md](LCANVAS.md) for local storage and portable backup behavior.
+
+## Implementation boundary
+
+`CanvasEditor.tsx` renders and handles pointer/keyboard interactions. `CanvasInspector.tsx` implements controlled properties and layer management. Both use the validated pure functions in `canvasOperations.ts`; transport code does not own canvas business logic. `editorHistory.ts` records document and view transactions with at most 100 prior snapshots and an estimated 32 MiB retained-history budget. Large documents can retain fewer steps.
+
+This step uses the application's original SVG renderer, system fonts and existing React dependencies. It adds no drawing-engine, font, icon, model or networking package. Freehand drawing, rich text, images, nested areas, multi-selection, layer deletion and collaboration are outside this step. The workspace AI panel continues to report the actual disconnected/unavailable state; these manual editing tools do not establish a ChatGPT/MCP connection.
+
+The completion verification report records the automated and browser checks actually executed. No test in this step proves a live MCP connection.
