@@ -16,6 +16,7 @@ Requires Windows 11 with its included .NET Framework 4.8 or newer runtime.
 The local website normally uses http://127.0.0.1:4173/.
 If that port is busy, Canvas Live chooses another local port automatically.
 
-This package currently contains the foundation preview.
-Drawing, board saving, and AI editing are still upcoming features.
+This package includes Options, Projects, Work, and customizable themes.
+Appearance preferences and project names are remembered in this browser.
+Drawing, canvas saving, LCANVAS files, and AI editing are still upcoming features.
 Original project code is MIT licensed; keep the included license notices with the folder.

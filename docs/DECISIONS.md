@@ -26,7 +26,15 @@
 - Retain prior package folders during rebuilds. Use staging, verified in-folder paths, same-directory renames and a final executable check. Explicitly ignore both `release` and `dist` directory roots/descendants in the Vite watcher to prevent the observed Windows packaging lock.
 - Record the 24 executed integration checks and distinguish forced-process shutdown from the untested tray Close action. See [WINDOWS_LAUNCHER.md](WINDOWS_LAUNCHER.md).
 
-## Open decisions
+## 2026-10-09 — Themes and workspace navigation
+
+- The owner requested customizable overall UI themes and Options, Projects/recent projects on the left, and Work reopening the latest project. Implement this bounded UI task ahead of the canvas controls and LCANVAS saving/import step; do not infer that canvas persistence is implemented.
+- Use shared CSS variables for light/dark/system appearance, custom accent, spacing, motion and preview backgrounds. Keep original inline SVG controls and system fonts. No dependencies were added.
+- Keep project IDs/names/recent-opening timestamps and appearance preferences in one validated, versioned browser metadata record. Write on user changes; failed storage keeps usable state in the current tab with an explicit message. File saving and cross-tab synchronization remain separate work.
+- Use the owner's supplied logo PNG unchanged in the sidebar and favicon. Preserve the original bytes and verify their hash. The executable's existing Windows icon is unchanged in this task.
+- Use a clean physical C: verification copy with the same lockfile and exact final source after D: test-worker startup timeouts. Record source equality and actual command results; do not present earlier startup failures as executed assertions.
+
+## Remaining open decisions
 
 - Whether SIL OFL 1.1 is acceptable specifically for engine fonts, or a supported replacement is needed.
 - Whether the owner's ChatGPT account can invoke custom write tools, and which secure transport is available with acceptable cost.

@@ -2,11 +2,11 @@
 
 ## Implemented foundation
 
-`src/main.tsx` mounts a React app under StrictMode. `src/app/App.tsx` renders the workspace preview. The preview is stateless and clearly states that board editing and saving are not available. CSS uses system fonts and local shapes.
+`src/main.tsx` mounts a React app under StrictMode. `src/app/App.tsx` controls Options, Projects and Work. `AppearanceOptions.tsx` controls the theme preferences, `ProjectDialog.tsx` handles project names, and `workspace.ts` validates and persists bounded project metadata/preferences in browser localStorage. CSS uses shared light/dark tokens, system fonts and original inline SVG controls. The owner-provided logo is a local unchanged PNG.
 
 Vite serves the app on loopback. Vitest uses the same React plugin with a jsdom test environment. TypeScript checks application and configuration code; Oxlint and Prettier provide code/format checks. `scripts/check-licenses.mjs` generates an inventory from the resolved dependency lockfile and flags unknown/unaccepted license metadata.
 
-There is no canvas-engine integration, document storage, MCP service or communication bridge yet.
+There is no canvas-engine integration, canvas document storage, MCP service or communication bridge yet. Browser metadata remembers names and recent openings; it is separate from future LCANVAS saving/import. See [UI_WORKSPACE.md](UI_WORKSPACE.md) for the current data boundary and verification.
 
 ## Implemented Windows launcher
 
