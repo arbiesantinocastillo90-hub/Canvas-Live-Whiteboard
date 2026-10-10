@@ -28,5 +28,10 @@ Save remembers changes in this browser; Export downloads the current LCANVAS v2 
 Existing LCANVAS v1 files remain importable. Tabs and panels can be closed and reopened.
 Files stay in this browser's local storage. Export .lcanvas copies for portable backups.
 A different browser or local port opens a separate file library.
-Live AI editing remains upcoming. The AI/MCP panel reports disconnected.
+For optional AI editing, open "Start Canvas Live MCP.cmd" (requires Node.js 24).
+Open Workspace AI in the website, paste the companion's browser pairing code,
+and choose "Share this canvas". "Stop sharing" disconnects this file.
+Connect ChatGPT using the included CHATGPT_MCP.md setup guide.
+The companion runs only on this laptop; ChatGPT web requires a configured tunnel.
+AI edits use the same Undo/Redo and remain unsaved until you press Save.
 Original project code is MIT licensed; keep the included license notices with the folder.

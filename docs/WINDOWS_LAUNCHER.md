@@ -20,9 +20,11 @@ Canvas Live/
     └── THIRD_PARTY_NOTICES.txt
 ```
 
+The current package also includes **Start Canvas Live MCP.cmd**, `mcp/server.mjs`, `plugin/`, `CHATGPT_MCP.md`, and `start-chatgpt-tunnel.ps1`. The optional MCP companion requires Node.js 24 and starts separately from the native website launcher. Pair an open file through Workspace AI; follow [CHATGPT_MCP.md](CHATGPT_MCP.md) for ChatGPT web's private tunnel or a local desktop connection. No Node runtime or tunnel client is bundled.
+
 You can move or copy this complete folder. Close the launcher before moving or replacing its folder. Double-clicking the executable again reopens the same running instance. Closing the browser tab leaves the local server running. Right-click the Canvas Live icon in the Windows tray and choose **Close Canvas Live** to stop it. The tray icon may be in the tray's overflow area.
 
-The usual address is `http://127.0.0.1:4173/`. If that port is occupied, the launcher chooses an available local port and opens that address. This is a local website on your laptop. The package includes themes, Options, Projects, Work and the LCANVAS file organizer/editor; see [LCANVAS.md](LCANVAS.md). Files and preferences belong to the browser origin, including the port. Export LCANVAS backups to transfer them between browsers/ports; moving this folder does not transfer browser data. Manual shapes, text, areas, layers and connections are available; live AI editing remains upcoming. See [EDITOR.md](EDITOR.md).
+The usual address is `http://127.0.0.1:4173/`. If that port is occupied, the launcher chooses an available local port and opens that address. This is a local website on your laptop. The package includes themes, Options, Projects, Work and the LCANVAS file organizer/editor; see [LCANVAS.md](LCANVAS.md). Files and preferences belong to the browser origin, including the port. Export LCANVAS backups to transfer them between browsers/ports; moving this folder does not transfer browser data. AI edits use the existing shapes, text, areas, layers, connections and Undo/Redo through the optional companion. Local integration is tested; actual ChatGPT account connectivity requires the separate acceptance step.
 
 ## Build and test
 
@@ -44,7 +46,7 @@ Building requires the documented Node.js development environment plus Windows' .
 - A read-only `/__canvas_live_launcher` endpoint identifies a running instance. Per-user, per-folder mutex/state prevents ordinary duplicate launches from starting duplicate servers.
 - Runtime state and errors are recorded under `%LOCALAPPDATA%/Canvas Live/launchers/<package-key>/`. No application content is uploaded.
 - The tray provides Open and Close actions. Browser opening uses the documented Windows [default-handler behavior](https://learn.microsoft.com/en-us/dotnet/api/system.diagnostics.processstartinfo.useshellexecute?view=netframework-4.8.1); the tray uses [NotifyIcon](https://learn.microsoft.com/en-us/dotnet/api/system.windows.forms.notifyicon?view=netframework-4.8.1).
-- This static server has no MCP tools or board mutation API. Future authenticated bridge and persistence work remain separate milestones. An alternate port changes the browser origin, which future persistence must handle deliberately.
+- This static server has no MCP tools or board mutation API. The optional authenticated MCP companion starts separately. An alternate port changes the browser origin and therefore its stored files and preferences; export/import LCANVAS to transfer content.
 
 ## Executed verification — 2026-10-09
 
@@ -63,3 +65,7 @@ Rebuilding while Vite watched generated release folders initially caused a Windo
 ## Editor package verification — 2026-10-10
 
 The executable folder was rebuilt with the verified LCANVAS v2 editor. All **24 launcher integration checks** passed again, and the packaged website passed **16 isolated Chrome scenarios** covering editing, fullscreen, layers, areas, connections, Save/reload and v1 import/v2 export. The application passed **203 tests**, types, lint, formatting, the unchanged dependency-license gate and production build. See [EDITOR_VERIFICATION.md](EDITOR_VERIFICATION.md) for evidence and remaining scope. Default-browser opening and the tray's graceful Close action were not retested in this step.
+
+## MCP package verification — 2026-10-10
+
+The folder now includes the separately started Node.js MCP companion, plugin manifests and ChatGPT setup helper. All **24 launcher checks** passed again. The final packaged website and companion passed **16 browser scenarios**, including sharing, visible AI edits, shared Undo/Redo, fullscreen status, explicit Save/reload/export and revocation. The companion also recognizes the native website's exact fallback origin through its package registration and matching health check. Open **Canvas Live.exe** before **Start Canvas Live MCP.cmd**. See [MCP_VERIFICATION.md](MCP_VERIFICATION.md) for protocol tests, native fallback verification and actual ChatGPT acceptance still required.

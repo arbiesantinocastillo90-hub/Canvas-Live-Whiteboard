@@ -1,0 +1,23 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "canvas-live",
+  "version": "0.1.0",
+  "description": "Read and edit the Canvas Live file explicitly shared from your local browser.",
+  "author": {
+    "name": "Arbie Santino D. Castillo",
+    "email": "arbiesantinocastillo90@gmail.com"
+  },
+  "repository": "https://github.com/arbiesantinocastillo90-hub/Canvas-Live-Whiteboard",
+  "license": "MIT",
+  "extensions": {
+    "com.openai": {
+      "interface": {
+        "displayName": "Canvas Live",
+        "shortDescription": "Work on your shared LCANVAS file.",
+        "developerName": "Arbie Santino D. Castillo",
+        "category": "Productivity",
+        "capabilities": ["Read", "Write"]
+      }
+    }
+  }
+}

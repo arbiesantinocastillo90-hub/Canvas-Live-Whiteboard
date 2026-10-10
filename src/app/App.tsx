@@ -210,7 +210,7 @@ export default function App() {
         <div className="sidebar-bottom">
           <div className="connection-status">
             <span className="status-dot" />
-            AI not connected
+            AI controls in Work
           </div>
           <p>On your device. At your pace.</p>
           <span className="version-label">Canvas Live · Early workspace</span>

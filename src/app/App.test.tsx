@@ -111,7 +111,7 @@ describe('workspace navigation and appearance', () => {
     expect(
       screen.getByRole('heading', { name: 'Your projects.' }),
     ).toBeInTheDocument()
-    expect(screen.getByText('AI not connected')).toBeInTheDocument()
+    expect(screen.getByText('AI controls in Work')).toBeInTheDocument()
     expect(
       screen
         .getByRole('link', { name: 'Canvas Live home' })

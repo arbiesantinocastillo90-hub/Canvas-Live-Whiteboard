@@ -15,6 +15,7 @@ export default defineConfig({
   },
   preview: { host: '127.0.0.1', port: 4173, strictPort: true },
   test: {
+    maxWorkers: 2,
     environment: 'jsdom',
     setupFiles: ['./tests/setup.ts'],
     include: ['src/**/*.test.{ts,tsx}'],

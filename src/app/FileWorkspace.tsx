@@ -1,5 +1,13 @@
-import { useEffect, useRef, useState, type ChangeEvent } from 'react'
-import CanvasEditor from './CanvasEditor'
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type ChangeEvent,
+} from 'react'
+import CanvasEditor, { type CanvasEditorController } from './CanvasEditor'
+import WorkspaceAI from './WorkspaceAI'
+import useMcpBridge from './useMcpBridge'
 import useCanvasFocus from './useCanvasFocus'
 import {
   projectDrafts,
@@ -74,6 +82,32 @@ export default function FileWorkspace({
   const { focused, toggle } = useCanvasFocus(focusRoot, onFocusChange)
   useCanvasDraftProtection(store)
   const active = entries.find((entry) => entry.record.id === activeId)
+  const editorController = useRef<{
+    fileId: string
+    controller: CanvasEditorController
+  } | null>(null)
+  const registerController = useCallback(
+    (controller: CanvasEditorController | null) => {
+      if (controller && activeId)
+        editorController.current = { fileId: activeId, controller }
+      else if (editorController.current?.fileId === activeId)
+        editorController.current = null
+    },
+    [activeId],
+  )
+  const getController = useCallback(
+    () =>
+      editorController.current?.fileId === activeId
+        ? editorController.current.controller
+        : null,
+    [activeId],
+  )
+  const bridge = useMcpBridge({
+    projectId: project.id,
+    projectName: project.name,
+    fileId: activeId,
+    getController,
+  })
   const visible = entries.filter((entry) =>
     entry.record.document.name
       .toLocaleLowerCase()
@@ -364,6 +398,15 @@ export default function FileWorkspace({
                   ? 'Saved in this browser'
                   : 'Session only'}
             </small>
+            {bridge.status === 'sharing' && (
+              <span
+                className="mcp-focus-sharing"
+                role="status"
+                title="This canvas is shared through MCP"
+              >
+                MCP
+              </span>
+            )}
           </span>
           <button
             className="button secondary"
@@ -601,6 +644,7 @@ export default function FileWorkspace({
                 onDocumentChange={changeDocument}
                 focusMode={focused}
                 onToggleFocus={toggleFocus}
+                onControllerReady={registerController}
               />
             ) : (
               <div className="viewer-empty" data-grid={preferences.grid}>
@@ -645,6 +689,11 @@ export default function FileWorkspace({
                     : 'Session only · Export a backup'
                 : 'No canvas open'}
             </span>
+            {bridge.status === 'sharing' && (
+              <span className="mcp-sharing-status" role="status">
+                MCP sharing
+              </span>
+            )}
             <span>
               {active
                 ? `${active.record.document.elements.length} objects · LCANVAS`
@@ -653,52 +702,19 @@ export default function FileWorkspace({
           </div>
         </div>
         {aiOpen && (
-          <aside
-            className="workspace-ai-panel"
-            id="workspace-ai-panel"
-            aria-labelledby="workspace-ai-title"
-          >
-            <div className="file-panel-heading">
-              <h2 id="workspace-ai-title">Workspace AI</h2>
-              <button
-                className="icon-button"
-                aria-label="Close AI panel"
-                onClick={() => {
-                  setAiOpen(false)
-                  document
-                    .querySelector<HTMLButtonElement>(
-                      '[aria-controls="workspace-ai-panel"]',
-                    )
-                    ?.focus()
-                }}
-              >
-                <Icon name="close" />
-              </button>
-            </div>
-            <div className="ai-context-mark">
-              <Icon name="work" />
-            </div>
-            <p className="eyebrow">Current context</p>
-            <dl className="ai-context">
-              <dt>Project</dt>
-              <dd>{project.name}</dd>
-              <dt>Canvas</dt>
-              <dd>{active?.record.document.name ?? 'No canvas open'}</dd>
-              <dt>Client</dt>
-              <dd>ChatGPT · planned integration</dd>
-            </dl>
-            <div className="ai-status-card">
-              <span className="status-dot" />
-              <strong>AI not connected</strong>
-              <p>
-                MCP service is not available yet. This panel follows your
-                current project and canvas.
-              </p>
-            </div>
-            <p className="ai-panel-note">
-              No workspace data is being sent to an AI client.
-            </p>
-          </aside>
+          <WorkspaceAI
+            projectName={project.name}
+            canvasName={active?.record.document.name ?? null}
+            bridge={bridge}
+            onClose={() => {
+              setAiOpen(false)
+              document
+                .querySelector<HTMLButtonElement>(
+                  '[aria-controls="workspace-ai-panel"]',
+                )
+                ?.focus()
+            }}
+          />
         )}
       </div>
       <p className="viewer-scope-note">

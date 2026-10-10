@@ -1,6 +1,7 @@
 import {
   useEffect,
   useId,
+  useLayoutEffect,
   useRef,
   useState,
   type CSSProperties,
@@ -34,6 +35,11 @@ import {
   type EditorHistory,
 } from './editorHistory'
 import { CanvasInspector } from './CanvasInspector'
+import {
+  applyCanvasCommand,
+  type CanvasCommandResult,
+} from '../mcp/canvasCommands'
+import type { BridgeCommand } from '../mcp/bridgeProtocol'
 import './canvas-viewer.css'
 import './canvas-editor.css'
 
@@ -46,6 +52,12 @@ export type CanvasEditorProps = {
   rightInset?: number
   focusMode?: boolean
   onToggleFocus?: () => void
+  onControllerReady?: (controller: CanvasEditorController | null) => void
+}
+
+export type CanvasEditorController = {
+  getDocument: () => CanvasDocument
+  execute: (command: BridgeCommand) => CanvasCommandResult
 }
 
 type Mode = 'select' | 'pan' | 'connect'
@@ -288,6 +300,7 @@ export default function CanvasEditor({
   rightInset = 0,
   focusMode = false,
   onToggleFocus,
+  onControllerReady,
 }: CanvasEditorProps) {
   const [history, setHistory] = useState(() => createEditorHistory(document))
   const currentHistory = useRef(history)
@@ -317,6 +330,23 @@ export default function CanvasEditor({
     ? layerId
     : board.layers[0].id
   const selectedBounds = selected ? elementBounds(board, selected) : null
+  const executeCommand = useRef<
+    (command: BridgeCommand) => CanvasCommandResult
+  >(() => {
+    throw new Error('The canvas editor is not ready.')
+  })
+  const currentName = useRef(document.name)
+  const controller = useRef<CanvasEditorController>({
+    getDocument: () => {
+      // A pointer preview is not a committed canvas change.
+      const present =
+        gesture.current?.history.present ?? currentHistory.current.present
+      return present.name === currentName.current
+        ? present
+        : { ...present, name: currentName.current }
+    },
+    execute: (command) => executeCommand.current(command),
+  })
 
   function openInspector() {
     if (aiOpen) onToggleAI()
@@ -340,6 +370,66 @@ export default function CanvasEditor({
     showHistory(commitEditorHistory(currentHistory.current, next))
     setError('')
   }
+
+  function executeBridgeCommand(command: BridgeCommand): CanvasCommandResult {
+    if (gesture.current) throw new Error('Finish the current drag first.')
+    if (command.kind === 'undo' || command.kind === 'redo') {
+      const before = controller.current.getDocument()
+      showHistory(
+        command.kind === 'undo'
+          ? undoEditorHistory(currentHistory.current)
+          : redoEditorHistory(currentHistory.current),
+      )
+      const after = controller.current.getDocument()
+      const ids = new Set([
+        ...before.elements.map((element) => element.id),
+        ...after.elements.map((element) => element.id),
+      ])
+      const affectedIds = new Set(
+        [...ids].filter(
+          (id) =>
+            JSON.stringify(
+              before.elements.find((element) => element.id === id),
+            ) !==
+            JSON.stringify(after.elements.find((element) => element.id === id)),
+        ),
+      )
+      for (const element of after.elements)
+        if (
+          element.type === 'connection' &&
+          (affectedIds.has(element.fromId) || affectedIds.has(element.toId))
+        )
+          affectedIds.add(element.id)
+      for (const [index, layer] of after.layers.entries())
+        if (JSON.stringify(before.layers[index]) !== JSON.stringify(layer))
+          affectedIds.add(layer.id)
+      for (const layer of before.layers)
+        if (!after.layers.some((candidate) => candidate.id === layer.id))
+          affectedIds.add(layer.id)
+      return {
+        document: after,
+        affectedIds: [...affectedIds],
+        summary: sameDocument(before, after)
+          ? `Nothing to ${command.kind}.`
+          : command.kind === 'undo'
+            ? 'Undid the latest canvas change.'
+            : 'Redid the latest canvas change.',
+      }
+    }
+    const result = applyCanvasCommand(controller.current.getDocument(), command)
+    commit(result.document)
+    return { ...result, document: controller.current.getDocument() }
+  }
+
+  useLayoutEffect(() => {
+    currentName.current = document.name
+    executeCommand.current = executeBridgeCommand
+  })
+
+  useEffect(() => {
+    onControllerReady?.(controller.current)
+    return () => onControllerReady?.(null)
+  }, [onControllerReady])
 
   function safely(action: () => void) {
     try {

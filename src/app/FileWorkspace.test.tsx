@@ -272,9 +272,9 @@ describe('LCANVAS project workspace', () => {
     const panel = screen.getByRole('complementary', { name: 'Workspace AI' })
     expect(within(panel).getByText(project.name)).toBeInTheDocument()
     expect(within(panel).getByText('Second canvas')).toBeInTheDocument()
-    expect(within(panel).getByText('AI not connected')).toBeInTheDocument()
+    expect(within(panel).getByText('Canvas is not shared')).toBeInTheDocument()
     expect(
-      within(panel).getByText(/MCP service is not available yet/),
+      within(panel).getByText(/Connect the local companion/),
     ).toBeInTheDocument()
     fireEvent.click(
       screen.getByRole('button', { name: 'Open canvas First canvas' }),

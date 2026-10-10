@@ -54,8 +54,18 @@
 - Request native fullscreen when supported while keeping an in-app focus fallback. Hide surrounding navigation/files/tabs, fit the visible objects and preserve editing/Save/Export/exit controls. Guard against a native fullscreen request completing after Escape or unmount.
 - Preserve the honest disconnected AI panel. A live authenticated bridge and actual ChatGPT MCP calls remain the next task; shared manual operations are preparation, not proof of connectivity.
 
+## 2026-10-10 — ChatGPT MCP integration
+
+- The owner requested ChatGPT MCP plugin integration and confirmed that the web custom MCP server option is visible. Implement the required local companion, browser bridge and prepared plugin/tunnel setup without exposing the development website or automatically changing account settings.
+- Pin official TypeScript MCP SDK v2 and Zod after reviewing registry/API/license sources. Bundle a separate Node.js 24 companion; preserve the native Node-free website launcher. No model inference API is called, and no tunnel client or Node runtime is redistributed.
+- Use distinct random credentials for browser pairing and MCP access. One explicit tab/file owns authority; switching files/leaving Work/Stop sharing ends it. A five-second heartbeat lease handles disconnected browsers. Only exact local Host/origins and bounded authenticated requests are accepted.
+- Require current session/revision and an operation ID for all writes. The open editor validates again, commits to shared history and acknowledges; success is never inferred from queueing. Repeated identical operation IDs return their prior result; a timeout requires reading current state or retrying that same ID. Expired commands do not execute.
+- Keep bounded reads (100 objects), batches (25 operations), cumulative deletes (10 objects), and 128 logical operations per sharing session. Larger destructive operations are unsupported. AI changes remain unsaved until Save. Undo/Redo affect the latest manual or AI action.
+- Recognize a native launcher's fallback port only through the same packaged folder's registration and matching bounded health probe at companion startup. Keep exact origin checks; do not authorize arbitrary local ports. Open the website before its companion and restart the companion when the website address changes.
+- Prepare OpenAI Secure MCP Tunnel with private local bearer injection for ChatGPT web, and a local desktop plugin manifest. The helper is manually invoked and keeps a dedicated runtime profile. Account/tunnel permissions, billing and actual ChatGPT calls remain unverified; local SDK/browser tests are not evidence of a connected ChatGPT account.
+
 ## Remaining open decisions
 
 - Whether SIL OFL 1.1 is acceptable specifically for engine fonts, or a supported replacement is needed.
 - Whether the owner's ChatGPT account can invoke custom write tools, and which secure transport is available with acceptable cost.
-- How future agent-callable undo/redo will integrate with the engine's supported public API.
+- Whether future editor expansion warrants adopting a separate drawing engine.
