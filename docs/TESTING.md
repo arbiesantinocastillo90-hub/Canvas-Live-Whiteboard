@@ -32,9 +32,9 @@ Open `http://127.0.0.1:5173`. Dev startup uses a strict port; if it is occupied,
 
 ## Current coverage
 
-The initial component smoke test mounts the workspace, checks its main heading and home link, and ensures disconnected AI/non-editable board status are represented honestly. This verifies the React/test pipeline, not drawing or AI control. Startup checks verify that the loopback dev server serves the HTML and transformed app module.
+The suite now includes workspace metadata validation/storage tests and UI flows for project creation, naming, reopening, search, theme persistence/reset, live system appearance and unavailable storage. It checks the supplied logo reference and keeps canvas editing/AI states explicit. These tests verify the section/theme behavior, not drawing or AI control. See [UI_WORKSPACE.md](UI_WORKSPACE.md) for actual results and browser checks.
 
-There are no canvas, persistence, MCP, synchronization or real-browser end-to-end tests yet because those features have not been implemented. jsdom does not verify browser rendering or engine history. These require milestone-specific runtime tests when the features are added.
+There are no canvas document persistence, MCP, synchronization or automated real-browser end-to-end tests yet because those features have not been implemented. Browser-local project metadata is tested separately. jsdom does not verify browser rendering or engine history; this update also receives a browser UI check. Future canvas features require their own runtime tests.
 
 The Windows launcher has a separate integration test. Run `npm.cmd run package:windows`, then `npm.cmd run test:launcher`. It copies the package to a temporary folder with spaces and checks startup from an unrelated working directory, packaged assets/notices, HTTP restrictions, occupied-port fallback, repeated launch, restart recovery and missing-file errors. The executed result was **24 passed checks**. It uses `--no-browser` and force-stops its own processes; it does not exercise the tray's Close action or observe the operating system's default-browser window. See [WINDOWS_LAUNCHER.md](WINDOWS_LAUNCHER.md) for the normal-launch browser check and coverage limits.
 

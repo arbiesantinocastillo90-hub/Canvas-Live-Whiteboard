@@ -4,7 +4,7 @@ Version of Canvas OS that multiple users and AI's could interact and collaborate
 
 ## Development status
 
-Milestone 0 provides a React/TypeScript app shell and development checks. The preview clearly marks that drawing, saving and AI editing are not implemented yet. The canvas-engine proof of concept is next.
+The workspace includes customizable themes, Options, Projects with recent openings, and Work that returns to the latest project. Project names and preferences are remembered in this browser. Drawing, canvas document saving and AI editing remain upcoming features. The canvas-engine proof of concept is next.
 
 - [Project specification](PROJECT_SPEC.md)
 - [Agent instructions](AGENTS.md)
@@ -13,6 +13,7 @@ Milestone 0 provides a React/TypeScript app shell and development checks. The pr
 - [Setup and testing](docs/TESTING.md)
 - [Milestone 0 verification results](docs/MILESTONE_0.md)
 - [Windows executable and verification](docs/WINDOWS_LAUNCHER.md)
+- [Themes, Projects and Work](docs/UI_WORKSPACE.md)
 - [Architecture](docs/ARCHITECTURE.md)
 - [Dependencies and licenses](docs/LICENSES.md)
 
@@ -22,7 +23,7 @@ Project brain: `D:\Canvas Live`. Initial AI client: ChatGPT. The MVP is local-fi
 
 For the packaged version, open `release/Canvas Live` and double-click **Canvas Live.exe**. It starts the local website and opens your default browser. Keep the complete folder together, including `app/` and the executable configuration file. This package runs without Node.js or a terminal. Right-click its Windows tray icon and choose **Close Canvas Live** when finished.
 
-The package contains the current foundation preview. Drawing, saving and AI editing remain upcoming features. See [WINDOWS_LAUNCHER.md](docs/WINDOWS_LAUNCHER.md) for rebuilding, testing and verification limits.
+The package contains the current workspace with themes and remembered project names. Drawing, canvas saving and AI editing remain upcoming features. See [WINDOWS_LAUNCHER.md](docs/WINDOWS_LAUNCHER.md) for rebuilding and testing, and [UI_WORKSPACE.md](docs/UI_WORKSPACE.md) for the latest interface.
 
 ### Development
 
