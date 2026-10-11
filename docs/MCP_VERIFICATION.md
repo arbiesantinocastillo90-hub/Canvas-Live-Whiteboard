@@ -28,6 +28,16 @@ A real native fallback check copied the entire release to a temporary folder wit
 
 The optional full Windows OpenAI tunnel client **v0.0.16** was downloaded into `test-results/tunnel-client/v0.0.16/full-client/`. Published archive/SPDX/license checksums, Sigstore provenance for the official release workflow, the embedded SPDX sidecar and all six extracted payload hashes were verified. Apache 2.0 license and notices were retained. Version and command help checks confirmed the helper's required flags. No key was read and no tunnel was started. Its local `verification-report.json` records provenance and the exact executable path.
 
+## Navigation conflict fix — 2026-10-11
+
+Completed camera pan and zoom no longer invalidate ordinary AI edits, and edits preserve the latest viewport. Content changes still reject stale reads and queued writes. Undo/Redo require the full current revision. Active pointer drags still block execution until released. The browser and companion negotiate and validate a content revision so navigation between execution and acknowledgment cannot make later writes fail while idle; older companions retain strict checks.
+
+Final types, lint and formatting passed. The application suite passed **289 tests** with two workers; the MCP suite passed **63 tests**, including **38 companion/protocol cases**. Production app and companion builds passed with the unchanged **232-package** license gate. An initial mirror formatting check found an outdated test-file copy; synchronizing the formatted source resolved it before the final gate.
+
+All **9 isolated production Chrome/SDK scenarios** passed with zero browser runtime errors. They cover camera changes after reads and during pending responses, content conflict recovery with a new operation ID, camera movement between AI execution and acknowledgment followed by another successful edit, exact-revision Undo/Redo, and Save/export/reload. Test ports and storage were separate from the owner's workspace. Reports and screenshots are retained in `test-results/mcp-camera-*`.
+
+The built update is staged as **9 hash-verified files** for the existing Windows folder. The local updater passed **21 fixture checks** for package identity, changed/missing files, Windows path safety, service refusal and private-file preservation. Apply it only after saving canvases and stopping the website, companion and tunnel, then restart and pair/share again. The owner's private tunnel launcher/client and credential folder are preserved. Actual ChatGPT writes through the updated package remain an acceptance step.
+
 ## Changed source and artifacts
 
 - `src/mcp/`: validated transport-independent commands, read helpers, atomic batches and bridge protocol types.
@@ -39,8 +49,10 @@ The optional full Windows OpenAI tunnel client **v0.0.16** was downloaded into `
 
 ## Remaining acceptance and limits
 
-**An actual ChatGPT account connection has not been verified.** The owner confirmed that ChatGPT's custom MCP form offers both Server URL and Tunnel. ChatGPT web still needs a tunnel associated with the intended workspace and a locally configured runtime key. The optional desktop package also needs installation and credential entry in its target client. Follow [CHATGPT_MCP.md](CHATGPT_MCP.md) and record actual ChatGPT tool calls and observed browser effects before calling that connection complete.
+**The owner's ChatGPT plugin is installed and has read the shared canvas.** The owner supplied a Connected screenshot and a ChatGPT response describing the existing rectangle. An attempted additional rectangle was rejected after intervening canvas changes; the owner subsequently confirmed moving the canvas during the attempt. A fresh live edit after the revision fix still requires confirmation. The optional desktop package also needs installation and credential entry in its target client. Follow [CHATGPT_MCP.md](CHATGPT_MCP.md) and record actual ChatGPT tool calls and observed browser effects before calling editing acceptance complete.
 
 Reads reflect the latest browser-published snapshot and can lag a manual change by the polling interval. Writes are checked again in the browser. Suspended/background tabs can lose their five-second sharing lease; re-share on return. Only one browser tab owns the companion at a time. Undo/Redo can reverse the most recent manual or AI action. Restarting the companion regenerates credentials and requires pairing again.
+
+Ordinary edits compare the last revision that changed canvas content, allowing intervening camera-only pan and zoom while retaining the latest viewport. Public revisions still advance for camera changes. Undo/Redo use the full revision because camera changes also belong to editor history. Content changes invalidate queued or older writes, including a published change later undone to the same content. Finish active drags before editing. Recovery requires a fresh read and a new operation identifier; identical retries retain their original outcome.
 
 The companion is an optional Node.js 24 process. The native website executable continues to run independently. No public endpoint, tunnel, ChatGPT account installation or recurring paid service was created by these checks. Default-browser opening and the tray's graceful Close action require separate UI observation; launcher tests use their existing headless mode.

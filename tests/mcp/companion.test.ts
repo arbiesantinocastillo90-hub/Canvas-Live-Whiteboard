@@ -186,10 +186,13 @@ async function fixture(bridge = new CanvasBridge()) {
     expect(value(result).ok).toBe(true)
     return result
   }
-  async function manual(document: CanvasDocument) {
+  async function manual(
+    document: CanvasDocument,
+    extra: Record<string, unknown> = {},
+  ) {
     history = commitEditorHistory(history, document)
     revision++
-    const response = await poll()
+    const response = await poll(extra)
     expect(response.status).toBe(200)
     return (await response.json()) as BridgeResponse
   }
@@ -525,6 +528,180 @@ describe('official MCP client against the local companion', () => {
     ).toBeUndefined()
   })
 
+  it('accepts an ordinary edit after camera changes since its read and preserves the current viewport', async () => {
+    await active.share()
+    const original = {
+      ...active.target('camera-before-write'),
+      element: rectangle,
+    }
+    await active.manual({
+      ...active.document,
+      viewport: { x: 120, y: -40, zoom: 1 },
+    })
+    await active.manual({
+      ...active.document,
+      viewport: { x: 120, y: -40, zoom: 1.5 },
+    })
+    expect(value(await active.tool('get_canvas_state')).revision).toBe(2)
+
+    const pending = active.tool('create_shape', original)
+    const request = await active.receiveCommand()
+    expect(request).toMatchObject({
+      expectedRevision: 0,
+      expectedContentRevision: 0,
+    })
+    await active.acknowledge(request)
+
+    expect(value(await pending)).toMatchObject({ ok: true, revision: 3 })
+    expect(value(await active.tool('get_canvas_state'))).toMatchObject({
+      revision: 3,
+      viewport: { x: 120, y: -40, zoom: 1.5 },
+      elements: [{ id: 'one' }],
+    })
+  })
+
+  it('keeps an ordinary edit queued through camera changes and still requires its acknowledgment', async () => {
+    await active.share()
+    const pending = active.tool('create_shape', {
+      ...active.target('camera-while-queued'),
+      element: rectangle,
+    })
+    const request = await active.receiveCommand()
+    const publication = await active.manual({
+      ...active.document,
+      viewport: { x: -90, y: 60, zoom: 0.75 },
+    })
+    expect(publication.command).toEqual(request)
+    expect(value(await active.tool('get_canvas_state'))).toMatchObject({
+      revision: 1,
+      elements: [],
+    })
+
+    await active.acknowledge(request)
+    expect(value(await pending)).toMatchObject({ ok: true, revision: 2 })
+    expect(value(await active.tool('get_canvas_state'))).toMatchObject({
+      viewport: { x: -90, y: 60, zoom: 0.75 },
+      elements: [{ id: 'one' }],
+    })
+  })
+
+  it('rejects a read before a content change but accepts that content revision after later camera changes', async () => {
+    await active.share()
+    const original = active.target('stale-content-before-camera')
+    await active.manual(
+      applyCanvasCommand(active.document, {
+        kind: 'create',
+        element: { ...rectangle, id: 'manual' },
+      }).document,
+    )
+    await active.manual({
+      ...active.document,
+      viewport: { x: 20, y: 30, zoom: 2 },
+    })
+    const stale = value(
+      await active.tool('create_shape', { ...original, element: rectangle }),
+    )
+    expect(stale.error?.code).toBe('STALE_REVISION')
+    expect(
+      ((await (await active.poll()).json()) as BridgeResponse).command,
+    ).toBeUndefined()
+
+    const pending = active.tool('create_shape', {
+      ...original,
+      expectedRevision: 1,
+      operationId: 'read-after-content-before-camera',
+      element: rectangle,
+    })
+    const request = await active.receiveCommand()
+    expect(request.expectedContentRevision).toBe(1)
+    await active.acknowledge(request)
+    expect(value(await pending).ok).toBe(true)
+    expect(active.document.elements.map((element) => element.id)).toEqual([
+      'manual',
+      'one',
+    ])
+  })
+
+  it('rejects an old read even when intervening content changes are undone back to the same content', async () => {
+    await active.share()
+    const original = active.target('content-changed-and-restored')
+    await active.manual(
+      applyCanvasCommand(active.document, {
+        kind: 'create',
+        element: { ...rectangle, id: 'temporary' },
+      }).document,
+    )
+    active.apply({ kind: 'undo' })
+    expect((await active.poll()).status).toBe(200)
+    await active.manual({
+      ...active.document,
+      viewport: { x: 50, y: 0, zoom: 1 },
+    })
+    expect(active.document.elements).toEqual([])
+    expect(active.revision).toBe(3)
+    const stale = value(
+      await active.tool('create_shape', { ...original, element: rectangle }),
+    )
+    expect(stale.error?.code).toBe('STALE_REVISION')
+    expect(
+      ((await (await active.poll()).json()) as BridgeResponse).command,
+    ).toBeUndefined()
+  })
+
+  it.each(['create_shape', 'undo_operation', 'redo_operation'])(
+    'rejects a future revision for %s without queuing an operation',
+    async (name) => {
+      await active.share()
+      const rejected = value(
+        await active.tool(name, {
+          ...active.target('future-revision'),
+          expectedRevision: 1,
+          ...(name === 'create_shape' ? { element: rectangle } : {}),
+        }),
+      )
+      expect(rejected.error?.code).toBe('STALE_REVISION')
+      expect(
+        ((await (await active.poll()).json()) as BridgeResponse).command,
+      ).toBeUndefined()
+      expect(active.document.elements).toEqual([])
+    },
+  )
+
+  it.each(['undo_operation', 'redo_operation'])(
+    'requires the current full revision for %s after a camera change',
+    async (name) => {
+      await active.share()
+      const original = active.target('history-before-camera')
+      await active.manual({
+        ...active.document,
+        viewport: { x: 40, y: 80, zoom: 1 },
+      })
+      const rejected = value(await active.tool(name, original))
+      expect(rejected.error?.code).toBe('STALE_REVISION')
+      expect(
+        ((await (await active.poll()).json()) as BridgeResponse).command,
+      ).toBeUndefined()
+      expect(active.document.viewport).toEqual({ x: 40, y: 80, zoom: 1 })
+    },
+  )
+
+  it.each(['undo_operation', 'redo_operation'])(
+    'invalidates queued %s when the camera changes',
+    async (name) => {
+      await active.share()
+      const pending = active.tool(name, active.target('queued-history-camera'))
+      const request = await active.receiveCommand()
+      expect(request.expectedContentRevision).toBeUndefined()
+      const publication = await active.manual({
+        ...active.document,
+        viewport: { x: 10, y: 20, zoom: 1.25 },
+      })
+      expect(publication.command).toBeUndefined()
+      expect(value(await pending).error?.code).toBe('STALE_REVISION')
+      expect(active.document.viewport).toEqual({ x: 10, y: 20, zoom: 1.25 })
+    },
+  )
+
   it('rejects malformed tool schemas on the server without canvas changes', async () => {
     await active.share()
     for (const argumentsValue of [
@@ -603,7 +780,12 @@ describe('official MCP client against the local companion', () => {
       ...active.target('pending'),
       element: rectangle,
     })
-    await active.receiveCommand()
+    const request = await active.receiveCommand()
+    const cameraPublication = await active.manual({
+      ...active.document,
+      viewport: { x: 25, y: 50, zoom: 1 },
+    })
+    expect(cameraPublication.command).toEqual(request)
     const busy = value(
       await active.tool('create_shape', {
         ...active.target('conflict'),
@@ -648,6 +830,163 @@ describe('official MCP client against the local companion', () => {
 })
 
 describe('browser ownership and acknowledgment security', () => {
+  it('preserves the browser content stamp when an AI acknowledgment includes a later camera revision', async () => {
+    expect(await active.share()).toMatchObject({ contentRevision: 0 })
+    const pending = active.tool('create_shape', {
+      ...active.target('ai-before-camera'),
+      element: rectangle,
+    })
+    const command = await active.receiveCommand()
+    const fields = active.apply(command.command)
+    const aiDocument = structuredClone(active.document)
+    const camera = { x: 120, y: -80, zoom: 1.5 }
+    const publication = await active.manual(
+      { ...active.document, viewport: camera },
+      {
+        contentRevision: 1,
+        ack: {
+          requestId: command.requestId,
+          ok: true,
+          revision: 1,
+          document: aiDocument,
+          ...fields,
+        },
+      },
+    )
+    expect(publication).toMatchObject({
+      ackId: command.requestId,
+      contentRevision: 1,
+    })
+    expect(value(await pending)).toMatchObject({ ok: true, revision: 2 })
+    const state = value(await active.tool('get_canvas_state'))
+    expect(state).toMatchObject({ revision: 2, viewport: camera })
+
+    const next = active.tool('update_shape', {
+      ...active.target('edit-after-mixed-ack'),
+      expectedRevision: state.revision,
+      id: 'one',
+      patch: { text: 'Second confirmed edit' },
+    })
+    const nextCommand = await active.receiveCommand()
+    expect(nextCommand).toMatchObject({
+      expectedRevision: 2,
+      expectedContentRevision: 1,
+    })
+    await active.acknowledge(nextCommand)
+    expect(value(await next)).toMatchObject({ ok: true, revision: 3 })
+    expect(active.document).toMatchObject({
+      viewport: camera,
+      elements: [{ id: 'one', text: 'Second confirmed edit' }],
+    })
+  })
+
+  it('rejects invalid content stamps before accepting an otherwise valid acknowledgment', async () => {
+    await active.share()
+    const pending = active.tool('create_shape', {
+      ...active.target('stamp-validation'),
+      element: rectangle,
+    })
+    const command = await active.receiveCommand()
+    const fields = active.apply(command.command)
+    const ack = {
+      requestId: command.requestId,
+      ok: true,
+      revision: 1,
+      document: active.document,
+      ...fields,
+    }
+    for (const contentRevision of [0, 2]) {
+      const invalid = await active.poll({ contentRevision, ack })
+      expect(invalid.status).toBe(409)
+      expect(await invalid.json()).toMatchObject({
+        code: 'INVALID_CONTENT_REVISION',
+      })
+      expect(value(await active.tool('get_canvas_state'))).toMatchObject({
+        revision: 0,
+        elements: [],
+      })
+    }
+    for (const contentRevision of [-1, 0.5, Number.MAX_SAFE_INTEGER + 1, '1']) {
+      expect((await active.poll({ contentRevision, ack })).status).toBe(400)
+      expect(value(await active.tool('get_canvas_state'))).toMatchObject({
+        revision: 0,
+        elements: [],
+      })
+    }
+    const accepted = await active.poll({ contentRevision: 1, ack })
+    expect(accepted.status).toBe(200)
+    expect(await accepted.json()).toMatchObject({
+      ackId: command.requestId,
+      contentRevision: 1,
+    })
+    expect(value(await pending)).toMatchObject({ ok: true, revision: 1 })
+  })
+
+  it('requires monotonically advancing content stamps while retaining camera-only stamps', async () => {
+    await active.share()
+    await active.execute(
+      'create_shape',
+      { element: rectangle },
+      'initial-stamp',
+    )
+    const camera = { x: 50, y: -20, zoom: 0.75 }
+    const publication = await active.manual(
+      { ...active.document, viewport: camera },
+      { contentRevision: 1 },
+    )
+    expect(publication.contentRevision).toBe(1)
+    const changed = applyCanvasCommand(active.document, {
+      kind: 'update',
+      id: 'one',
+      patch: { text: 'Unaccepted change' },
+    }).document
+    for (const extra of [
+      { revision: 2, contentRevision: 2 },
+      { revision: 3, contentRevision: 0 },
+      { revision: 3, contentRevision: 2 },
+      { revision: 3, contentRevision: 4 },
+      { revision: 3, contentRevision: 1, document: changed },
+    ]) {
+      const invalid = await active.poll(extra)
+      expect(invalid.status).toBe(409)
+      expect(await invalid.json()).toMatchObject({
+        code: 'INVALID_CONTENT_REVISION',
+      })
+      expect(value(await active.tool('get_canvas_state'))).toMatchObject({
+        revision: 2,
+        viewport: camera,
+        elements: [{ text: 'First' }],
+      })
+    }
+    expect(
+      (
+        (await (
+          await active.poll({ contentRevision: 1 })
+        ).json()) as BridgeResponse
+      ).contentRevision,
+    ).toBe(1)
+  })
+
+  it('accepts an advanced content stamp when intervening edits restore the same content', async () => {
+    await active.share()
+    const publication = await active.poll({ revision: 2, contentRevision: 2 })
+    expect(publication.status).toBe(200)
+    expect(await publication.json()).toMatchObject({ contentRevision: 2 })
+    const stale = value(
+      await active.tool('create_shape', {
+        sessionId: active.sessionId,
+        expectedRevision: 0,
+        operationId: 'before-restored-content',
+        element: rectangle,
+      }),
+    )
+    expect(stale.error?.code).toBe('STALE_REVISION')
+    expect(value(await active.tool('get_canvas_state'))).toMatchObject({
+      revision: 2,
+      elements: [],
+    })
+  })
+
   it('accepts an AI acknowledgment alongside a newer manual revision without losing either change', async () => {
     await active.share()
     const pending = active.tool('create_shape', {
@@ -847,6 +1186,13 @@ describe('browser ownership and acknowledgment security', () => {
     const noRevision = await active.poll({ document: changed })
     expect(noRevision.status).toBe(409)
     expect(await noRevision.json()).toMatchObject({ code: 'REVISION_REQUIRED' })
+    const unrevisionedCamera = await active.poll({
+      document: { ...active.document, viewport: { x: 1, y: 0, zoom: 1 } },
+    })
+    expect(unrevisionedCamera.status).toBe(409)
+    expect(await unrevisionedCamera.json()).toMatchObject({
+      code: 'REVISION_REQUIRED',
+    })
     expect(value(await active.tool('get_canvas_state'))).toMatchObject({
       revision: 0,
       elements: [],

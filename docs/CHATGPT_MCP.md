@@ -17,6 +17,8 @@ The active shared file can include unsaved changes. AI edits join the editor's u
 
 Start every workflow with `get_canvas_state`. Use its `sessionId` for subsequent calls and its latest `revision` as `expectedRevision` for writes. Each write also requires a unique `operationId`; reuse that identifier only when retrying the same logical change with the same arguments. A completed retry returns the previous result instead of applying the change twice.
 
+Ordinary AI edits tolerate completed camera pan and zoom changes after a read and keep your current view. Moving/resizing objects, changing text, layers or canvas names still requires a fresh read. Finish an active drag before asking for an edit. After a revision conflict, ChatGPT must read the current state and use that revision with a **new** operation identifier. Undo/Redo require the exact latest revision, including camera changes, because they act on the shared manual/AI history.
+
 ## ChatGPT web: private tunnel
 
 OpenAI's [Secure MCP Tunnel guide](https://developers.openai.com/api/docs/guides/secure-mcp-tunnels) requires a Platform tunnel identifier and a runtime key. Tunnel creation requires **Tunnels Read + Manage**; running the client requires **Tunnels Read + Use**. Associate the tunnel with the ChatGPT workspace that will use it. Account access and any applicable tunnel billing have not been verified for this owner; this integration does not create a subscription or call the model API.
@@ -109,7 +111,7 @@ Record the tool name, target file, arguments, result and observed browser change
 | Tunnel is not ready              | Run `tunnel-client doctor`; inspect its local health UI and the local companion.                        |
 | MCP request is unauthorized      | Local bearer token matches the current session file; browser pairing code is not used as the MCP token. |
 | No shared canvas                 | Open a file and select Share this canvas; keep that browser tab running.                                |
-| Revision/session conflict        | Call `get_canvas_state` again and use the newly returned identifiers/revision.                          |
+| Revision/session conflict        | Finish any drag, call `get_canvas_state` again, and use its session/revision with a new operation ID.   |
 | A tool is absent after an update | Restart the companion, refresh the connection's tools in ChatGPT and start a new conversation.          |
 | Changes disappear after reload   | Choose Save before reloading; MCP edits are not automatic file saves.                                   |
 

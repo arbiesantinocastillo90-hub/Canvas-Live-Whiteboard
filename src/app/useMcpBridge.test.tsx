@@ -126,6 +126,8 @@ describe('explicit single-canvas MCP browser sharing', () => {
     await test.share()
     expect(test.result.current.status).toBe('sharing')
     expect(test.polls()[0].document.name).toBe('Shared canvas')
+    // Legacy companions reject unknown poll fields; only send an advertised stamp.
+    expect(test.polls()[0]).not.toHaveProperty('contentRevision')
     expect(test.fetchMock.mock.calls[0][1].headers).toMatchObject({
       Authorization: `Bearer ${token}`,
     })

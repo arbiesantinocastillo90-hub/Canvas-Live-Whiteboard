@@ -6,6 +6,7 @@ export type BridgeRequest = {
   requestId: string
   sessionId: string
   expectedRevision: number
+  expectedContentRevision?: number
   expiresAt: number
   command: BridgeCommand
 }
@@ -21,6 +22,7 @@ export type BridgeAcknowledgment = {
 export type BridgeResponse = {
   sessionId?: string
   revision?: number
+  contentRevision?: number
   command?: BridgeRequest
   ackId?: string
   mcpClient: string | null

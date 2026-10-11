@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { z } from 'zod/v4'
 import { validateCanvasDocument, type CanvasDocument } from '../src/app/lcanvas'
 import { applyCanvasCommand } from '../src/mcp/canvasCommands'
+import { serializedCanvasContent } from '../src/mcp/canvasRevision'
 import type {
   BridgeCommand,
   BridgeRequest,
@@ -29,6 +30,7 @@ const pollSchema = z.strictObject({
   clientId: id,
   sessionId: id,
   revision,
+  contentRevision: revision.optional(),
   document: documentSchema,
   ack: z
     .strictObject({
@@ -70,6 +72,7 @@ type Owner = {
   projectName: string
   document: CanvasDocument
   revision: number
+  contentRevision: number
   lastSeen: number
 }
 type Job = {
@@ -160,6 +163,7 @@ export class CanvasBridge {
         ...this.status(),
         sessionId: this.owner.sessionId,
         revision: this.owner.revision,
+        contentRevision: this.owner.contentRevision,
       }
     }
     this.revoke()
@@ -167,9 +171,15 @@ export class CanvasBridge {
       ...data,
       sessionId: randomUUID(),
       revision: 0,
+      contentRevision: 0,
       lastSeen: Date.now(),
     }
-    return { ...this.status(), sessionId: this.owner.sessionId, revision: 0 }
+    return {
+      ...this.status(),
+      sessionId: this.owner.sessionId,
+      revision: 0,
+      contentRevision: 0,
+    }
   }
   disconnect(input: unknown) {
     const data = disconnectSchema.parse(input)
@@ -198,7 +208,26 @@ export class CanvasBridge {
         'REVISION_REQUIRED',
         'Changed canvas content needs a new revision.',
       )
-    // Reject a malformed acknowledgment before accepting any browser state.
+    const contentChanged =
+      serializedCanvasContent(data.document) !==
+      serializedCanvasContent(owner.document)
+    const contentRevision =
+      data.contentRevision ??
+      (contentChanged ? data.revision : owner.contentRevision)
+    if (
+      contentRevision > data.revision ||
+      contentRevision < owner.contentRevision ||
+      (contentRevision !== owner.contentRevision &&
+        contentRevision <= owner.revision) ||
+      (contentChanged && contentRevision === owner.contentRevision) ||
+      (data.revision === owner.revision &&
+        contentRevision !== owner.contentRevision)
+    )
+      throw new BridgeError(
+        'INVALID_CONTENT_REVISION',
+        'The browser content revision does not match its canvas revision.',
+      )
+    // Reject malformed revisions and acknowledgments before accepting browser state.
     if (data.ack) {
       const candidate = this.jobs.get(data.ack.requestId)
       if (!candidate || candidate.request.sessionId !== owner.sessionId)
@@ -218,6 +247,7 @@ export class CanvasBridge {
           'The browser acknowledgment does not match its canvas revision.',
         )
     }
+    owner.contentRevision = contentRevision
     owner.document = data.document
     owner.revision = data.revision
     owner.lastSeen = Date.now()
@@ -249,7 +279,10 @@ export class CanvasBridge {
     }
     if (
       this.pending &&
-      (this.pending.request.expectedRevision !== owner.revision ||
+      ((this.pending.request.expectedContentRevision === undefined
+        ? this.pending.request.expectedRevision !== owner.revision
+        : this.pending.request.expectedContentRevision !==
+          owner.contentRevision) ||
         this.pending.request.expiresAt <= Date.now())
     ) {
       this.finish(
@@ -262,6 +295,7 @@ export class CanvasBridge {
     }
     return {
       ...this.status(),
+      contentRevision: owner.contentRevision,
       ...(ackId ? { ackId } : {}),
       ...(this.pending ? { command: this.pending.request } : {}),
     }
@@ -301,7 +335,13 @@ export class CanvasBridge {
         ? Promise.resolve(previous.outcome)
         : previous.promise
     }
-    if (expectedRevision !== owner.revision)
+    const historyCommand = command.kind === 'undo' || command.kind === 'redo'
+    if (
+      expectedRevision > owner.revision ||
+      (historyCommand
+        ? expectedRevision !== owner.revision
+        : expectedRevision < owner.contentRevision)
+    )
       throw new BridgeError(
         'STALE_REVISION',
         'The canvas changed. Read its current revision before editing.',
@@ -311,8 +351,7 @@ export class CanvasBridge {
         'BUSY',
         'Another canvas operation is waiting for the browser.',
       )
-    if (command.kind !== 'undo' && command.kind !== 'redo')
-      applyCanvasCommand(owner.document, command)
+    if (!historyCommand) applyCanvasCommand(owner.document, command)
     if (this.jobs.size >= 128)
       throw new BridgeError(
         'SESSION_LIMIT',
@@ -326,6 +365,9 @@ export class CanvasBridge {
       requestId: operationId,
       sessionId,
       expectedRevision,
+      ...(!historyCommand
+        ? { expectedContentRevision: owner.contentRevision }
+        : {}),
       command,
       expiresAt: Date.now() + this.operationMs,
     }

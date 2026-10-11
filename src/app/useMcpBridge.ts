@@ -1,6 +1,7 @@
 import { useLayoutEffect, useRef, useState } from 'react'
 import { commandSchema } from '../mcp/canvasCommands'
 import type { BridgeCommand } from '../mcp/bridgeProtocol'
+import { serializedCanvasContent } from '../mcp/canvasRevision'
 import type { CanvasEditorController } from './CanvasEditor'
 import { validateCanvasDocument, type CanvasDocument } from './lcanvas'
 
@@ -32,8 +33,11 @@ type Session = {
   clientId: string
   sessionId: string | null
   revision: number
+  contentRevision: number
+  supportsContentRevision: boolean
   document: CanvasDocument
   serialized: string
+  serializedContent: string
   ack: Ack | null
   handled: Map<string, Ack>
   timer: ReturnType<typeof setTimeout> | null
@@ -203,6 +207,11 @@ export default function useMcpBridge(options: Options) {
     const serialized = JSON.stringify(document)
     if (serialized !== current.serialized) {
       current.revision++
+      const content = serializedCanvasContent(document)
+      if (content !== current.serializedContent) {
+        current.contentRevision = current.revision
+        current.serializedContent = content
+      }
       current.document = document
       current.serialized = serialized
     }
@@ -217,6 +226,9 @@ export default function useMcpBridge(options: Options) {
         clientId: current.clientId,
         sessionId: current.sessionId,
         revision: current.revision,
+        ...(current.supportsContentRevision
+          ? { contentRevision: current.contentRevision }
+          : {}),
         document: current.document,
         ...(current.ack ? { ack: current.ack } : {}),
       })
@@ -254,18 +266,26 @@ export default function useMcpBridge(options: Options) {
           let ack: Ack
           try {
             const { controller } = currentDocument(current)
+            const command = parseCommand(queued.command)
+            const history = command.kind === 'undo' || command.kind === 'redo'
+            const expectedRevision = queued.expectedRevision
+            const contentMatches =
+              typeof queued.expectedContentRevision === 'number' &&
+              Number.isSafeInteger(queued.expectedContentRevision) &&
+              queued.expectedContentRevision === current.contentRevision
             if (
               queued.sessionId !== current.sessionId ||
-              queued.expectedRevision !== current.revision
+              typeof expectedRevision !== 'number' ||
+              !Number.isSafeInteger(expectedRevision) ||
+              expectedRevision < current.contentRevision ||
+              expectedRevision > current.revision ||
+              (history || queued.expectedContentRevision === undefined
+                ? expectedRevision !== current.revision
+                : !contentMatches)
             )
               throw new Error(
                 'The canvas changed while this operation was waiting. Read it again and retry.',
               )
-            if (isExpired(queued.expiresAt))
-              throw new Error(
-                'This operation expired. Read the canvas again and retry.',
-              )
-            const command = parseCommand(queued.command)
             if (isExpired(queued.expiresAt))
               throw new Error(
                 'This operation expired. Read the canvas again and retry.',
@@ -340,8 +360,11 @@ export default function useMcpBridge(options: Options) {
         clientId: crypto.randomUUID(),
         sessionId: null,
         revision: 0,
+        contentRevision: 0,
+        supportsContentRevision: false,
         document,
         serialized: JSON.stringify(document),
+        serializedContent: serializedCanvasContent(document),
         ack: null,
         handled: new Map(),
         timer: null,
@@ -362,6 +385,7 @@ export default function useMcpBridge(options: Options) {
       )
         throw new Error('The MCP companion returned an invalid canvas session.')
       current.sessionId = reply.sessionId
+      current.supportsContentRevision = reply.contentRevision === 0
       if (!isCurrent(current)) {
         notifyDisconnect(current)
         return

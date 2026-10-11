@@ -64,6 +64,13 @@
 - Recognize a native launcher's fallback port only through the same packaged folder's registration and matching bounded health probe at companion startup. Keep exact origin checks; do not authorize arbitrary local ports. Open the website before its companion and restart the companion when the website address changes.
 - Prepare OpenAI Secure MCP Tunnel with private local bearer injection for ChatGPT web, and a local desktop plugin manifest. The helper is manually invoked and keeps a dedicated runtime profile. Account/tunnel permissions, billing and actual ChatGPT calls remain unverified; local SDK/browser tests are not evidence of a connected ChatGPT account.
 
+## 2026-10-11 — Camera navigation during MCP editing
+
+- The owner reported rejected AI writes and later confirmed moving the canvas during the attempt. Idle editor and status rerenders did not change revisions in reproduction. Completed camera changes did invalidate queued writes, so address this specific conflict without removing content safeguards.
+- Keep full public revisions and shared history. Track the last full revision at which content excluding the viewport changed on both browser and companion. Ordinary edits tolerate camera-only revisions and preserve the latest view. Undo/Redo require exact full revisions; active pointer gestures still block writes.
+- After a content conflict, read again and use the new revision with a new operation identifier. Identical retries continue to return their original outcome. New browsers retain strict checks with older companions that omit the optional content stamp.
+- Update the built app and companion together. Stage the local package update while the user's live services run; retain its private tunnel launchers, client and credential folder. Activating the update requires stopping those services and restarting the tunnel through its local hidden key prompt.
+
 ## Remaining open decisions
 
 - Whether SIL OFL 1.1 is acceptable specifically for engine fonts, or a supported replacement is needed.
