@@ -5,6 +5,8 @@ import {
   useState,
   type ChangeEvent,
   type CSSProperties,
+  type KeyboardEvent,
+  type ReactNode,
 } from 'react'
 import CanvasEditor, { type CanvasEditorController } from './CanvasEditor'
 import WorkspaceAI from './WorkspaceAI'
@@ -16,7 +18,7 @@ import {
   persistLayout,
   type WorkspaceLayout,
 } from './layout'
-import PanelResizeHandle from './PanelResizeHandle'
+import DockPanel from './DockPanel'
 import {
   useRegisterCommands,
   useRegisterFiles,
@@ -74,6 +76,8 @@ export default function FileWorkspace({
   onFocusChange,
   layout: controlledLayout,
   onLayoutChange,
+  projectPanel,
+  showFileToggle = true,
 }: {
   project: Project
   preferences: Preferences
@@ -82,6 +86,8 @@ export default function FileWorkspace({
   onFocusChange?: (focused: boolean) => void
   layout?: WorkspaceLayout
   onLayoutChange?: (layout: WorkspaceLayout) => void
+  projectPanel?: ReactNode
+  showFileToggle?: boolean
 }) {
   const [entries, setEntries] = useState<Entry[]>([])
   const [openIds, setOpenIds] = useState<string[]>([])
@@ -93,6 +99,7 @@ export default function FileWorkspace({
   const filesOpen = layout.filesOpen
   const [focusRightPanel, setFocusRightPanel] =
     useState<WorkspaceLayout['rightPanel']>('none')
+  const [focusRightPinned, setFocusRightPinned] = useState(false)
   function changeLayout(next: WorkspaceLayout) {
     if (onLayoutChange) onLayoutChange(next)
     else {
@@ -101,11 +108,14 @@ export default function FileWorkspace({
     }
   }
   function setFilesOpen(open: boolean) {
-    changeLayout({ ...layout, filesOpen: open })
+    changeLayout({ ...layout, filesOpen: open, leftPanel: 'files' })
   }
   function setAiOpen(open: boolean) {
-    if (focused) setFocusRightPanel(open ? 'ai' : 'none')
-    else changeLayout({ ...layout, rightPanel: open ? 'ai' : 'none' })
+    setRightPanel(open ? 'ai' : 'none')
+  }
+  function setRightPanel(panel: WorkspaceLayout['rightPanel']) {
+    if (focused) setFocusRightPanel(panel)
+    else changeLayout({ ...layout, rightPanel: panel })
   }
   const [search, setSearch] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -113,13 +123,15 @@ export default function FileWorkspace({
   const [prompt, setPrompt] = useState<FilePrompt | null>(null)
   const importInput = useRef<HTMLInputElement>(null)
   const fileToggle = useRef<HTMLButtonElement>(null)
+  const fileTabs = useRef<HTMLDivElement>(null)
   const alive = useRef(false)
   const openingSequence = useRef(0)
   const focusRoot = useRef<HTMLElement>(null)
-  const aiDock = useRef<HTMLDivElement>(null)
-  const [aiInset, setAiInset] = useState(0)
+  const [rightHost, setRightHost] = useState<HTMLDivElement | null>(null)
+  const [rightInset, setRightInset] = useState(0)
   const { focused, toggle } = useCanvasFocus(focusRoot, onFocusChange)
   const rightPanel = focused ? focusRightPanel : layout.rightPanel
+  const rightPinned = focused ? focusRightPinned : layout.rightPinned
   const aiOpen = rightPanel === 'ai'
   useCanvasDraftProtection(store)
   const active = entries.find((entry) => entry.record.id === activeId)
@@ -156,17 +168,26 @@ export default function FileWorkspace({
   )
 
   function toggleFocus() {
-    if (!focused) setFocusRightPanel('none')
+    if (!focused) {
+      setFocusRightPanel('none')
+      setFocusRightPinned(false)
+    }
     void toggle()
   }
 
   useEffect(() => {
-    if (!aiOpen || !aiDock.current) {
-      setAiInset(0)
+    if (rightPanel === 'none' || !rightHost) {
       return
     }
-    const panel = aiDock.current
-    const measure = () => setAiInset(panel.getBoundingClientRect().width)
+    const panel = rightHost.closest<HTMLElement>('[data-dock-side="right"]')
+    if (!panel) return
+    // Pinned panels reserve their own width. Peek panels cover the stage.
+    const measure = () =>
+      setRightInset(
+        getComputedStyle(panel).position === 'absolute'
+          ? panel.getBoundingClientRect().width
+          : 0,
+      )
     measure()
     const observer =
       typeof ResizeObserver === 'function' ? new ResizeObserver(measure) : null
@@ -176,13 +197,32 @@ export default function FileWorkspace({
       observer?.disconnect()
       window.removeEventListener('resize', measure)
     }
-  }, [aiOpen, layout.rightWidth, focused])
+  }, [rightPanel, rightHost, rightPinned, layout.rightWidth, focused])
 
   function nextTab(direction: number) {
     const index = openIds.indexOf(activeId ?? '')
     const id = openIds[(index + direction + openIds.length) % openIds.length]
     const entry = entries.find((item) => item.record.id === id)
     if (entry) openFile(entry)
+  }
+  function navigateTab(event: KeyboardEvent<HTMLButtonElement>, id: string) {
+    if (event.altKey || event.ctrlKey || event.metaKey) return
+    const index = openIds.indexOf(id)
+    let nextIndex: number
+    if (event.key === 'ArrowLeft')
+      nextIndex = (index - 1 + openIds.length) % openIds.length
+    else if (event.key === 'ArrowRight')
+      nextIndex = (index + 1) % openIds.length
+    else if (event.key === 'Home') nextIndex = 0
+    else if (event.key === 'End') nextIndex = openIds.length - 1
+    else return
+    const entry = entries.find((item) => item.record.id === openIds[nextIndex])
+    if (!entry) return
+    event.preventDefault()
+    openFile(entry)
+    fileTabs.current
+      ?.querySelectorAll<HTMLButtonElement>('[role="tab"]')
+      [nextIndex]?.focus()
   }
   useRegisterCommands([
     {
@@ -446,7 +486,7 @@ export default function FileWorkspace({
       setActiveId(next[Math.min(previousIndex, next.length - 1)] ?? null)
     }
     requestAnimationFrame(() => {
-      const selected = document.querySelector<HTMLButtonElement>(
+      const selected = fileTabs.current?.querySelector<HTMLButtonElement>(
         '[role="tab"][aria-selected="true"]',
       )
       ;(selected ?? fileToggle.current)?.focus()
@@ -536,125 +576,18 @@ export default function FileWorkspace({
       aria-label={
         focused
           ? `${active?.record.document.name ?? 'Canvas'} fullscreen editor`
-          : undefined
+          : `${project.name} workspace`
       }
-      aria-labelledby={focused ? undefined : 'work-title'}
     >
-      {focused && (
-        <header className="focus-file-header">
-          <span>
-            <Icon name="canvas" />
-            <strong>{active?.record.document.name}</strong>
-            <small>
-              {active?.dirty
-                ? 'Unsaved changes'
-                : active?.persistence === 'browser'
-                  ? 'Saved in this browser'
-                  : 'Session only'}
-            </small>
-            {bridge.status === 'sharing' && (
-              <span
-                className="mcp-focus-sharing"
-                role="status"
-                title="This canvas is shared through MCP"
-              >
-                MCP
-              </span>
-            )}
-          </span>
-          <button
-            className="button secondary"
-            disabled={busy}
-            onClick={saveFile}
-          >
-            <Icon name="save" />
-            Save
-          </button>
-          <button className="button secondary" onClick={exportFile}>
-            <Icon name="export" />
-            Export
-          </button>
-          <button
-            className="button secondary"
-            onClick={toggleFocus}
-            aria-label="Exit fullscreen layout"
-          >
-            Exit fullscreen
-          </button>
-        </header>
-      )}
-      <header className="file-work-heading">
-        <div>
-          <h1 id="work-title">{project.name}</h1>
-        </div>
-        <button
-          className="icon-button"
-          title="Rename project"
-          aria-label="Rename project"
-          onClick={onRenameProject}
-        >
-          <Icon name="edit" />
-        </button>
-      </header>
-      <div className="file-work-toolbar">
-        <button
-          ref={fileToggle}
-          className="button secondary"
-          aria-label={filesOpen ? 'Close file panel' : 'Open file panel'}
-          aria-expanded={filesOpen}
-          aria-controls="project-files"
-          onClick={() => setFilesOpen(!filesOpen)}
-        >
-          <Icon name="files" />
-          <span>Files</span>
-        </button>
-        <button
-          className="button secondary"
-          disabled={loading || busy}
-          onClick={() => setPrompt({ kind: 'create' })}
-        >
-          <Icon name="plus" />
-          New canvas
-        </button>
-        <button
-          className="button secondary"
-          disabled={loading || busy}
-          onClick={() => importInput.current?.click()}
-        >
-          <Icon name="import" />
-          {busy ? 'Working…' : 'Import'}
-        </button>
-        <input
-          className="file-import-input"
-          ref={importInput}
-          type="file"
-          multiple
-          accept=".lcanvas"
-          aria-label="Import LCANVAS files"
-          onChange={importFiles}
-        />
-        <span className="toolbar-space" />
-        <button
-          className="button secondary"
-          disabled={!active || busy}
-          onClick={saveFile}
-          aria-label="Save"
-          title="Save this canvas in your browser"
-        >
-          <Icon name="save" />
-          <span>Save</span>
-        </button>
-        <button
-          className="button secondary"
-          disabled={!active}
-          onClick={exportFile}
-          aria-label="Export"
-          title="Download a portable LCANVAS file"
-        >
-          <Icon name="export" />
-          <span>Export</span>
-        </button>
-      </div>
+      <input
+        className="file-import-input"
+        ref={importInput}
+        type="file"
+        multiple
+        accept=".lcanvas"
+        aria-label="Import LCANVAS files"
+        onChange={importFiles}
+      />
       {error && (
         <div className="file-message error" role="alert">
           {error}
@@ -666,125 +599,248 @@ export default function FileWorkspace({
         </div>
       )}
       <div className="workspace-deck">
-        {filesOpen && !focused && (
-          <aside
-            id="project-files"
-            className="file-explorer"
-            aria-label="Project files"
-          >
-            <div className="file-panel-heading">
-              <h2>
-                Canvas files <span>{entries.length}</span>
-              </h2>
-              <button
-                className="icon-button"
-                aria-label="Close project files"
-                onClick={() => {
-                  setFilesOpen(false)
-                  fileToggle.current?.focus()
-                }}
-              >
-                <Icon name="close" />
-              </button>
+        <DockPanel
+          id="project-files"
+          label="Project files"
+          side="left"
+          open={filesOpen && !focused}
+          pinned={layout.leftPinned}
+          width={layout.filesWidth}
+          min={PANEL_LIMITS.files.min}
+          max={PANEL_LIMITS.files.max}
+          defaultWidth={PANEL_LIMITS.files.default}
+          activeTab={layout.leftPanel}
+          tabs={[
+            { id: 'files', label: 'Files', icon: <Icon name="files" /> },
+            { id: 'projects', label: 'Projects', icon: <Icon name="folder" /> },
+          ]}
+          onSelect={(id) =>
+            changeLayout({
+              ...layout,
+              filesOpen: true,
+              leftPanel: id === 'projects' ? 'projects' : 'files',
+            })
+          }
+          onClose={() => {
+            changeLayout({ ...layout, filesOpen: false })
+          }}
+          onPin={(leftPinned) => changeLayout({ ...layout, leftPinned })}
+          onWidthChange={(filesWidth) =>
+            changeLayout({ ...layout, filesWidth })
+          }
+        >
+          {layout.leftPanel === 'projects' ? (
+            (projectPanel ?? (
+              <div className="workspace-project-summary">
+                <h2>{project.name}</h2>
+                <p>{entries.length} canvas files</p>
+                <button className="button secondary" onClick={onRenameProject}>
+                  <Icon name="edit" /> Rename project
+                </button>
+              </div>
+            ))
+          ) : (
+            <div className="file-explorer">
+              <div className="file-panel-heading">
+                <h2 title={project.name}>{project.name}</h2>
+                <button
+                  className="icon-button"
+                  title="Rename project"
+                  aria-label="Rename project"
+                  onClick={onRenameProject}
+                >
+                  <Icon name="edit" />
+                </button>
+              </div>
+              <div className="file-panel-actions">
+                <button
+                  className="icon-button"
+                  title="New canvas"
+                  aria-label="New canvas"
+                  disabled={loading || busy}
+                  onClick={() => setPrompt({ kind: 'create' })}
+                >
+                  <Icon name="plus" />
+                </button>
+                <button
+                  className="icon-button"
+                  title="Import LCANVAS files"
+                  aria-label="Import"
+                  disabled={loading || busy}
+                  onClick={() => importInput.current?.click()}
+                >
+                  <Icon name="import" />
+                </button>
+                <span>{entries.length} canvas files</span>
+              </div>
+              <label className="file-search">
+                <Icon name="search" />
+                <input
+                  type="search"
+                  aria-label="Search canvas files"
+                  placeholder="Find a canvas…"
+                  value={search}
+                  onChange={(event) => setSearch(event.target.value)}
+                />
+              </label>
+              <div className="file-list">
+                {loading ? (
+                  <p className="file-list-empty">Opening your files…</p>
+                ) : !entries.length ? (
+                  <p className="file-list-empty">No canvas files yet.</p>
+                ) : !visible.length ? (
+                  <p className="file-list-empty">No matching canvas files.</p>
+                ) : (
+                  visible.map((entry) => (
+                    <button
+                      key={entry.record.id}
+                      className={`canvas-file ${entry.record.id === activeId ? 'is-active' : ''}`}
+                      aria-label={`Open canvas ${entry.record.document.name}`}
+                      onClick={() => openFile(entry)}
+                      title={`${entry.record.document.name}.lcanvas`}
+                    >
+                      <Icon name="canvas" />
+                      <span>
+                        {entry.record.document.name}
+                        <small>.lcanvas</small>
+                      </span>
+                      {entry.dirty && (
+                        <span
+                          className="file-dirty"
+                          aria-label="Unsaved changes"
+                        />
+                      )}
+                    </button>
+                  ))
+                )}
+              </div>
             </div>
-            <label className="file-search">
-              <Icon name="search" />
-              <input
-                type="search"
-                aria-label="Search canvas files"
-                placeholder="Find a canvas…"
-                value={search}
-                onChange={(event) => setSearch(event.target.value)}
-              />
-            </label>
-            <div className="file-list">
-              {loading ? (
-                <p className="file-list-empty">Opening your files…</p>
-              ) : !entries.length ? (
-                <p className="file-list-empty">
-                  A project is a home for your canvases. Create one or import
-                  LCANVAS files.
-                </p>
-              ) : !visible.length ? (
-                <p className="file-list-empty">No matching canvas files.</p>
-              ) : (
-                visible.map((entry) => (
-                  <button
-                    key={entry.record.id}
-                    className={`canvas-file ${entry.record.id === activeId ? 'is-active' : ''}`}
-                    aria-label={`Open canvas ${entry.record.document.name}`}
-                    onClick={() => openFile(entry)}
-                    title={`${entry.record.document.name}.lcanvas`}
+          )}
+        </DockPanel>
+        <div className="canvas-column">
+          <div className="workspace-tab-bar">
+            {showFileToggle && !focused && (
+              <button
+                ref={fileToggle}
+                className="icon-button workspace-files-toggle"
+                data-dock-trigger="left"
+                aria-label="Open file panel"
+                aria-expanded={filesOpen}
+                aria-controls="project-files"
+                title="Files · double-click to pin"
+                onPointerEnter={(event) => {
+                  if (event.pointerType === 'mouse') setFilesOpen(true)
+                }}
+                onClick={() => setFilesOpen(true)}
+                onDoubleClick={() =>
+                  changeLayout({
+                    ...layout,
+                    filesOpen: true,
+                    leftPanel: 'files',
+                    leftPinned: !layout.leftPinned,
+                  })
+                }
+              >
+                <Icon name="files" />
+              </button>
+            )}
+            <div
+              ref={fileTabs}
+              className="canvas-tabs"
+              role="tablist"
+              aria-label="Open canvas files"
+            >
+              {openIds.map((id) => {
+                const entry = entries.find((item) => item.record.id === id)
+                if (!entry) return null
+                return (
+                  <div
+                    className="canvas-tab"
+                    key={id}
+                    data-active={id === activeId}
                   >
-                    <Icon name="canvas" />
-                    <span>
-                      {entry.record.document.name}
-                      <small>.lcanvas</small>
-                    </span>
-                    {entry.dirty && (
-                      <span
-                        className="file-dirty"
-                        aria-label="Unsaved changes"
-                      />
-                    )}
-                  </button>
-                ))
+                    <button
+                      role="tab"
+                      aria-selected={id === activeId}
+                      aria-controls="canvas-file-pane"
+                      tabIndex={id === activeId ? 0 : -1}
+                      onKeyDown={(event) => navigateTab(event, id)}
+                      onClick={() => openFile(entry)}
+                    >
+                      <Icon name="canvas" />
+                      <span>{entry.record.document.name}</span>
+                      {entry.dirty && (
+                        <span aria-label="Unsaved changes">•</span>
+                      )}
+                    </button>
+                    <button
+                      className="tab-close"
+                      tabIndex={id === activeId ? 0 : -1}
+                      aria-label={`Close canvas ${entry.record.document.name}`}
+                      title="Close tab; keep file"
+                      onClick={() => closeTab(id)}
+                    >
+                      <Icon name="close" />
+                    </button>
+                  </div>
+                )
+              })}
+              {!openIds.length && (
+                <span className="no-open-tabs">LCANVAS workspace</span>
               )}
             </div>
-            <p className="file-explorer-note">
-              Files belong to this project.
-              <br />
-              Export a copy to take them with you.
-            </p>
-            <PanelResizeHandle
-              label="Resize project files"
-              value={layout.filesWidth}
-              min={PANEL_LIMITS.files.min}
-              max={PANEL_LIMITS.files.max}
-              defaultValue={PANEL_LIMITS.files.default}
-              onChange={(filesWidth) => changeLayout({ ...layout, filesWidth })}
-            />
-          </aside>
-        )}
-        <div className="canvas-column">
-          <div
-            className="canvas-tabs"
-            role="tablist"
-            aria-label="Open canvas files"
-          >
-            {openIds.map((id) => {
-              const entry = entries.find((item) => item.record.id === id)
-              if (!entry) return null
-              return (
-                <div
-                  className="canvas-tab"
-                  key={id}
-                  data-active={id === activeId}
+            <div className="workspace-tab-actions">
+              {!focused && (
+                <button
+                  className="icon-button"
+                  aria-label="New canvas"
+                  title="New canvas"
+                  disabled={loading || busy}
+                  onClick={() => setPrompt({ kind: 'create' })}
                 >
-                  <button
-                    role="tab"
-                    aria-selected={id === activeId}
-                    aria-controls="canvas-file-pane"
-                    onClick={() => openFile(entry)}
-                  >
-                    <Icon name="canvas" />
-                    <span>{entry.record.document.name}</span>
-                    {entry.dirty && <span aria-label="Unsaved changes">•</span>}
-                  </button>
-                  <button
-                    className="tab-close"
-                    aria-label={`Close canvas ${entry.record.document.name}`}
-                    title="Close tab; keep file"
-                    onClick={() => closeTab(id)}
-                  >
-                    <Icon name="close" />
-                  </button>
-                </div>
-              )
-            })}
-            {!openIds.length && (
-              <span className="no-open-tabs">LCANVAS workspace</span>
-            )}
+                  <Icon name="plus" />
+                </button>
+              )}
+              <button
+                className="icon-button"
+                aria-label="Rename canvas"
+                title="Rename canvas"
+                disabled={!active}
+                onClick={() =>
+                  active && setPrompt({ kind: 'rename', id: active.record.id })
+                }
+              >
+                <Icon name="edit" />
+              </button>
+              <button
+                className="icon-button"
+                disabled={!active || busy}
+                onClick={saveFile}
+                aria-label="Save"
+                title="Save this canvas · Ctrl+S"
+              >
+                <Icon name="save" />
+              </button>
+              <button
+                className="icon-button"
+                disabled={!active}
+                onClick={exportFile}
+                aria-label="Export"
+                title="Export LCANVAS"
+              >
+                <Icon name="export" />
+              </button>
+              {focused && (
+                <button
+                  className="icon-button"
+                  aria-label="Exit fullscreen layout"
+                  title="Exit fullscreen"
+                  onClick={toggleFocus}
+                >
+                  <Icon name="close" />
+                </button>
+              )}
+            </div>
           </div>
           <div
             className="canvas-file-pane"
@@ -802,17 +858,17 @@ export default function FileWorkspace({
                 document={active.record.document}
                 grid={preferences.grid}
                 aiOpen={aiOpen}
-                rightInset={aiInset}
+                rightInset={rightPanel === 'none' ? 0 : rightInset}
                 onToggleAI={() => setAiOpen(!aiOpen)}
+                toolsOpen={rightPanel === 'tools'}
+                onToolsOpenChange={(open) =>
+                  setRightPanel(open ? 'tools' : 'none')
+                }
+                dockHost={rightHost}
                 propertiesOpen={rightPanel === 'properties'}
-                onPropertiesOpenChange={(open) => {
-                  if (focused) setFocusRightPanel(open ? 'properties' : 'none')
-                  else
-                    changeLayout({
-                      ...layout,
-                      rightPanel: open ? 'properties' : 'none',
-                    })
-                }}
+                onPropertiesOpenChange={(open) =>
+                  setRightPanel(open ? 'properties' : 'none')
+                }
                 propertiesWidth={layout.rightWidth}
                 onPropertiesWidthChange={(rightWidth) =>
                   changeLayout({ ...layout, rightWidth })
@@ -827,14 +883,7 @@ export default function FileWorkspace({
                 <span className="canvas-empty-icon">
                   <Icon name="canvas" />
                 </span>
-                <h2>
-                  {loading
-                    ? 'Opening your workspace…'
-                    : 'Open a canvas. Make room for ideas.'}
-                </h2>
-                <p>
-                  Create a blank LCANVAS file or import one to start creating.
-                </p>
+                <h2>{loading ? 'Opening workspace…' : 'Canvas workspace'}</h2>
                 <button
                   className="button primary"
                   disabled={loading || busy}
@@ -845,6 +894,8 @@ export default function FileWorkspace({
                 </button>
                 <button
                   className="empty-ai-toggle button secondary"
+                  data-dock-trigger="right"
+                  aria-label="Open AI workspace panel"
                   aria-expanded={aiOpen}
                   aria-controls="workspace-ai-panel"
                   onClick={() => setAiOpen(!aiOpen)}
@@ -856,13 +907,23 @@ export default function FileWorkspace({
           </div>
           <div className="file-statusbar">
             <span className={`save-dot ${active?.dirty ? 'unsaved' : ''}`} />
-            <span>
+            <span
+              title={
+                active?.dirty
+                  ? 'Save this canvas in your browser'
+                  : active?.persistence === 'browser'
+                    ? 'Saved in this browser'
+                    : active
+                      ? 'Export a backup to keep this canvas'
+                      : undefined
+              }
+            >
               {active
                 ? active.dirty
-                  ? 'Unsaved changes · Save to remember'
+                  ? 'Unsaved changes'
                   : active.persistence === 'browser'
-                    ? 'Saved in this browser'
-                    : 'Session only · Export a backup'
+                    ? 'Saved'
+                    : 'Session only'
                 : 'No canvas open'}
             </span>
             {bridge.status === 'sharing' && (
@@ -872,37 +933,64 @@ export default function FileWorkspace({
             )}
             <span>
               {active
-                ? `${active.record.document.elements.length} objects · LCANVAS`
+                ? `${active.record.document.elements.length} objects`
                 : `${entries.length} canvas files`}
             </span>
           </div>
         </div>
-        {aiOpen && (
-          <div className="workspace-ai-dock" ref={aiDock}>
-            <PanelResizeHandle
-              label="Resize right panel"
-              value={layout.rightWidth}
-              min={PANEL_LIMITS.right.min}
-              max={PANEL_LIMITS.right.max}
-              defaultValue={PANEL_LIMITS.right.default}
-              edge="left"
-              onChange={(rightWidth) => changeLayout({ ...layout, rightWidth })}
-            />
-            <WorkspaceAI
-              projectName={project.name}
-              canvasName={active?.record.document.name ?? null}
-              bridge={bridge}
-              onClose={() => {
-                setAiOpen(false)
-                document
-                  .querySelector<HTMLButtonElement>(
-                    '[aria-controls="workspace-ai-panel"]',
-                  )
-                  ?.focus()
-              }}
-            />
+        <DockPanel
+          id="workspace-right-panel"
+          label="Canvas panels"
+          side="right"
+          open={rightPanel !== 'none'}
+          pinned={rightPinned}
+          width={layout.rightWidth}
+          min={PANEL_LIMITS.right.min}
+          max={PANEL_LIMITS.right.max}
+          defaultWidth={PANEL_LIMITS.right.default}
+          tabs={[
+            { id: 'tools', label: 'Tools', icon: <Icon name="canvas" /> },
+            {
+              id: 'properties',
+              label: 'Properties',
+              icon: <Icon name="options" />,
+            },
+            { id: 'ai', label: 'AI', icon: <Icon name="work" /> },
+          ]}
+          activeTab={rightPanel}
+          onSelect={(id) =>
+            setRightPanel(
+              id === 'ai' ? 'ai' : id === 'properties' ? 'properties' : 'tools',
+            )
+          }
+          onClose={() => setRightPanel('none')}
+          onPin={(pinned) => {
+            if (focused) setFocusRightPinned(pinned)
+            else changeLayout({ ...layout, rightPinned: pinned })
+          }}
+          onWidthChange={(rightWidth) =>
+            changeLayout({ ...layout, rightWidth })
+          }
+        >
+          <div
+            className="workspace-right-host"
+            ref={setRightHost}
+            data-canvas-root
+          >
+            <div
+              className="workspace-ai-content"
+              hidden={!aiOpen}
+              inert={!aiOpen}
+            >
+              <WorkspaceAI
+                projectName={project.name}
+                canvasName={active?.record.document.name ?? null}
+                bridge={bridge}
+                onClose={() => setAiOpen(false)}
+              />
+            </div>
           </div>
-        )}
+        </DockPanel>
       </div>
       {prompt && (
         <ProjectDialog
@@ -917,14 +1005,6 @@ export default function FileWorkspace({
           onClose={() => setPrompt(null)}
           onSubmit={submitFile}
         />
-      )}
-      {active && (
-        <button
-          className="text-button rename-canvas"
-          onClick={() => setPrompt({ kind: 'rename', id: active.record.id })}
-        >
-          Rename canvas
-        </button>
       )}
     </section>
   )

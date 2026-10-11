@@ -1,4 +1,4 @@
-import { useId, useState, type FormEvent } from 'react'
+import { useId, useState, type FormEvent, type ReactNode } from 'react'
 import type { CanvasDocument, CanvasElement, CanvasLayer } from './lcanvas'
 import {
   addLayer,
@@ -29,6 +29,24 @@ function objectName(element: CanvasElement): string {
 }
 
 type Commit = (operation: () => CanvasDocument) => boolean
+
+function LayerIcon({ children }: { children: ReactNode }) {
+  return (
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.6"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      {children}
+    </svg>
+  )
+}
 
 function LayerItem({
   layer,
@@ -67,6 +85,7 @@ function LayerItem({
         <button
           type="button"
           aria-label={`${layer.visible ? 'Hide' : 'Show'} layer ${layer.name}`}
+          title={`${layer.visible ? 'Hide' : 'Show'} layer ${layer.name}`}
           aria-pressed={layer.visible}
           onClick={() =>
             commit(() =>
@@ -74,11 +93,16 @@ function LayerItem({
             )
           }
         >
-          {layer.visible ? 'Visible' : 'Hidden'}
+          <LayerIcon>
+            <path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12Z" />
+            <circle cx="12" cy="12" r="3" />
+            {!layer.visible && <path d="m3 3 18 18" />}
+          </LayerIcon>
         </button>
         <button
           type="button"
           aria-label={`${layer.locked ? 'Unlock' : 'Lock'} layer ${layer.name}`}
+          title={`${layer.locked ? 'Unlock' : 'Lock'} layer ${layer.name}`}
           aria-pressed={layer.locked}
           onClick={() =>
             commit(() =>
@@ -86,27 +110,43 @@ function LayerItem({
             )
           }
         >
-          {layer.locked ? 'Locked' : 'Unlocked'}
+          <LayerIcon>
+            <rect x="5" y="11" width="14" height="10" rx="2" />
+            <path
+              d={
+                layer.locked
+                  ? 'M8 11V7a4 4 0 0 1 8 0v4'
+                  : 'M8 11V7a4 4 0 0 1 8 0'
+              }
+            />
+            <path d="M12 15v2" />
+          </LayerIcon>
         </button>
         <button
           type="button"
           aria-label={`Move layer ${layer.name} forward`}
+          title={`Move layer ${layer.name} forward`}
           disabled={index === document.layers.length - 1}
           onClick={() =>
             commit(() => reorderLayer(document, layer.id, index + 1))
           }
         >
-          ↑
+          <LayerIcon>
+            <path d="M12 19V5m-6 6 6-6 6 6" />
+          </LayerIcon>
         </button>
         <button
           type="button"
           aria-label={`Move layer ${layer.name} backward`}
+          title={`Move layer ${layer.name} backward`}
           disabled={index === 0}
           onClick={() =>
             commit(() => reorderLayer(document, layer.id, index - 1))
           }
         >
-          ↓
+          <LayerIcon>
+            <path d="M12 5v14m-6-6 6 6 6-6" />
+          </LayerIcon>
         </button>
       </div>
       <form
@@ -298,12 +338,7 @@ function ElementProperties({
           </span>
         )}
       </div>
-      {!editable && (
-        <p className="inspector-notice">
-          This object or its area is on a hidden or locked layer. Show and
-          unlock its layer to edit it.
-        </p>
-      )}
+      {!editable && <p className="inspector-notice">Layer hidden or locked.</p>}
       <form onSubmit={apply}>
         <fieldset className="inspector-property-fields" disabled={!editable}>
           <legend className="inspector-visually-hidden">
@@ -524,7 +559,6 @@ export function CanvasInspector({
     >
       <header className="inspector-header">
         <h2>Properties & layers</h2>
-        <p>Arrange the details of your canvas.</p>
       </header>
       {error && (
         <p className="inspector-error" role="alert">
@@ -540,22 +574,17 @@ export function CanvasInspector({
           onSelect={onSelect}
         />
       ) : (
-        <p className="inspector-empty">
-          Select a shape, text, area or connection to edit its properties.
-        </p>
+        <p className="inspector-empty">No selection</p>
       )}
       <section
         className="inspector-section"
         aria-labelledby={`${prefix}-layers`}
       >
         <div className="inspector-section-heading">
-          <h3 id={`${prefix}-layers`}>Layers</h3>
-          <span>Front to back</span>
+          <h3 id={`${prefix}-layers`} title="Front to back">
+            Layers
+          </h3>
         </div>
-        <p className="inspector-help">
-          New objects use the active layer. Hide or lock layers to manage your
-          work.
-        </p>
         <ul className="inspector-layers">
           {[...document.layers].reverse().map((layer) => (
             <LayerItem
@@ -605,11 +634,7 @@ export function CanvasInspector({
           <h3 id={`${prefix}-objects`}>Objects</h3>
           <span>{document.elements.length}</span>
         </div>
-        {document.elements.length === 0 ? (
-          <p className="inspector-help">
-            Your canvas is ready for its first object.
-          </p>
-        ) : (
+        {document.elements.length > 0 && (
           <ul className="inspector-object-list">
             {[...document.layers].reverse().flatMap((layer) =>
               document.elements

@@ -1,4 +1,5 @@
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, within } from '@testing-library/react'
+import { useState } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import CanvasEditor from './CanvasEditor'
 import { createCanvasDocument, type CanvasDocument } from './lcanvas'
@@ -77,6 +78,200 @@ function mount(document = createCanvasDocument('Plan'), aiOpen = false) {
     select,
   }
 }
+
+function mountDock(document = createCanvasDocument('Plan')) {
+  const onDocumentChange = vi.fn()
+  function DockEditor() {
+    const [host, setHost] = useState<HTMLDivElement | null>(null)
+    const [panel, setPanel] = useState('tools')
+    return (
+      <>
+        <div ref={setHost} data-testid="right-dock" data-canvas-root>
+          <button
+            type="button"
+            aria-label="Close right dock"
+            onClick={() => setPanel('none')}
+          >
+            ×
+          </button>
+        </div>
+        <CanvasEditor
+          document={document}
+          grid="dots"
+          aiOpen={panel === 'ai'}
+          onToggleAI={() => setPanel(panel === 'ai' ? 'none' : 'ai')}
+          onDocumentChange={onDocumentChange}
+          dockHost={host}
+          toolsOpen={panel === 'tools'}
+          onToolsOpenChange={(open) => setPanel(open ? 'tools' : 'none')}
+          propertiesOpen={panel === 'properties'}
+          onPropertiesOpenChange={(open) =>
+            setPanel(open ? 'properties' : 'none')
+          }
+        />
+      </>
+    )
+  }
+  const rendered = render(<DockEditor />)
+  const stage = screen.getByRole('region', { name: 'Plan canvas view' })
+  vi.spyOn(stage, 'getBoundingClientRect').mockReturnValue(bounds)
+  return {
+    ...rendered,
+    stage,
+    host: screen.getByTestId('right-dock'),
+    onDocumentChange,
+    latest: (): CanvasDocument =>
+      onDocumentChange.mock.lastCall?.[0] ?? document,
+    object: (id: string) => {
+      const item = rendered.container.querySelector(`[data-element-id="${id}"]`)
+      if (!item) throw new Error(`Object ${id} is not visible`)
+      return item
+    },
+  }
+}
+
+describe('shared right canvas dock', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks()
+    vi.stubGlobal('PointerEvent', MouseEvent)
+  })
+
+  it('renders drawing tools only in the dock and retains canvas editing history', () => {
+    const { host, container, latest, onDocumentChange } = mountDock()
+    expect(
+      container.querySelector('.canvas-editor .canvas-edit-toolbar'),
+    ).toBeNull()
+    expect(
+      within(host).getByRole('toolbar', { name: 'Canvas tools' }),
+    ).toBeVisible()
+    const toolsLauncher = screen.getByRole('button', {
+      name: 'Open canvas tools',
+    })
+    expect(toolsLauncher).toHaveAttribute('data-dock-trigger', 'right')
+    expect(
+      screen.getByRole('button', { name: 'Open object properties' }),
+    ).toHaveAttribute('data-dock-trigger', 'right')
+    expect(
+      screen.getByRole('button', { name: 'Open AI workspace panel' }),
+    ).toHaveAttribute('data-dock-trigger', 'right')
+    fireEvent.click(toolsLauncher)
+    fireEvent.click(toolsLauncher)
+    expect(toolsLauncher).toHaveAttribute('aria-expanded', 'true')
+    expect(onDocumentChange).not.toHaveBeenCalled()
+    for (const name of [
+      'Add rectangle',
+      'Add ellipse',
+      'Add diamond',
+      'Add area',
+    ]) {
+      expect(screen.getAllByRole('button', { name })).toHaveLength(1)
+      expect(
+        within(host).getByRole('button', { name }).textContent?.trim(),
+      ).toBe('')
+      expect(within(host).getByRole('button', { name })).toHaveAttribute(
+        'title',
+      )
+      fireEvent.click(within(host).getByRole('button', { name }))
+    }
+    expect(latest().elements.map((element) => element.type)).toEqual([
+      'rectangle',
+      'ellipse',
+      'diamond',
+      'area',
+    ])
+    fireEvent.click(screen.getByRole('button', { name: 'Close right dock' }))
+    expect(screen.queryByRole('toolbar', { name: 'Canvas tools' })).toBeNull()
+    expect(onDocumentChange).toHaveBeenCalledTimes(4)
+    fireEvent.click(screen.getByRole('button', { name: 'Undo' }))
+    expect(latest().elements).toHaveLength(3)
+    fireEvent.click(screen.getByRole('button', { name: 'Open canvas tools' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Redo' }))
+    expect(latest().elements).toHaveLength(4)
+    expect(
+      container.querySelector('.canvas-editor .canvas-inspector-slot'),
+    ).toBeNull()
+  })
+
+  it('keeps unapplied property text when the dock is closed and reopened', () => {
+    const { host, latest, onDocumentChange } = mountDock()
+    fireEvent.click(within(host).getByRole('button', { name: 'Add text' }))
+    expect(screen.queryByRole('toolbar', { name: 'Canvas tools' })).toBeNull()
+    const field = within(host).getByRole('textbox', { name: 'Text' })
+    fireEvent.change(field, { target: { value: 'Retain my draft' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Close right dock' }))
+    expect(screen.queryByRole('textbox', { name: 'Text' })).toBeNull()
+    expect(onDocumentChange).toHaveBeenCalledOnce()
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Open object properties' }),
+    )
+    expect(within(host).getByRole('textbox', { name: 'Text' })).toHaveValue(
+      'Retain my draft',
+    )
+    fireEvent.click(
+      within(host).getByRole('button', { name: 'Apply properties' }),
+    )
+    expect(latest().elements[0]).toMatchObject({
+      type: 'text',
+      text: 'Retain my draft',
+    })
+  })
+
+  it('creates connections using dock style controls and keeps the chosen mode across a close', () => {
+    const document = shape(
+      shape(createCanvasDocument('Plan'), 'from'),
+      'to',
+      300,
+    )
+    const { host, object, latest, onDocumentChange } = mountDock(document)
+    fireEvent.click(
+      within(host).getByRole('button', { name: 'Connect objects' }),
+    )
+    fireEvent.change(within(host).getByLabelText('New connection arrows'), {
+      target: { value: 'both' },
+    })
+    fireEvent.change(within(host).getByLabelText('New connection path'), {
+      target: { value: 'elbow' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Close right dock' }))
+    expect(onDocumentChange).not.toHaveBeenCalled()
+    fireEvent.pointerDown(object('from'), { button: 0 })
+    fireEvent.pointerDown(object('to'), { button: 0 })
+    expect(latest().elements.at(-1)).toMatchObject({
+      type: 'connection',
+      fromId: 'from',
+      toId: 'to',
+      startArrow: true,
+      endArrow: true,
+      style: 'elbow',
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Open canvas tools' }))
+    expect(
+      within(host).getByRole('button', { name: 'Select objects' }),
+    ).toHaveAttribute('aria-pressed', 'true')
+  })
+
+  it('does not fall back to a top toolbar while the shared dock host is being attached', () => {
+    const onDocumentChange = vi.fn()
+    const rendered = render(
+      <CanvasEditor
+        document={createCanvasDocument('Plan')}
+        grid="dots"
+        aiOpen={false}
+        onToggleAI={vi.fn()}
+        onDocumentChange={onDocumentChange}
+        dockHost={null}
+        toolsOpen
+        propertiesOpen
+      />,
+    )
+    expect(screen.queryByRole('toolbar', { name: 'Drawing tools' })).toBeNull()
+    expect(screen.queryByRole('toolbar', { name: 'Canvas tools' })).toBeNull()
+    expect(
+      rendered.container.querySelector('.canvas-inspector-slot'),
+    ).toBeNull()
+    expect(onDocumentChange).not.toHaveBeenCalled()
+  })
+})
 
 describe('manual LCANVAS editor', () => {
   beforeEach(() => {
@@ -388,11 +583,7 @@ describe('manual LCANVAS editor', () => {
     fireEvent.click(
       screen.getByRole('button', { name: 'Select Ellipse on Hidden' }),
     )
-    expect(
-      screen.getByText(
-        /This object or its area is on a hidden or locked layer/u,
-      ),
-    ).toBeInTheDocument()
+    expect(screen.getByText('Layer hidden or locked.')).toBeInTheDocument()
     expect(
       screen.getByRole('button', { name: 'Clear object selection' }),
     ).toBeInTheDocument()

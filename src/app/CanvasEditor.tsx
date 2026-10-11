@@ -9,6 +9,7 @@ import {
   type PointerEvent,
   type ReactNode,
 } from 'react'
+import { createPortal } from 'react-dom'
 import {
   connectionEndpoints,
   elementBounds,
@@ -63,6 +64,9 @@ export type CanvasEditorProps = {
   onPropertiesOpenChange?: (open: boolean) => void
   propertiesWidth?: number
   onPropertiesWidthChange?: (width: number) => void
+  dockHost?: HTMLElement | null
+  toolsOpen?: boolean
+  onToolsOpenChange?: (open: boolean) => void
 }
 
 export type CanvasEditorController = {
@@ -315,7 +319,11 @@ export default function CanvasEditor({
   onPropertiesOpenChange,
   propertiesWidth = PANEL_LIMITS.right.default,
   onPropertiesWidthChange,
+  dockHost,
+  toolsOpen = false,
+  onToolsOpenChange,
 }: CanvasEditorProps) {
+  const dockMode = dockHost !== undefined
   const [history, setHistory] = useState(() => createEditorHistory(document))
   const currentHistory = useRef(history)
   const notified = useRef(document)
@@ -1025,141 +1033,220 @@ export default function CanvasEditor({
     '--canvas-grid-x': `${view.x}px`,
     '--canvas-grid-y': `${view.y}px`,
   } as CSSProperties
+  const inspector = (
+    <CanvasInspector
+      document={board}
+      selectedId={selected?.id ?? null}
+      activeLayerId={activeLayerId}
+      onSelect={setSelectedId}
+      onActiveLayerChange={setLayerId}
+      onDocumentChange={(next) => safely(() => commit(next))}
+      onError={setError}
+    />
+  )
+  const connectionOptions = (
+    <div className="canvas-connection-options">
+      <span>
+        {connectionSource
+          ? 'Choose the target object'
+          : 'Choose the source object'}
+      </span>
+      <label>
+        Arrows
+        <select
+          aria-label="New connection arrows"
+          value={arrowStyle}
+          onChange={(event) =>
+            setArrowStyle(event.target.value as typeof arrowStyle)
+          }
+        >
+          <option value="end">End arrow</option>
+          <option value="none">No arrows</option>
+          <option value="both">Both arrows</option>
+          <option value="start">Start arrow</option>
+        </select>
+      </label>
+      <label>
+        Path
+        <select
+          aria-label="New connection path"
+          value={connectionStyle}
+          onChange={(event) =>
+            setConnectionStyle(event.target.value as typeof connectionStyle)
+          }
+        >
+          <option value="straight">Straight</option>
+          <option value="elbow">Elbow</option>
+        </select>
+      </label>
+    </div>
+  )
+  const drawingTools = (
+    <div
+      className="canvas-edit-toolbar"
+      role="toolbar"
+      aria-label={dockMode ? 'Canvas tools' : 'Drawing tools'}
+    >
+      <button
+        type="button"
+        aria-label="Select objects"
+        aria-pressed={mode === 'select'}
+        onClick={() => {
+          setMode('select')
+          setConnectionSource(null)
+        }}
+        title={dockMode ? 'Select objects' : 'Select and move objects'}
+      >
+        <ToolIcon>
+          <path d="M5 3v17l5-5 4 7 3-2-4-7h7Z" />
+        </ToolIcon>
+        {!dockMode && <span>Select</span>}
+      </button>
+      <button
+        type="button"
+        aria-label="Pan canvas"
+        aria-pressed={mode === 'pan'}
+        onClick={() => {
+          setMode('pan')
+          setConnectionSource(null)
+        }}
+        title={
+          dockMode ? 'Pan canvas' : 'Drag canvas · Middle mouse / Alt also pans'
+        }
+      >
+        <ToolIcon>
+          <path d="M8 13V6a2 2 0 0 1 4 0v6-9a2 2 0 0 1 4 0v10-6a2 2 0 0 1 4 0v9c0 4-3 6-7 6-3 0-5-2-7-4l-3-4a2 2 0 0 1 3-3l2 2Z" />
+        </ToolIcon>
+        {!dockMode && <span>Pan</span>}
+      </button>
+      <span className="canvas-tool-divider" />
+      <button
+        type="button"
+        aria-label="Add rectangle"
+        title="Add rectangle"
+        onClick={() => add('rectangle')}
+      >
+        <ToolIcon>
+          <rect x="3" y="5" width="18" height="14" rx="2" />
+        </ToolIcon>
+      </button>
+      <button
+        type="button"
+        aria-label="Add ellipse"
+        title="Add ellipse"
+        onClick={() => add('ellipse')}
+      >
+        <ToolIcon>
+          <ellipse cx="12" cy="12" rx="9" ry="7" />
+        </ToolIcon>
+      </button>
+      <button
+        type="button"
+        aria-label="Add diamond"
+        title="Add diamond"
+        onClick={() => add('diamond')}
+      >
+        <ToolIcon>
+          <path d="m12 3 9 9-9 9-9-9Z" />
+        </ToolIcon>
+      </button>
+      <button
+        type="button"
+        aria-label="Add text"
+        title="Add text"
+        onClick={() => add('text')}
+      >
+        <ToolIcon>
+          <path d="M4 5h16M12 5v15M8 20h8" />
+        </ToolIcon>
+      </button>
+      <button
+        type="button"
+        aria-label="Add area"
+        title="Add containment area"
+        onClick={() => add('area')}
+      >
+        <ToolIcon>
+          <rect
+            x="3"
+            y="3"
+            width="18"
+            height="18"
+            rx="3"
+            strokeDasharray="3 3"
+          />
+          <path d="M8 8h8v8H8Z" />
+        </ToolIcon>
+      </button>
+      <button
+        type="button"
+        aria-label="Connect objects"
+        aria-pressed={mode === 'connect'}
+        title={
+          dockMode ? 'Connect objects' : 'Choose a source object, then a target'
+        }
+        onClick={() => {
+          setMode('connect')
+          setConnectionSource(null)
+        }}
+      >
+        <ToolIcon>
+          <path d="M3 17h7V7h11m-4-4 4 4-4 4" />
+        </ToolIcon>
+      </button>
+      {!dockMode && (
+        <>
+          <span className="canvas-tool-divider" />
+          <button
+            type="button"
+            className="canvas-properties-toggle"
+            aria-label={
+              inspectorOpen
+                ? 'Close object properties'
+                : 'Open object properties'
+            }
+            aria-expanded={inspectorOpen}
+            onClick={() => {
+              if (inspectorOpen) setInspectorOpen(false)
+              else openInspector()
+            }}
+          >
+            <ToolIcon>
+              <path d="M4 7h16M4 17h16" />
+              <circle cx="9" cy="7" r="3" />
+              <circle cx="15" cy="17" r="3" />
+            </ToolIcon>
+            <span>Properties</span>
+          </button>
+        </>
+      )}
+    </div>
+  )
   return (
     <section
       className={`canvas-editor${inspectorOpen ? ' has-inspector' : ''}`}
       aria-label="LCANVAS editor"
       data-canvas-root
+      data-dock-mode={dockMode}
     >
-      <div
-        className="canvas-edit-toolbar"
-        role="toolbar"
-        aria-label="Drawing tools"
-      >
-        <button
-          type="button"
-          aria-label="Select objects"
-          aria-pressed={mode === 'select'}
-          onClick={() => {
-            setMode('select')
-            setConnectionSource(null)
-          }}
-          title="Select and move objects"
-        >
-          <ToolIcon>
-            <path d="M5 3v17l5-5 4 7 3-2-4-7h7Z" />
-          </ToolIcon>
-          <span>Select</span>
-        </button>
-        <button
-          type="button"
-          aria-label="Pan canvas"
-          aria-pressed={mode === 'pan'}
-          onClick={() => {
-            setMode('pan')
-            setConnectionSource(null)
-          }}
-          title="Drag canvas · Middle mouse / Alt also pans"
-        >
-          <ToolIcon>
-            <path d="M8 13V6a2 2 0 0 1 4 0v6-9a2 2 0 0 1 4 0v10-6a2 2 0 0 1 4 0v9c0 4-3 6-7 6-3 0-5-2-7-4l-3-4a2 2 0 0 1 3-3l2 2Z" />
-          </ToolIcon>
-          <span>Pan</span>
-        </button>
-        <span className="canvas-tool-divider" />
-        <button
-          type="button"
-          aria-label="Add rectangle"
-          title="Add rectangle"
-          onClick={() => add('rectangle')}
-        >
-          <ToolIcon>
-            <rect x="3" y="5" width="18" height="14" rx="2" />
-          </ToolIcon>
-        </button>
-        <button
-          type="button"
-          aria-label="Add ellipse"
-          title="Add ellipse"
-          onClick={() => add('ellipse')}
-        >
-          <ToolIcon>
-            <ellipse cx="12" cy="12" rx="9" ry="7" />
-          </ToolIcon>
-        </button>
-        <button
-          type="button"
-          aria-label="Add diamond"
-          title="Add diamond"
-          onClick={() => add('diamond')}
-        >
-          <ToolIcon>
-            <path d="m12 3 9 9-9 9-9-9Z" />
-          </ToolIcon>
-        </button>
-        <button
-          type="button"
-          aria-label="Add text"
-          title="Add text"
-          onClick={() => add('text')}
-        >
-          <ToolIcon>
-            <path d="M4 5h16M12 5v15M8 20h8" />
-          </ToolIcon>
-        </button>
-        <button
-          type="button"
-          aria-label="Add area"
-          title="Add containment area"
-          onClick={() => add('area')}
-        >
-          <ToolIcon>
-            <rect
-              x="3"
-              y="3"
-              width="18"
-              height="18"
-              rx="3"
-              strokeDasharray="3 3"
-            />
-            <path d="M8 8h8v8H8Z" />
-          </ToolIcon>
-        </button>
-        <button
-          type="button"
-          aria-label="Connect objects"
-          aria-pressed={mode === 'connect'}
-          title="Choose a source object, then a target"
-          onClick={() => {
-            setMode('connect')
-            setConnectionSource(null)
-          }}
-        >
-          <ToolIcon>
-            <path d="M3 17h7V7h11m-4-4 4 4-4 4" />
-          </ToolIcon>
-        </button>
-        <span className="canvas-tool-divider" />
-        <button
-          type="button"
-          className="canvas-properties-toggle"
-          aria-label={
-            inspectorOpen ? 'Close object properties' : 'Open object properties'
-          }
-          aria-expanded={inspectorOpen}
-          onClick={() => {
-            if (inspectorOpen) setInspectorOpen(false)
-            else openInspector()
-          }}
-        >
-          <ToolIcon>
-            <path d="M4 7h16M4 17h16" />
-            <circle cx="9" cy="7" r="3" />
-            <circle cx="15" cy="17" r="3" />
-          </ToolIcon>
-          <span>Properties</span>
-        </button>
-      </div>
+      {!dockMode && drawingTools}
+      {dockMode &&
+        dockHost &&
+        createPortal(
+          <div className="canvas-tools-panel" hidden={!toolsOpen}>
+            {drawingTools}
+            {mode === 'connect' && connectionOptions}
+          </div>,
+          dockHost,
+        )}
+      {dockMode &&
+        dockHost &&
+        createPortal(
+          <div className="canvas-properties-panel" hidden={!inspectorOpen}>
+            {inspector}
+          </div>,
+          dockHost,
+        )}
       <div className="canvas-editor-body">
         <div
           ref={stage}
@@ -1294,52 +1381,20 @@ export default function CanvasEditor({
           {!board.elements.length && (
             <div className="lcanvas-empty" aria-hidden="true">
               <span className="lcanvas-empty-symbol">＋</span>
-              <h2>Space for your next idea.</h2>
-              <p>Add a shape, a note, or an area using the toolbar above.</p>
-              <small>
-                Double-click an object to edit its text and properties.
-              </small>
+              {!dockMode && (
+                <>
+                  <h2>Space for your next idea.</h2>
+                  <p>
+                    Add a shape, a note, or an area using the toolbar above.
+                  </p>
+                  <small>
+                    Double-click an object to edit its text and properties.
+                  </small>
+                </>
+              )}
             </div>
           )}
-          {mode === 'connect' && (
-            <div className="canvas-connection-options">
-              <span>
-                {connectionSource
-                  ? 'Choose the target object'
-                  : 'Choose the source object'}
-              </span>
-              <label>
-                Arrows
-                <select
-                  aria-label="New connection arrows"
-                  value={arrowStyle}
-                  onChange={(event) =>
-                    setArrowStyle(event.target.value as typeof arrowStyle)
-                  }
-                >
-                  <option value="end">End arrow</option>
-                  <option value="none">No arrows</option>
-                  <option value="both">Both arrows</option>
-                  <option value="start">Start arrow</option>
-                </select>
-              </label>
-              <label>
-                Path
-                <select
-                  aria-label="New connection path"
-                  value={connectionStyle}
-                  onChange={(event) =>
-                    setConnectionStyle(
-                      event.target.value as typeof connectionStyle,
-                    )
-                  }
-                >
-                  <option value="straight">Straight</option>
-                  <option value="elbow">Elbow</option>
-                </select>
-              </label>
-            </div>
-          )}
+          {!dockMode && mode === 'connect' && connectionOptions}
           {error && (
             <div className="canvas-edit-error" role="alert">
               {error}
@@ -1353,7 +1408,7 @@ export default function CanvasEditor({
             </div>
           )}
         </div>
-        {inspectorOpen && (
+        {!dockMode && inspectorOpen && (
           <div
             className="canvas-inspector-slot"
             style={
@@ -1371,15 +1426,7 @@ export default function CanvasEditor({
                 onChange={onPropertiesWidthChange}
               />
             )}
-            <CanvasInspector
-              document={board}
-              selectedId={selected?.id ?? null}
-              activeLayerId={activeLayerId}
-              onSelect={setSelectedId}
-              onActiveLayerChange={setLayerId}
-              onDocumentChange={(next) => safely(() => commit(next))}
-              onError={setError}
-            />
+            {inspector}
           </div>
         )}
       </div>
@@ -1470,6 +1517,45 @@ export default function CanvasEditor({
           </>
         )}
         <span className="canvas-rail-spacer" />
+        {dockMode && (
+          <>
+            <button
+              type="button"
+              aria-label="Open canvas tools"
+              aria-expanded={toolsOpen}
+              title="Canvas tools and shapes"
+              data-dock-trigger="right"
+              onPointerEnter={(event) => {
+                if (event.pointerType === 'mouse') onToolsOpenChange?.(true)
+              }}
+              onClick={() => onToolsOpenChange?.(true)}
+            >
+              <ToolIcon>
+                <rect x="3" y="3" width="7" height="7" rx="1" />
+                <circle cx="17" cy="6.5" r="3.5" />
+                <path d="m6.5 14 4 4-4 4-4-4Z" />
+                <path d="M14 18h7" />
+              </ToolIcon>
+            </button>
+            <button
+              type="button"
+              aria-label="Open object properties"
+              aria-expanded={inspectorOpen}
+              title="Object properties and layers"
+              data-dock-trigger="right"
+              onPointerEnter={(event) => {
+                if (event.pointerType === 'mouse') openInspector()
+              }}
+              onClick={openInspector}
+            >
+              <ToolIcon>
+                <path d="M4 7h16M4 17h16" />
+                <circle cx="9" cy="7" r="3" />
+                <circle cx="15" cy="17" r="3" />
+              </ToolIcon>
+            </button>
+          </>
+        )}
         <button
           type="button"
           className={aiOpen ? 'canvas-ai-toggle active' : 'canvas-ai-toggle'}
@@ -1478,6 +1564,7 @@ export default function CanvasEditor({
           }
           aria-expanded={aiOpen}
           aria-controls="workspace-ai-panel"
+          data-dock-trigger={dockMode ? 'right' : undefined}
           title="Workspace AI / MCP"
           onClick={() => {
             setInspectorOpen(false)

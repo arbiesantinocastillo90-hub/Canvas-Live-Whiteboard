@@ -1,14 +1,20 @@
 # Adaptable workspace
 
-Canvas Live uses a compact workspace with collapsible navigation, a project file panel, and a shared right panel for Properties or Workspace AI. The fixed right rail keeps Undo, Redo, view controls, full screen and the AI toggle available. The interaction follows familiar Obsidian conventions: a command palette, quick file switcher, remembered panels and editable shortcuts. It does not implement Obsidian's `.canvas` format.
+Canvas Live centers the current LCANVAS file in a full-height editor with file tabs. A 44-pixel icon ribbon opens workspace navigation; the fixed right rail keeps Undo, Redo, zoom, fit, fullscreen and panel launchers available. Compact controls show their names on hover and keep accessible labels. File names, values and editable field labels remain visible; decorative headings and repeated instructions have been removed.
 
 ## Layout
 
-Drag a panel's edge to resize it. Focus the edge with Tab and use Left/Right to adjust it, Shift for larger steps, or Home/End for its limits. Double-click the edge to restore its default width. Panels have bounded widths and adapt to smaller screens; the file panel becomes an overlay when space is limited.
+**Left:** Files organizes the active project's canvases; Projects lists recently opened projects and searches all of them. Select a project to open its files. The folder action inside Projects opens the full project management page. **Right:** Tools contains shape, text, area and connection controls; Properties edits selected objects and layers; AI controls explicit canvas sharing.
 
-Hide navigation to leave a narrow icon rail. Close Files, Properties or Workspace AI with their controls, shortcuts or commands. Properties and Workspace AI share the right panel and its width. Closing Workspace AI does not stop an already shared canvas; use Stop sharing to revoke access. Changing the active file still ends its sharing authority.
+Hover the Files/Projects or Tools/Properties symbols to open their panel; click also opens it. AI opens by click. An unpinned panel overlays the canvas and closes after the pointer leaves, or when you click the canvas. Inputs, keyboard focus, resizing and dialogs protect active interaction. Closing or switching panels retains unapplied property and pairing-code text. Selecting a different object resets its property draft normally.
 
-Full screen concentrates on the current file and restores the surrounding layout when you leave. Options includes Reset workspace layout. Layout preferences are stored independently in `canvas-live.layout.v1`; adjusting panels does not change canvas contents, create undo entries or revise the shared MCP document.
+**Double-click a panel tab to pin or unpin it.** The left ribbon Files/Projects icons also support double-click pinning. The pin icon provides the same action with a single click or keyboard. A pinned panel stays open beside the canvas. On narrow screens, pins keep panels open as overlays so the editor remains usable. Close explicitly with the X; Escape closes a focused panel outside text fields.
+
+Drag a panel edge to resize. Focus the edge with Tab and use Left/Right, Shift for larger steps, Home/End for limits, or double-click to reset its width. The left panel ranges from 160–420 pixels and the right from 220–420. Tabs support Left/Right and Home/End; file-tab shortcuts also remain available.
+
+Full screen concentrates on the current file, keeps tabs and save/export available, and restores the ordinary panel choices on exit. Options includes Reset workspace layout. Panel preferences use `canvas-live.layout.v2`; old v1 widths migrate into a clear initial workspace. Panel changes never alter canvas contents, create undo entries or revise the shared MCP document.
+
+Closing AI or choosing Tools/Properties keeps an already shared canvas active. Stop sharing revokes access; changing files or leaving Work also ends sharing. The AI panel's Sharing details disclosure explains access and saving behavior.
 
 ## Commands and shortcuts
 
@@ -19,7 +25,7 @@ Open the command palette with **Ctrl+P** and type part of a command. Open the qu
 | Command palette / quick file switcher          | Ctrl+P / Ctrl+O                                  |
 | Options                                        | Ctrl+,                                           |
 | Work / Projects                                | Ctrl+Alt+W / Ctrl+Alt+P                          |
-| Navigation / Files / Workspace AI / Properties | Ctrl+Alt+L / F / A / I                           |
+| Left panel / Files / Workspace AI / Properties | Ctrl+Alt+L / F / A / I                           |
 | New canvas / Import LCANVAS                    | Ctrl+Alt+N / Ctrl+Alt+O                          |
 | Save / Export                                  | Ctrl+S / Ctrl+Shift+E                            |
 | Next / previous canvas tab                     | Ctrl+Alt+Right / Left                            |
@@ -51,9 +57,23 @@ Open **Canvas Live.exe** in `release/Canvas Live` to use the installed website. 
 
 For a staged update, save dirty canvases before closing the website from its tray and stopping the companion and tunnel windows. Run **Apply Canvas Live Update.cmd**, then reopen the executable, companion and private tunnel launcher. Pair with the new code and explicitly share the current file. The updater preserves the executable, local credentials and tunnel configuration. It refuses installation while the website, companion or tunnel is running. See [ChatGPT setup](CHATGPT_MCP.md).
 
-## Verification
+## Reference revision verification
 
 Verified on 2026-10-11:
+
+- The full application suite passed **370 tests across 23 files**; all **63 MCP tests** passed. The seven dock tests were retested after protecting modified arrow keys.
+- TypeScript, lint and full repository formatting passed. The production website and companion build passed the unchanged **232-package** license gate.
+- All **12 isolated production Chrome reference UI scenarios** and **9 MCP camera scenarios** passed against final assets `index-ClMu-Zni.js` and `index-CvjbhEmp.css`, with zero runtime errors.
+- Browser checks cover actual LCANVAS save/export/reload; project/file switches; peek and dock geometry; mouse action and unpin auto-close; keyboard/input protection; pin/width persistence; property drafts; hidden-panel AI acknowledgment; content revisions; native fullscreen; shortcut guards; theme and motion; settings control bounds; and 760/320-pixel screens.
+- All **23 updater fixture checks** passed. Source copies match the build workspace. Tests used fresh browser data and an isolated companion, without accessing the owner's browser or private tunnel.
+
+The visual check found settings controls that relied on removed descriptions for float clearing; the final CSS corrects that flow and browser bounds checks now cover it. Fixture labels and the isolated allowed-origin port were corrected during verification. There are no remaining test failures. The owner's actual ChatGPT edit acceptance remains a separate check.
+
+Reports and screenshots are retained in ignored `test-results/ui-reference-*`, `mcp-reference-camera-*`, `reference-final-*`, `reference-mcp-*` and update reports, with copies in the project brain.
+
+## Previous milestone verification
+
+The earlier adaptable-workspace build was verified on 2026-10-11:
 
 - TypeScript, lint and repository formatting passed.
 - All **352 application tests** across 22 files passed. The **63 MCP tests** passed.

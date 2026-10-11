@@ -37,11 +37,7 @@ export default function AppearanceOptions({
   return (
     <section className="options-view" aria-labelledby="options-title">
       <div className="page-heading">
-        <p className="eyebrow">Options</p>
-        <h1 id="options-title">Make it feel like you.</h1>
-        <p className="description">
-          Adjust your space. Changes apply immediately and stay in this browser.
-        </p>
+        <h1 id="options-title">Appearance</h1>
       </div>
 
       <div className="options-grid">

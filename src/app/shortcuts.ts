@@ -6,7 +6,7 @@ export const shortcutActions = [
   ['app.options', 'Open Options', 'Workspace', 'Mod+,'],
   ['app.projects', 'Open Projects', 'Workspace', 'Mod+Alt+P'],
   ['app.work', 'Return to Work', 'Workspace', 'Mod+Alt+W'],
-  ['app.toggleSidebar', 'Toggle navigation', 'Panels', 'Mod+Alt+L'],
+  ['app.toggleSidebar', 'Toggle left panel', 'Panels', 'Mod+Alt+L'],
   ['app.resetLayout', 'Reset panel layout', 'Panels', ''],
   ['file.toggleFiles', 'Toggle files panel', 'Panels', 'Mod+Alt+F'],
   ['file.toggleAI', 'Toggle Workspace AI', 'Panels', 'Mod+Alt+A'],

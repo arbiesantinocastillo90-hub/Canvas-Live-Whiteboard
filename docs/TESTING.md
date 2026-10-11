@@ -60,3 +60,7 @@ The 2026-10-11 update passed **352 application tests**, **63 MCP tests**, TypeSc
 Actual executed results, resolved failures and remaining scope are recorded in [MILESTONE_0.md](MILESTONE_0.md).
 
 The earlier editor milestone passed **203 application tests**, **16 browser scenarios** and **24 launcher checks**; see [EDITOR_VERIFICATION.md](EDITOR_VERIFICATION.md). The MCP implementation and its current results are recorded in [MCP_VERIFICATION.md](MCP_VERIFICATION.md). The historical viewer result remains in [LCANVAS_VERIFICATION.md](LCANVAS_VERIFICATION.md).
+
+## Compact reference UI verification
+
+The final 2026-10-11 reference revision passed 370 application tests across 23 files and 63 MCP tests, plus TypeScript, lint, formatting, the production/license build, 12 reference browser scenarios, 9 MCP camera scenarios and 23 updater fixture checks. Shared-dock tests cover draft retention, mouse vs keyboard focus, pinning and tab navigation; native browser checks cover the actual geometry and settings flow. See [reference verification](REFERENCE_UI_VERIFICATION.md) and [workspace guide](ADAPTABLE_WORKSPACE.md).

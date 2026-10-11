@@ -6,7 +6,7 @@ Version of Canvas OS that multiple users and AI's could interact and collaborate
 
 The workspace includes customizable themes, Options, Projects with recent openings, and Work that returns to the latest project. Each project organizes multiple LCANVAS files. Edit rectangles, ellipses, diamonds, text, containing areas, layers and attached connections with configurable arrowheads. Full screen focuses on the current file while keeping drawing, save and view controls available. Save files individually in browser IndexedDB and export portable LCANVAS v2 backups; existing v1 files remain importable. The optional MCP companion provides 15 bounded tools for the file explicitly shared through Workspace AI, including shared Undo/Redo. Ordinary AI edits tolerate completed camera navigation while preserving content conflict checks. The owner's ChatGPT plugin is installed and has read the shared canvas; confirming live edits remains an acceptance step.
 
-The adaptable workspace adds remembered panel widths and visibility, a narrow navigation rail, contrast and interface color controls, adjustable motion, a command palette and a current-project file switcher. Customize shortcuts in Options; Ctrl+P opens commands, Ctrl+O opens files and Space temporarily pans the canvas. See [Adaptable workspace](docs/ADAPTABLE_WORKSPACE.md) for controls and release activation.
+The revised workspace centers file tabs and the canvas between a narrow icon ribbon and a fixed view rail. Left Files/Projects and right Tools/Properties/AI panels auto-close; double-click a panel tab or use its pin button to keep it open. Pinned panels sit beside the editor on wide screens. Controls show names on hover. Panel widths, contrast, interface colors, motion, commands and shortcuts remain customizable. Customize shortcuts in Options; Ctrl+P opens commands, Ctrl+O opens files and Space temporarily pans the canvas. See [Adaptable workspace](docs/ADAPTABLE_WORKSPACE.md) for controls and release activation.
 
 - [Project specification](PROJECT_SPEC.md)
 - [Agent instructions](AGENTS.md)
@@ -17,6 +17,7 @@ The adaptable workspace adds remembered panel widths and visibility, a narrow na
 - [Windows executable and verification](docs/WINDOWS_LAUNCHER.md)
 - [Themes, Projects and Work](docs/UI_WORKSPACE.md)
 - [Adaptable layout, appearance, motion and keyboard shortcuts](docs/ADAPTABLE_WORKSPACE.md)
+- [Compact reference UI verification](docs/REFERENCE_UI_VERIFICATION.md)
 - [LCANVAS files and viewer](docs/LCANVAS.md)
 - [Canvas editing and controls](docs/EDITOR.md)
 - [Editor verification](docs/EDITOR_VERIFICATION.md)

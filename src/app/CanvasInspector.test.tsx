@@ -301,6 +301,17 @@ describe('canvas properties and layers', () => {
         .find((button) => !button.hasAttribute('disabled'))!,
     )
     expect(changed().layers[1].name).toBe('Ideas')
+    for (const name of [
+      'Hide layer Ideas',
+      'Lock layer Ideas',
+      'Move layer Ideas forward',
+      'Move layer Ideas backward',
+    ]) {
+      const action = screen.getByRole('button', { name })
+      expect(action).toHaveAttribute('title', name)
+      expect(action.textContent?.trim()).toBe('')
+      expect(action.querySelector('svg')).toHaveAttribute('aria-hidden', 'true')
+    }
     fireEvent.click(screen.getByRole('button', { name: 'Hide layer Ideas' }))
     expect(changed().layers[1].visible).toBe(false)
     fireEvent.click(screen.getByRole('button', { name: 'Lock layer Ideas' }))
@@ -354,11 +365,7 @@ describe('canvas properties and layers', () => {
     expect(changed().elements.map((item) => item.id)).toEqual(['shape-two'])
     expect(onSelect).toHaveBeenCalledWith(null)
     expect(onDocumentChange).toHaveBeenCalledOnce()
-    expect(
-      screen.getByText(
-        'Select a shape, text, area or connection to edit its properties.',
-      ),
-    ).toBeVisible()
+    expect(screen.getByText('No selection')).toBeVisible()
   })
 
   it('selects hidden objects from the list with their layer context', () => {

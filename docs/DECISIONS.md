@@ -83,3 +83,11 @@
 - Whether SIL OFL 1.1 is acceptable specifically for engine fonts, or a supported replacement is needed.
 - Whether the owner's ChatGPT account can invoke custom write tools, and which secure transport is available with acceptable cost.
 - Whether future editor expansion warrants adopting a separate drawing engine.
+
+## 2026-10-11 — Compact reference workspace
+
+- Follow the owner's reference as a ribbon, file tabs, central editor and left/right dock structure. Keep original Canvas Live branding and appearance tokens; reference annotations are not app decoration.
+- Open left Files/Projects and right Tools/Properties on mouse hover or click. Unpinned panels overlay the editor and auto-close; double-click tabs or use the accessible pin action to reserve space on wide screens. Narrow screens retain pins as overlays.
+- Separate pointer-focused actions from editing and keyboard focus so tool selection does not prevent auto-close. Preserve form drafts through stable hidden panel content. Shared AI authority remains in the bridge outside panel visibility.
+- Persist dock choices in layout v2 independently of LCANVAS, migrate old widths without rewriting old storage, and retain the same validated operations/history/transport. No dependencies were added.
+- Remove decorative text and repeated instructions; icon controls retain accessible names and hover titles. Keep editable labels, file names, real errors and sharing access details.

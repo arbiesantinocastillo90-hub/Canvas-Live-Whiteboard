@@ -61,4 +61,42 @@ describe('independent workspace layout', () => {
     expect(loadLayout()).toEqual(DEFAULT_LAYOUT)
     expect(persistLayout(DEFAULT_LAYOUT)).toBe(false)
   })
+  it('migrates old panel widths into an unobstructed workspace without rewriting old data', () => {
+    const legacy = JSON.stringify({
+      sidebarWidth: 280,
+      filesWidth: 320,
+      rightWidth: 350,
+      filesOpen: true,
+      rightPanel: 'ai',
+    })
+    localStorage.setItem('canvas-live.layout.v1', legacy)
+    expect(loadLayout()).toEqual({
+      ...DEFAULT_LAYOUT,
+      sidebarWidth: 280,
+      filesWidth: 320,
+      rightWidth: 350,
+    })
+    expect(localStorage.getItem('canvas-live.layout.v1')).toBe(legacy)
+    expect(localStorage.getItem(LAYOUT_STORAGE_KEY)).toBeNull()
+  })
+  it('persists pins and active tabs while rejecting invalid pin and tab values', () => {
+    const layout = {
+      ...DEFAULT_LAYOUT,
+      leftPanel: 'projects' as const,
+      leftPinned: true,
+      rightPinned: true,
+      rightPanel: 'tools' as const,
+    }
+    persistLayout(layout)
+    expect(loadLayout()).toEqual(layout)
+    expect(
+      parseLayout(
+        JSON.stringify({
+          leftPinned: 'true',
+          rightPinned: 1,
+          leftPanel: 'unknown',
+        }),
+      ),
+    ).toEqual(DEFAULT_LAYOUT)
+  })
 })

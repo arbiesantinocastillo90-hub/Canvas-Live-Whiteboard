@@ -35,6 +35,8 @@ async function createEditableCanvas() {
     target: { value: 'Editing canvas' },
   })
   fireEvent.click(screen.getByRole('button', { name: 'Create canvas' }))
+  await screen.findByRole('button', { name: 'Open canvas tools' })
+  fireEvent.click(screen.getByRole('button', { name: 'Open canvas tools' }))
   await screen.findByRole('button', { name: 'Add rectangle' })
 }
 
@@ -55,14 +57,10 @@ describe('workspace navigation and appearance', () => {
     expect(unload.defaultPrevented).toBe(true)
     fireEvent.click(screen.getByRole('button', { name: 'Work' }))
     await screen.findByLabelText('Editing canvas: 1 visible objects')
-    expect(
-      screen.getByText('Unsaved changes · Save to remember'),
-    ).toBeInTheDocument()
+    expect(screen.getByText('Unsaved changes')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
     await waitFor(() =>
-      expect(
-        screen.queryByText('Unsaved changes · Save to remember'),
-      ).not.toBeInTheDocument(),
+      expect(screen.queryByText('Unsaved changes')).not.toBeInTheDocument(),
     )
     const cleanUnload = new Event('beforeunload', { cancelable: true })
     fireEvent(window, cleanUnload)
@@ -85,11 +83,12 @@ describe('workspace navigation and appearance', () => {
     expect(
       screen.getByRole('button', { name: 'Exit full screen' }),
     ).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Open canvas tools' }))
     expect(
       screen.getByRole('button', { name: 'Add rectangle' }),
     ).toBeInTheDocument()
     const focusHeader = view.container.querySelector(
-      '.focus-file-header',
+      '.workspace-tab-bar',
     ) as HTMLElement
     expect(
       within(focusHeader).getByRole('button', { name: 'Save' }),
@@ -103,6 +102,7 @@ describe('workspace navigation and appearance', () => {
       'inert',
     )
     expect(fullScreen).toHaveFocus()
+    fireEvent.click(screen.getByRole('button', { name: 'Files' }))
     expect(
       screen.getByRole('complementary', { name: 'Project files' }),
     ).toBeInTheDocument()
@@ -111,9 +111,13 @@ describe('workspace navigation and appearance', () => {
   it('starts with genuine empty projects, navigation and the supplied logo', () => {
     render(<App />)
     expect(
-      screen.getByRole('heading', { name: 'Your projects.' }),
+      screen.getByRole('heading', { name: 'Projects' }),
     ).toBeInTheDocument()
-    expect(screen.getByText('AI controls in Work')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Options' })).toHaveAttribute(
+      'title',
+      'Options',
+    )
+    expect(screen.queryByText('AI controls in Work')).toBeNull()
     expect(
       screen
         .getByRole('link', { name: 'Canvas Live home' })
@@ -122,13 +126,13 @@ describe('workspace navigation and appearance', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Work' }))
     expect(
       screen.getByRole('heading', {
-        name: 'Your latest project will open here.',
+        name: 'No project open',
       }),
     ).toBeInTheDocument()
     expect(
       within(
         screen.getByRole('complementary', { name: 'Workspace sidebar' }),
-      ).queryByRole('button', { name: /^Open / }),
+      ).queryByRole('button', { name: 'Open project' }),
     ).not.toBeInTheDocument()
   })
 
@@ -136,14 +140,17 @@ describe('workspace navigation and appearance', () => {
     const view = render(<App />)
     createNamedProject('Roadmap')
     createNamedProject('Garden')
+    fireEvent.click(screen.getByRole('button', { name: 'Projects' }))
     fireEvent.click(screen.getByRole('button', { name: 'Open Roadmap' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Files' }))
     expect(
-      screen.getByRole('heading', { name: 'Roadmap', level: 1 }),
+      screen.getByRole('heading', { name: 'Roadmap', level: 2 }),
     ).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Options' }))
     fireEvent.click(screen.getByRole('button', { name: 'Work' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Files' }))
     expect(
-      screen.getByRole('heading', { name: 'Roadmap', level: 1 }),
+      screen.getByRole('heading', { name: 'Roadmap', level: 2 }),
     ).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Rename project' }))
     fireEvent.change(screen.getByLabelText('Project name'), {
@@ -152,72 +159,61 @@ describe('workspace navigation and appearance', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save name' }))
     view.unmount()
     render(<App />)
+    fireEvent.click(screen.getByRole('button', { name: 'Files' }))
     expect(
-      screen.getByRole('heading', { name: 'New roadmap', level: 1 }),
+      screen.getByRole('heading', { name: 'New roadmap', level: 2 }),
     ).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Import' })).toBeInTheDocument()
   })
 
-  it('persists collapsed panels and resized widths without changing saved canvas content', async () => {
+  it('persists dock pins and widths without changing saved canvas content', async () => {
     const view = render(<App />)
     await createEditableCanvas()
     fireEvent.click(screen.getByRole('button', { name: 'Add rectangle' }))
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
     await waitFor(() =>
-      expect(
-        screen.queryByText('Unsaved changes · Save to remember'),
-      ).not.toBeInTheDocument(),
+      expect(screen.queryByText('Unsaved changes')).toBeNull(),
     )
+    fireEvent.click(screen.getByRole('button', { name: 'Files' }))
     fireEvent.keyDown(
-      screen.getByRole('separator', { name: 'Resize workspace sidebar' }),
-      { key: 'ArrowRight' },
-    )
-    fireEvent.keyDown(
-      screen.getByRole('separator', { name: 'Resize project files' }),
+      screen.getByRole('separator', { name: 'Resize left panel' }),
       { key: 'End' },
     )
-    fireEvent.click(screen.getByRole('button', { name: 'Close file panel' }))
+    fireEvent.doubleClick(screen.getByRole('tab', { name: 'Files' }))
     fireEvent.click(
       screen.getByRole('button', { name: 'Open AI workspace panel' }),
     )
+    fireEvent.click(screen.getByRole('button', { name: 'Pin right panel' }))
     fireEvent.keyDown(
       screen.getByRole('separator', { name: 'Resize right panel' }),
       { key: 'ArrowLeft' },
     )
-    fireEvent.click(
-      screen.getByRole('button', { name: 'Collapse workspace sidebar' }),
-    )
     expect(
       screen.getByLabelText('Editing canvas: 1 visible objects'),
     ).toBeInTheDocument()
-    expect(
-      screen.queryByText('Unsaved changes · Save to remember'),
-    ).not.toBeInTheDocument()
+    expect(screen.queryByText('Unsaved changes')).toBeNull()
     expect(JSON.parse(localStorage.getItem(LAYOUT_STORAGE_KEY)!)).toMatchObject(
       {
-        sidebarOpen: false,
-        sidebarWidth: 256,
-        filesOpen: false,
-        filesWidth: 340,
+        filesOpen: true,
+        filesWidth: 420,
+        leftPinned: true,
         rightPanel: 'ai',
-        rightWidth: 290,
+        rightWidth: 310,
+        rightPinned: true,
       },
     )
     view.unmount()
     render(<App />)
     await screen.findByLabelText('Editing canvas: 1 visible objects')
     expect(
-      screen.getByRole('button', { name: 'Expand workspace sidebar' }),
+      screen.getByRole('button', { name: 'Unpin left panel' }),
     ).toBeInTheDocument()
     expect(
-      screen.getByRole('button', { name: 'Open file panel' }),
-    ).toBeInTheDocument()
-    expect(
-      screen.getByRole('complementary', { name: 'Workspace AI' }),
+      screen.getByRole('button', { name: 'Unpin right panel' }),
     ).toBeInTheDocument()
     expect(
       screen.getByRole('separator', { name: 'Resize right panel' }),
-    ).toHaveAttribute('aria-valuenow', '290')
+    ).toHaveAttribute('aria-valuenow', '310')
     fireEvent.click(screen.getByRole('button', { name: 'Options' }))
     fireEvent.click(
       screen.getByRole('button', { name: 'Reset workspace layout' }),
@@ -311,20 +307,18 @@ describe('workspace navigation and appearance', () => {
       { target: { value: 'road' } },
     )
     expect(
-      screen.getByRole('button', { name: 'Open project Roadmap' }),
+      screen.getByRole('button', { name: 'Open Roadmap' }),
     ).toBeInTheDocument()
     expect(
-      screen.queryByRole('button', { name: 'Open project Garden' }),
+      screen.queryByRole('button', { name: 'Open Garden' }),
     ).not.toBeInTheDocument()
     fireEvent.change(screen.getByRole('searchbox'), {
       target: { value: 'missing' },
     })
+    expect(screen.getByText('No projects found')).toBeInTheDocument()
+    fireEvent.change(screen.getByRole('searchbox'), { target: { value: '' } })
     expect(
-      screen.getByRole('heading', { name: 'No projects found' }),
-    ).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: 'Clear search' }))
-    expect(
-      screen.getByRole('button', { name: 'Open project Garden' }),
+      screen.getByRole('button', { name: 'Open Garden' }),
     ).toBeInTheDocument()
   })
 
@@ -345,8 +339,9 @@ describe('workspace navigation and appearance', () => {
     expect(view.container.firstChild).toHaveStyle('--accent: #ffcc00')
     view.unmount()
     render(<App />)
+    fireEvent.click(screen.getByRole('button', { name: 'Files' }))
     expect(
-      screen.getByRole('heading', { name: 'My project', level: 1 }),
+      screen.getByRole('heading', { name: 'My project', level: 2 }),
     ).toBeInTheDocument()
     expect(document.querySelector('.viewer-empty')).toHaveAttribute(
       'data-grid',
@@ -357,8 +352,8 @@ describe('workspace navigation and appearance', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Reset appearance' }))
     expect(screen.getByRole('radio', { name: 'Follow system' })).toBeChecked()
     expect(
-      screen.getByRole('button', { name: 'Open My project' }),
-    ).toBeInTheDocument()
+      JSON.parse(localStorage.getItem(STORAGE_KEY)!).projects[0].name,
+    ).toBe('My project')
   })
 
   it('follows live system appearance changes until an explicit mode is chosen', () => {
@@ -426,8 +421,9 @@ describe('workspace navigation and appearance', () => {
     expect(screen.getByRole('alert')).toHaveTextContent(
       'Your browser couldn’t remember these changes',
     )
+    fireEvent.click(screen.getByRole('button', { name: 'Files' }))
     expect(
-      screen.getByRole('heading', { name: 'Session project', level: 1 }),
+      screen.getByRole('heading', { name: 'Session project', level: 2 }),
     ).toBeInTheDocument()
   })
 })

@@ -34,3 +34,7 @@ Initial test startup on D: exceeded Vitest's 60-second worker handshake deadline
 ## Next task
 
 Evaluate the canvas engine, then implement the requested controls, tools, navigation and buttons. Define the LCANVAS schema and saving/import behavior alongside real document persistence. Engine/font licensing and ChatGPT transport remain open decisions from the existing roadmap.
+
+## Current compact revision
+
+The 2026-10-11 reference revision supersedes the earlier sidebar arrangement: a narrow icon ribbon, file tabs and full-height canvas replace large headings and repeated descriptions. Files and recent Projects share the left dock; Tools, Properties and AI share the right dock. Hover/click opens panels, mouse-away closes unpinned panels, and double-clicking a tab pins it. Keyboard and editing focus are protected. See [ADAPTABLE_WORKSPACE.md](ADAPTABLE_WORKSPACE.md) for the current layout, activation and verification.

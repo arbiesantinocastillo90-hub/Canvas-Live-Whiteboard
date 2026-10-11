@@ -35,6 +35,7 @@ export default function WorkspaceAI({
         <button
           className="icon-button"
           aria-label="Close AI panel"
+          title="Close AI panel"
           onClick={onClose}
         >
           <Icon name="close" />
@@ -61,13 +62,6 @@ export default function WorkspaceAI({
               ? 'This canvas is shared'
               : 'Canvas is not shared'}
         </strong>
-        <p>
-          {sharing
-            ? bridge.mcpClient
-              ? 'An MCP client has accessed this canvas.'
-              : 'Local companion connected. Waiting for an MCP client to request this canvas.'
-            : 'Connect the local companion, then choose this canvas for ChatGPT.'}
-        </p>
       </div>
       {bridge.error && (
         <p className="ai-connection-error" role="alert">
@@ -104,21 +98,22 @@ export default function WorkspaceAI({
           />
           <button
             className="button primary ai-share-button"
+            title="Allow the connected AI to read and edit this canvas"
             disabled={!canvasName || !pairingCode.trim()}
           >
             Share this canvas
           </button>
         </form>
       )}
-      <p className="ai-panel-note">
-        {sharing
-          ? 'The connected MCP client can read and edit this canvas, including unsaved content. AI changes stay unsaved until you press Save. Undo also works for AI changes.'
-          : 'Sharing lets the connected MCP client read and edit this canvas, including unsaved content. A cloud client may send that content to its AI provider.'}
-      </p>
-      <p className="ai-panel-note">
-        Switching canvases or leaving Work stops sharing. Closing this panel
-        keeps the current canvas shared.
-      </p>
+      <details className="ai-setup ai-sharing-details">
+        <summary>Sharing details</summary>
+        <p>
+          The connected AI can read and edit this canvas, including unsaved
+          content. Cloud clients may send it to their AI provider. Save keeps AI
+          edits; Undo reverses them. Switching files or leaving Work stops
+          sharing.
+        </p>
+      </details>
       <details className="ai-setup">
         <summary>ChatGPT connection setup</summary>
         <ol>
