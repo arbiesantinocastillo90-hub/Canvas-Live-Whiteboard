@@ -12,6 +12,13 @@ Copy-Item -LiteralPath (Join-Path $taskRoot 'dist') -Destination (Join-Path $tas
 Copy-Item -LiteralPath (Join-Path $taskRoot 'LICENSE') -Destination (Join-Path $taskStage 'LICENSE.txt')
 Copy-Item -LiteralPath (Join-Path $taskRoot 'docs/THIRD_PARTY_NOTICES.md') -Destination (Join-Path $taskStage 'THIRD_PARTY_NOTICES.txt')
 Copy-Item -LiteralPath (Join-Path $taskRoot 'launcher/README.txt') -Destination (Join-Path $taskStage 'README.txt')
+if (!(Test-Path -LiteralPath (Join-Path $taskRoot 'dist-mcp/server.mjs'))) { throw 'Build the MCP companion before packaging the launcher.' }
+New-Item -ItemType Directory -Path (Join-Path $taskStage 'mcp') | Out-Null
+Copy-Item -LiteralPath (Join-Path $taskRoot 'dist-mcp/server.mjs') -Destination (Join-Path $taskStage 'mcp/server.mjs')
+Copy-Item -LiteralPath (Join-Path $taskRoot 'launcher/Start Canvas Live MCP.cmd') -Destination $taskStage
+Copy-Item -LiteralPath (Join-Path $taskRoot 'docs/CHATGPT_MCP.md') -Destination (Join-Path $taskStage 'CHATGPT_MCP.md')
+Copy-Item -LiteralPath (Join-Path $taskRoot 'scripts/start-chatgpt-tunnel.ps1') -Destination $taskStage
+Copy-Item -LiteralPath (Join-Path $taskRoot 'plugins/canvas-live') -Destination (Join-Path $taskStage 'plugin') -Recurse
 & $taskCompiler '/nologo' '/target:winexe' '/platform:anycpu' '/optimize+' '/reference:System.Windows.Forms.dll' '/reference:System.Drawing.dll' ('/out:' + (Join-Path $taskStage 'Canvas Live.exe')) (Join-Path $taskRoot 'launcher/CanvasLiveLauncher.cs')
 if ($LASTEXITCODE -ne 0) { throw 'Launcher compilation failed. The staged files have been retained for inspection.' }
 Copy-Item -LiteralPath (Join-Path $taskRoot 'launcher/Canvas Live.exe.config') -Destination $taskStage

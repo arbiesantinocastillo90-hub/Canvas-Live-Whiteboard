@@ -4,6 +4,14 @@ export type Preferences = {
   density: 'comfortable' | 'compact'
   grid: 'dots' | 'lines' | 'none'
   reduceMotion: boolean
+  contrast: number
+  backgroundColor: string | null
+  surfaceColor: string | null
+  textColor: string | null
+  borderColor: string | null
+  gridColor: string | null
+  motionStyle: 'subtle' | 'smooth'
+  motionSpeed: 'slow' | 'normal' | 'fast'
 }
 
 export type Project = {
@@ -28,6 +36,14 @@ export const DEFAULT_PREFERENCES: Preferences = {
   density: 'comfortable',
   grid: 'dots',
   reduceMotion: false,
+  contrast: 50,
+  backgroundColor: null,
+  surfaceColor: null,
+  textColor: null,
+  borderColor: null,
+  gridColor: null,
+  motionStyle: 'subtle',
+  motionSpeed: 'normal',
 }
 
 export const EMPTY_STATE: WorkspaceState = {
@@ -80,6 +96,14 @@ function normalizedName(value: unknown): string | null {
   return name.length > 0 && name.length <= MAX_NAME_LENGTH ? name : null
 }
 
+function isOptionalColor(value: unknown): value is string | null | undefined {
+  return (
+    value === undefined ||
+    value === null ||
+    (typeof value === 'string' && /^#[\da-f]{6}$/iu.test(value))
+  )
+}
+
 function validateWorkspace(value: unknown): WorkspaceState | null {
   if (!isRecord(value) || value.version !== 1) return null
   const preferences = value.preferences
@@ -94,6 +118,22 @@ function validateWorkspace(value: unknown): WorkspaceState | null {
     typeof preferences.grid !== 'string' ||
     !['dots', 'lines', 'none'].includes(preferences.grid) ||
     typeof preferences.reduceMotion !== 'boolean' ||
+    (preferences.contrast !== undefined &&
+      (typeof preferences.contrast !== 'number' ||
+        !Number.isInteger(preferences.contrast) ||
+        preferences.contrast < 0 ||
+        preferences.contrast > 100)) ||
+    !isOptionalColor(preferences.backgroundColor) ||
+    !isOptionalColor(preferences.surfaceColor) ||
+    !isOptionalColor(preferences.textColor) ||
+    !isOptionalColor(preferences.borderColor) ||
+    !isOptionalColor(preferences.gridColor) ||
+    (preferences.motionStyle !== undefined &&
+      (typeof preferences.motionStyle !== 'string' ||
+        !['subtle', 'smooth'].includes(preferences.motionStyle))) ||
+    (preferences.motionSpeed !== undefined &&
+      (typeof preferences.motionSpeed !== 'string' ||
+        !['slow', 'normal', 'fast'].includes(preferences.motionSpeed))) ||
     !Array.isArray(value.projects) ||
     value.projects.length > MAX_PROJECTS
   ) {
@@ -139,6 +179,20 @@ function validateWorkspace(value: unknown): WorkspaceState | null {
       density: preferences.density as Preferences['density'],
       grid: preferences.grid as Preferences['grid'],
       reduceMotion: preferences.reduceMotion,
+      contrast:
+        (preferences.contrast as number | undefined) ??
+        DEFAULT_PREFERENCES.contrast,
+      backgroundColor: preferences.backgroundColor ?? null,
+      surfaceColor: preferences.surfaceColor ?? null,
+      textColor: preferences.textColor ?? null,
+      borderColor: preferences.borderColor ?? null,
+      gridColor: preferences.gridColor ?? null,
+      motionStyle:
+        (preferences.motionStyle as Preferences['motionStyle'] | undefined) ??
+        DEFAULT_PREFERENCES.motionStyle,
+      motionSpeed:
+        (preferences.motionSpeed as Preferences['motionSpeed'] | undefined) ??
+        DEFAULT_PREFERENCES.motionSpeed,
     },
     projects,
     lastProjectId: value.lastProjectId as string | null,

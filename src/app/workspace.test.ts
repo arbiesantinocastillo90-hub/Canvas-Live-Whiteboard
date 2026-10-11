@@ -36,15 +36,44 @@ describe('workspace metadata validation', () => {
   it('round-trips all preferences and project metadata without extra fields', () => {
     const state = createProject(EMPTY_STATE, '  Roadmap  ', 1000, 'roadmap')
     state.preferences = {
+      ...DEFAULT_PREFERENCES,
       mode: 'dark',
       accent: '#1aB2c3',
       density: 'compact',
       grid: 'lines',
       reduceMotion: true,
+      contrast: 75,
+      backgroundColor: '#142536',
+      surfaceColor: '#253647',
+      textColor: '#e4e5e6',
+      borderColor: '#546576',
+      gridColor: '#657687',
+      motionStyle: 'smooth',
+      motionSpeed: 'slow',
     }
     const raw = JSON.stringify({ ...state, privateField: 'not retained' })
     expect(parseWorkspace(raw)).toEqual(state)
     expect(parseWorkspace(raw)).not.toHaveProperty('privateField')
+  })
+
+  it('adds new appearance defaults to old workspaces without losing their projects', () => {
+    const state = createProject(EMPTY_STATE, 'Existing', 100, 'existing')
+    const oldPreferences = {
+      mode: 'dark',
+      accent: '#123456',
+      density: 'compact',
+      grid: 'lines',
+      reduceMotion: true,
+    }
+    const loaded = parseWorkspace(
+      JSON.stringify({ ...state, preferences: oldPreferences }),
+    )
+    expect(loaded.projects).toEqual(state.projects)
+    expect(loaded.lastProjectId).toBe('existing')
+    expect(loaded.preferences).toEqual({
+      ...DEFAULT_PREFERENCES,
+      ...oldPreferences,
+    })
   })
 
   it.each(['{broken', 'null', '[]', '{}', '{"version":2}'])(
@@ -62,6 +91,19 @@ describe('workspace metadata validation', () => {
     { density: 'tiny' },
     { grid: 'triangle' },
     { reduceMotion: 'true' },
+    { contrast: -1 },
+    { contrast: 101 },
+    { contrast: 50.5 },
+    { contrast: '50' },
+    { backgroundColor: '#fff' },
+    { surfaceColor: 'red' },
+    { textColor: 'url(https://example.com)' },
+    { borderColor: false },
+    { gridColor: [] },
+    { motionStyle: 'bouncy' },
+    { motionStyle: ['subtle'] },
+    { motionSpeed: 'instant' },
+    { motionSpeed: ['slow'] },
   ])('rejects unsupported preference values: %j', (overrides) => {
     const invalid = {
       ...EMPTY_STATE,

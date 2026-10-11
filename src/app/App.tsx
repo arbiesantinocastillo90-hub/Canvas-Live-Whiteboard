@@ -1,5 +1,15 @@
 import { useEffect, useState, type CSSProperties } from 'react'
 import AppearanceOptions from './AppearanceOptions'
+import { resolveAppearanceVariables } from './appearance'
+import FileWorkspace from './FileWorkspace'
+import { DEFAULT_LAYOUT, loadLayout, persistLayout } from './layout'
+import HotkeyOptions, {
+  WorkspaceCommandsProvider,
+  WorkspaceLauncher,
+  WorkspaceOverlays,
+} from './WorkspaceCommands'
+import { useRegisterCommands } from './workspaceCommandsContext'
+import { useCanvasDraftProtection } from './canvasDrafts'
 import Icon from './Icon'
 import ProjectDialog from './ProjectDialog'
 import {
@@ -16,20 +26,6 @@ import {
 type Section = 'work' | 'projects' | 'options'
 type ProjectPrompt = { kind: 'create' } | { kind: 'rename'; project: Project }
 
-function accentInk(hex: string) {
-  const rgb = hex
-    .slice(1)
-    .match(/.{2}/g)!
-    .map((part) => {
-      const channel = parseInt(part, 16) / 255
-      return channel <= 0.04045
-        ? channel / 12.92
-        : ((channel + 0.055) / 1.055) ** 2.4
-    })
-  const luminance = rgb[0] * 0.2126 + rgb[1] * 0.7152 + rgb[2] * 0.0722
-  return luminance > 0.179 ? '#111111' : '#ffffff'
-}
-
 function openedDate(timestamp: number) {
   return new Intl.DateTimeFormat(undefined, {
     month: 'short',
@@ -38,6 +34,15 @@ function openedDate(timestamp: number) {
 }
 
 export default function App() {
+  return (
+    <WorkspaceCommandsProvider>
+      <WorkspaceApp />
+    </WorkspaceCommandsProvider>
+  )
+}
+
+function WorkspaceApp() {
+  useCanvasDraftProtection()
   const [workspace, setWorkspace] = useState(loadWorkspace)
   const [section, setSection] = useState<Section>(() =>
     workspace.lastProjectId ? 'work' : 'projects',
@@ -45,6 +50,8 @@ export default function App() {
   const [prompt, setPrompt] = useState<ProjectPrompt | null>(null)
   const [search, setSearch] = useState('')
   const [storageError, setStorageError] = useState(false)
+  const [canvasFocused, setCanvasFocused] = useState(false)
+  const [layout, setLayout] = useState(loadLayout)
   const [systemDark, setSystemDark] = useState(
     () => window.matchMedia?.('(prefers-color-scheme: dark)').matches ?? false,
   )
@@ -75,6 +82,11 @@ export default function App() {
   function enterProject(id: string) {
     updateWorkspace(openProject(workspace, id))
     setSection('work')
+    updateLayout({
+      ...layout,
+      leftPanel: 'files',
+      filesOpen: layout.leftPinned,
+    })
   }
 
   function updateWorkspace(next: WorkspaceState) {
@@ -103,9 +115,67 @@ export default function App() {
         : 'This project could not be created. Please try again.'
     }
   }
+  function updateLayout(next: typeof layout) {
+    persistLayout(next)
+    setLayout(next)
+  }
+  function resetLayout() {
+    updateLayout({ ...DEFAULT_LAYOUT })
+  }
+  function openLeft(leftPanel: 'files' | 'projects') {
+    if (!activeProject) {
+      navigate('projects')
+      return
+    }
+    setSection('work')
+    updateLayout({ ...layout, filesOpen: true, leftPanel })
+  }
+  useRegisterCommands([
+    {
+      id: 'app.options',
+      label: 'Open Options',
+      category: 'Workspace',
+      execute: () => navigate('options'),
+      enabled: !canvasFocused,
+      allowWhileTyping: true,
+    },
+    {
+      id: 'app.projects',
+      label: 'Open Projects',
+      category: 'Workspace',
+      execute: () => openLeft('projects'),
+      enabled: !canvasFocused,
+      allowWhileTyping: true,
+    },
+    {
+      id: 'app.work',
+      label: 'Return to Work',
+      category: 'Workspace',
+      execute: () => navigate('work'),
+      enabled: !canvasFocused,
+      allowWhileTyping: true,
+    },
+    {
+      id: 'app.toggleSidebar',
+      label: 'Toggle left panel',
+      category: 'Panels',
+      execute: () => updateLayout({ ...layout, filesOpen: !layout.filesOpen }),
+      enabled: !canvasFocused,
+      allowWhileTyping: true,
+    },
+    {
+      id: 'app.resetLayout',
+      label: 'Reset panel layout',
+      category: 'Panels',
+      execute: resetLayout,
+      enabled: !canvasFocused,
+    },
+  ])
   const colors = {
-    '--accent': workspace.preferences.accent,
-    '--accent-ink': accentInk(workspace.preferences.accent),
+    ...resolveAppearanceVariables(workspace.preferences, theme),
+    '--sidebar-width': `${layout.sidebarWidth}px`,
+    '--file-panel-width': `${layout.filesWidth}px`,
+    '--right-panel-width': `${layout.rightWidth}px`,
   } as CSSProperties
 
   return (
@@ -114,116 +184,106 @@ export default function App() {
       data-theme={theme}
       data-density={workspace.preferences.density}
       data-motion={workspace.preferences.reduceMotion ? 'reduced' : 'normal'}
+      data-motion-style={workspace.preferences.motionStyle}
+      data-focused={canvasFocused}
+      data-sidebar-open={layout.filesOpen}
+      data-section={section}
       style={colors}
     >
       <a className="skip-link" href="#main-content">
         Skip to content
       </a>
-      <aside className="sidebar" aria-label="Workspace sidebar">
-        <a className="brand" href="/" aria-label="Canvas Live home">
+      <aside
+        className="sidebar workspace-ribbon"
+        aria-label="Workspace sidebar"
+        inert={canvasFocused}
+        aria-hidden={canvasFocused}
+      >
+        <a
+          className="brand"
+          href="/"
+          aria-label="Canvas Live home"
+          title="Canvas Live"
+          onClick={(event) => {
+            event.preventDefault()
+            navigate('work')
+          }}
+        >
           <span className="brand-mark">
             <img src="/canvas-live-logo.png" alt="" />
           </span>
-          <span>
-            Canvas <strong>Live</strong>
-            <small>A space for your ideas</small>
-          </span>
         </a>
-        <p className="rail-label">Your space</p>
         <nav className="section-nav" aria-label="Main navigation">
           <button
             className="nav-item"
+            aria-label="Work"
+            title="Work"
             aria-current={section === 'work' ? 'page' : undefined}
             onClick={() => navigate('work')}
           >
             <Icon name="work" />
-            <span>Work</span>
-            <Icon name="arrow" />
           </button>
+          {(['files', 'projects'] as const).map((panel) => (
+            <button
+              key={panel}
+              className="nav-item"
+              data-dock-trigger="left"
+              aria-label={panel === 'files' ? 'Files' : 'Projects'}
+              title={
+                panel === 'files'
+                  ? 'Files · double-click to pin'
+                  : 'Projects · double-click to pin'
+              }
+              aria-expanded={
+                section === 'work' &&
+                layout.filesOpen &&
+                layout.leftPanel === panel
+              }
+              aria-controls="project-files"
+              onPointerEnter={(event) => {
+                if (event.pointerType === 'mouse' && activeProject)
+                  openLeft(panel)
+              }}
+              onClick={() => openLeft(panel)}
+              onDoubleClick={() => {
+                if (activeProject)
+                  updateLayout({
+                    ...layout,
+                    filesOpen: true,
+                    leftPanel: panel,
+                    leftPinned: !layout.leftPinned,
+                  })
+              }}
+            >
+              <Icon name={panel === 'files' ? 'files' : 'folder'} />
+            </button>
+          ))}
           <button
             className="nav-item"
-            aria-current={section === 'projects' ? 'page' : undefined}
-            onClick={() => navigate('projects')}
-          >
-            <Icon name="folder" />
-            <span>Projects</span>
-            <span className="nav-count">{projects.length}</span>
-          </button>
-          <button
-            className="nav-item"
-            aria-current={section === 'options' ? 'page' : undefined}
-            onClick={() => navigate('options')}
-          >
-            <Icon name="options" />
-            <span>Options</span>
-          </button>
-        </nav>
-        <div className="recent-heading">
-          <p className="rail-label">Recent projects</p>
-          <button
-            className="icon-button"
             aria-label="Create a new project"
+            title="New project"
             onClick={() => setPrompt({ kind: 'create' })}
           >
             <Icon name="plus" />
           </button>
-        </div>
-        <div className="recent-list">
-          {projects.length === 0 ? (
-            <p className="rail-empty">
-              Your recently opened projects will appear here.
-            </p>
-          ) : (
-            projects.slice(0, 5).map((project) => (
-              <button
-                key={project.id}
-                className={`recent-project ${section === 'work' && activeProject?.id === project.id ? 'is-active' : ''}`}
-                onClick={() => enterProject(project.id)}
-                title={project.name}
-                aria-label={`Open ${project.name}`}
-              >
-                <span className="project-glyph">
-                  <Icon name="canvas" />
-                </span>
-                <span className="recent-name">{project.name}</span>
-              </button>
-            ))
-          )}
-        </div>
+        </nav>
+        <WorkspaceLauncher />
         <button
-          className="new-project-rail"
-          onClick={() => setPrompt({ kind: 'create' })}
+          className="icon-button ribbon-options"
+          aria-label="Options"
+          title="Options"
+          aria-current={section === 'options' ? 'page' : undefined}
+          onClick={() => navigate('options')}
         >
-          <Icon name="plus" />
-          New project
+          <Icon name="options" />
         </button>
-        <div className="sidebar-bottom">
-          <div className="connection-status">
-            <span className="status-dot" />
-            AI not connected
-          </div>
-          <p>On your device. At your pace.</p>
-          <span className="version-label">Canvas Live · Early workspace</span>
-        </div>
       </aside>
       <div className="main-shell">
-        <header className="topbar">
-          <div className="breadcrumb">
-            <span>Canvas Live</span>
-            <span aria-hidden="true">/</span>
-            <strong>
-              {section === 'work'
-                ? 'Work'
-                : section === 'projects'
-                  ? 'Projects'
-                  : 'Options'}
-            </strong>
-          </div>
-          <span className="local-badge">
-            <span />
-            Local workspace
-          </span>
-        </header>
+        {section !== 'work' && (
+          <header className="topbar">
+            <strong>{section === 'projects' ? 'Projects' : 'Options'}</strong>
+          </header>
+        )}
         <main id="main-content" tabIndex={-1}>
           {storageError && (
             <div className="storage-alert" role="alert">
@@ -232,12 +292,29 @@ export default function App() {
             </div>
           )}
           {section === 'options' && (
-            <AppearanceOptions
-              preferences={workspace.preferences}
-              onChange={(preferences) =>
-                updateWorkspace({ ...workspace, preferences })
-              }
-            />
+            <>
+              <AppearanceOptions
+                preferences={workspace.preferences}
+                mode={theme}
+                onChange={(preferences) =>
+                  updateWorkspace({ ...workspace, preferences })
+                }
+              />
+              <section
+                className="layout-options"
+                aria-labelledby="layout-options-title"
+              >
+                <h2 id="layout-options-title">Workspace layout</h2>
+
+                <button
+                  className="button secondary layout-reset-button"
+                  onClick={resetLayout}
+                >
+                  Reset workspace layout
+                </button>
+              </section>
+              <HotkeyOptions />
+            </>
           )}
           {section === 'projects' && (
             <section
@@ -246,13 +323,7 @@ export default function App() {
             >
               <div className="page-heading">
                 <div>
-                  <p className="eyebrow">A place for every idea</p>
-                  <h1 id="projects-title">
-                    Your projects<span className="heading-dot">.</span>
-                  </h1>
-                  <p className="page-description">
-                    Start something new, or pick up where you left off.
-                  </p>
+                  <h1 id="projects-title">Projects</h1>
                 </div>
                 <button
                   className="button primary"
@@ -288,12 +359,7 @@ export default function App() {
                       <Icon name="plus" />
                     </span>
                   </div>
-                  <p className="eyebrow">The beginning of something</p>
-                  <h2>Give your next idea a home.</h2>
-                  <p>
-                    Create your first project. It will be waiting here whenever
-                    you return.
-                  </p>
+                  <h2>No projects yet</h2>
                   <button
                     className="button primary"
                     onClick={() => setPrompt({ kind: 'create' })}
@@ -301,9 +367,6 @@ export default function App() {
                     Create your first project
                     <Icon name="arrow" />
                   </button>
-                  <span className="quiet-note">
-                    Project names are remembered in this browser.
-                  </span>
                 </div>
               ) : filteredProjects.length === 0 ? (
                 <div className="search-empty">
@@ -350,120 +413,90 @@ export default function App() {
                   ))}
                 </div>
               )}
-              <div className="section-footnote">
-                <Icon name="device" />
-                <p>
-                  Your project list stays on this device. Canvas editing and
-                  LCANVAS files are coming next.
-                </p>
-              </div>
             </section>
           )}
-          {section === 'work' && (
-            <section className="page work-page" aria-labelledby="work-title">
-              {activeProject ? (
-                <>
-                  <div className="page-heading">
-                    <div>
-                      <p className="eyebrow">Back to your ideas</p>
-                      <h1 id="work-title">{activeProject.name}</h1>
-                      <p className="page-description">
-                        A little room to think. A little space to explore.
-                      </p>
+          {section === 'work' &&
+            (activeProject ? (
+              <FileWorkspace
+                key={activeProject.id}
+                project={activeProject}
+                preferences={workspace.preferences}
+                layout={layout}
+                onLayoutChange={updateLayout}
+                showFileToggle={false}
+                projectPanel={
+                  <div className="project-explorer">
+                    <div className="file-panel-actions">
+                      <button
+                        className="icon-button"
+                        aria-label="New project"
+                        title="New project"
+                        onClick={() => setPrompt({ kind: 'create' })}
+                      >
+                        <Icon name="plus" />
+                      </button>
+                      <button
+                        className="icon-button"
+                        aria-label="Manage projects"
+                        title="Manage projects"
+                        onClick={() => navigate('projects')}
+                      >
+                        <Icon name="folder" />
+                      </button>
                     </div>
-                    <button
-                      className="button secondary"
-                      onClick={() =>
-                        setPrompt({ kind: 'rename', project: activeProject })
-                      }
-                    >
-                      <Icon name="edit" />
-                      Rename project
-                    </button>
-                  </div>
-                  <div className="canvas-preview">
-                    <div className="canvas-header">
-                      <span>
-                        <Icon name="canvas" />
-                        Your canvas
-                      </span>
-                      <span className="preview-label">Preview</span>
-                    </div>
-                    <div
-                      className="canvas-placeholder"
-                      data-grid={workspace.preferences.grid}
-                    >
-                      <div className="canvas-empty-card">
-                        <span className="canvas-empty-icon">
-                          <Icon name="canvas" />
-                        </span>
-                        <h2>Room for what’s next.</h2>
-                        <p>
-                          This is your project’s canvas preview.
-                          <br />
-                          Drawing tools and canvas controls are coming next.
-                        </p>
-                      </div>
-                      <span className="canvas-corner-label">CANVAS LIVE</span>
-                    </div>
-                    <div className="canvas-footer">
-                      <span className="status-dot" />
-                      <p>
-                        {storageError
-                          ? 'Project name kept in this session'
-                          : 'Project name remembered'}{' '}
-                        · Canvas editing and file saving are not available yet.
-                      </p>
+                    <label className="file-search">
+                      <Icon name="search" />
+                      <input
+                        type="search"
+                        aria-label="Search projects"
+                        placeholder="Search"
+                        value={search}
+                        onChange={(event) => setSearch(event.target.value)}
+                      />
+                    </label>
+                    <div className="recent-list">
+                      {filteredProjects.map((project) => (
+                        <button
+                          key={project.id}
+                          className={`recent-project ${activeProject.id === project.id ? 'is-active' : ''}`}
+                          aria-label={`Open ${project.name}`}
+                          title={project.name}
+                          onClick={() => enterProject(project.id)}
+                        >
+                          <Icon name="folder" />
+                          <span className="recent-name">{project.name}</span>
+                        </button>
+                      ))}
+                      {!filteredProjects.length && (
+                        <p className="file-list-empty">No projects found</p>
+                      )}
                     </div>
                   </div>
-                  <div className="work-note">
-                    <Icon name="folder" />
-                    <span>Looking for another idea?</span>
-                    <button
-                      className="text-button"
-                      onClick={() => navigate('projects')}
-                    >
-                      Browse your projects
-                      <Icon name="arrow" />
-                    </button>
-                  </div>
-                </>
-              ) : (
-                <>
-                  <p className="eyebrow">Your work space</p>
-                  <h1 id="work-title">
-                    A fresh start<span className="heading-dot">.</span>
-                  </h1>
-                  <div className="empty-projects work-empty">
-                    <span className="canvas-empty-icon">
-                      <Icon name="work" />
-                    </span>
-                    <h2>Your latest project will open here.</h2>
-                    <p>
-                      Create a project to get started. Work will bring you back
-                      to the last project you opened.
-                    </p>
-                    <button
-                      className="button primary"
-                      onClick={() => setPrompt({ kind: 'create' })}
-                    >
-                      <Icon name="plus" />
-                      Create project
-                    </button>
-                  </div>
-                </>
-              )}
-            </section>
-          )}
+                }
+                onFocusChange={setCanvasFocused}
+                onRenameProject={() =>
+                  setPrompt({ kind: 'rename', project: activeProject })
+                }
+              />
+            ) : (
+              <section className="page work-page" aria-labelledby="work-title">
+                <div className="empty-projects work-empty">
+                  <span className="canvas-empty-icon">
+                    <Icon name="work" />
+                  </span>
+                  <h2 id="work-title">No project open</h2>
+
+                  <button
+                    className="button primary"
+                    onClick={() => setPrompt({ kind: 'create' })}
+                  >
+                    <Icon name="plus" />
+                    Create project
+                  </button>
+                </div>
+              </section>
+            ))}
         </main>
-        <footer className="workspace-footer">
-          <span>Space to explore. Room to connect.</span>
-          <span>
-            {storageError
-              ? 'Session only'
-              : 'Preferences & project names · This browser'}
-          </span>
-        </footer>
       </div>
       {prompt && (
         <ProjectDialog
@@ -473,6 +506,7 @@ export default function App() {
           onSubmit={submitProject}
         />
       )}
+      <WorkspaceOverlays />
     </div>
   )
 }

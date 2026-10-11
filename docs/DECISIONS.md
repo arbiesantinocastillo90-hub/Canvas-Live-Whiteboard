@@ -34,8 +34,60 @@
 - Use the owner's supplied logo PNG unchanged in the sidebar and favicon. Preserve the original bytes and verify their hash. The executable's existing Windows icon is unchanged in this task.
 - Use a clean physical C: verification copy with the same lockfile and exact final source after D: test-worker startup timeouts. Record source equality and actual command results; do not present earlier startup failures as executed assertions.
 
+## 2026-10-10 — LCANVAS viewing and project file containers
+
+- The owner requested many LCANVAS files per project and focused this step on viewing. Add a strict independent LCANVAS v1 JSON format and original SVG viewer, keeping the drawing-engine proof pending. No dependencies or paid services were added.
+- Store files individually in IndexedDB, indexed and validated by project. Retain the existing v1 project/theme metadata without migration or replacement. Storage failures produce an explicitly labelled session overlay; LCANVAS export is the portable backup.
+- Support blank creation, validated multi-file import, naming, tabs, a collapsible file explorer and workspace AI context. Closing a tab or panel never deletes files. The AI panel reports disconnected/unavailable state because there is no MCP service yet.
+- Keep Undo view, Reset view, Redo view and zoom controls on the right rail independently of the AI panel. History applies to navigation only; drawing, object mutations and engine/agent undo remain future work. Viewport changes use explicit Save; new/imported files and names save immediately.
+- Bound imports to 10 MiB, 5,000 supported objects, finite geometry and plain text; reject unknown fields/types/versions instead of losing unsupported data. No fixed file-count cap is imposed. Browser quota/device memory remain practical limits.
+- Preserve browser-origin storage boundaries, including launcher fallback ports. Export/import transfers files between origins; the executable folder does not contain the browser library. Cross-tab conflict resolution and project-folder persistence are not implemented.
+
+## 2026-10-10 — Requested manual editing and fullscreen
+
+- The owner requested fullscreen for the active file, shapes and text, resizing, containing areas, explicit layers and configurable connections before live MCP integration. Extend the existing original SVG renderer and LCANVAS model for this authorized scope; adopt no new engine, fonts, dependencies or paid services.
+- Introduce strict LCANVAS v2 with an explicit validated v1 migration. Keep IDs, geometry and viewport stable. Opening old stored files updates recency without rewriting their raw document payload; Save/export writes v2.
+- Keep operations pure and transport independent. Validate the whole result and reject invalid geometry, missing references, containment violations or lock violations atomically. Use the same operations from canvas gestures and Properties.
+- Record explicit area membership separately from layers. Areas move all members together; member movement outside an area detaches it. Hidden/locked area layers propagate visibility/edit restrictions to members. Connections derive endpoints from stable object IDs.
+- Combine manual edits and navigation in one undo history, bounded to 100 retained snapshots and a 32 MiB estimated history budget. Commit completed drags once. History is session state, excluded from portable files.
+- Keep explicit Save for content/view changes and export the current state. Retain only dirty drafts across section/project navigation and protect page unload from the app root, including while Options is open. Naming stores the current contents as well as the new name.
+- Request native fullscreen when supported while keeping an in-app focus fallback. Hide surrounding navigation/files/tabs, fit the visible objects and preserve editing/Save/Export/exit controls. Guard against a native fullscreen request completing after Escape or unmount.
+- Preserve the honest disconnected AI panel. A live authenticated bridge and actual ChatGPT MCP calls remain the next task; shared manual operations are preparation, not proof of connectivity.
+
+## 2026-10-10 — ChatGPT MCP integration
+
+- The owner requested ChatGPT MCP plugin integration and confirmed that the web custom MCP server option is visible. Implement the required local companion, browser bridge and prepared plugin/tunnel setup without exposing the development website or automatically changing account settings.
+- Pin official TypeScript MCP SDK v2 and Zod after reviewing registry/API/license sources. Bundle a separate Node.js 24 companion; preserve the native Node-free website launcher. No model inference API is called, and no tunnel client or Node runtime is redistributed.
+- Use distinct random credentials for browser pairing and MCP access. One explicit tab/file owns authority; switching files/leaving Work/Stop sharing ends it. A five-second heartbeat lease handles disconnected browsers. Only exact local Host/origins and bounded authenticated requests are accepted.
+- Require current session/revision and an operation ID for all writes. The open editor validates again, commits to shared history and acknowledges; success is never inferred from queueing. Repeated identical operation IDs return their prior result; a timeout requires reading current state or retrying that same ID. Expired commands do not execute.
+- Keep bounded reads (100 objects), batches (25 operations), cumulative deletes (10 objects), and 128 logical operations per sharing session. Larger destructive operations are unsupported. AI changes remain unsaved until Save. Undo/Redo affect the latest manual or AI action.
+- Recognize a native launcher's fallback port only through the same packaged folder's registration and matching bounded health probe at companion startup. Keep exact origin checks; do not authorize arbitrary local ports. Open the website before its companion and restart the companion when the website address changes.
+- Prepare OpenAI Secure MCP Tunnel with private local bearer injection for ChatGPT web, and a local desktop plugin manifest. The helper is manually invoked and keeps a dedicated runtime profile. Account/tunnel permissions, billing and actual ChatGPT calls remain unverified; local SDK/browser tests are not evidence of a connected ChatGPT account.
+
+## 2026-10-11 — Camera navigation during MCP editing
+
+- The owner reported rejected AI writes and later confirmed moving the canvas during the attempt. Idle editor and status rerenders did not change revisions in reproduction. Completed camera changes did invalidate queued writes, so address this specific conflict without removing content safeguards.
+- Keep full public revisions and shared history. Track the last full revision at which content excluding the viewport changed on both browser and companion. Ordinary edits tolerate camera-only revisions and preserve the latest view. Undo/Redo require exact full revisions; active pointer gestures still block writes.
+- After a content conflict, read again and use the new revision with a new operation identifier. Identical retries continue to return their original outcome. New browsers retain strict checks with older companions that omit the optional content stamp.
+- Update the built app and companion together. Stage the local package update while the user's live services run; retain its private tunnel launchers, client and credential folder. Activating the update requires stopping those services and restarting the tunnel through its local hidden key prompt.
+
+## 2026-10-11 — Adaptable workspace and keyboard governance
+
+- Implement the owner's requested minimal, adjustable workspace on the existing React/SVG editor. Use collapsible panels, bounded resizers, a command palette and a current-project file switcher without adding dependencies or adopting another editor.
+- Keep layout and shortcut persistence separate from LCANVAS content and MCP revisions. Properties and Workspace AI share one right-panel width; hiding AI does not revoke explicit sharing. Preserve full screen and dirty drafts.
+- Register keyboard commands against the same UI handlers. Preserve text editing, dialogs, composition and fixed navigation keys; custom bindings suppress previous local defaults. Reject duplicate and protected browser combinations, and support storage failure within the current session.
+- Extend existing preferences with contrast, optional interface colors and motion style/speed. Old metadata receives defaults. Explicit colors affect interface tokens rather than canvas objects. App and operating-system reduced-motion settings override animation.
+
 ## Remaining open decisions
 
 - Whether SIL OFL 1.1 is acceptable specifically for engine fonts, or a supported replacement is needed.
 - Whether the owner's ChatGPT account can invoke custom write tools, and which secure transport is available with acceptable cost.
-- How future agent-callable undo/redo will integrate with the engine's supported public API.
+- Whether future editor expansion warrants adopting a separate drawing engine.
+
+## 2026-10-11 — Compact reference workspace
+
+- Follow the owner's reference as a ribbon, file tabs, central editor and left/right dock structure. Keep original Canvas Live branding and appearance tokens; reference annotations are not app decoration.
+- Open left Files/Projects and right Tools/Properties on mouse hover or click. Unpinned panels overlay the editor and auto-close; double-click tabs or use the accessible pin action to reserve space on wide screens. Narrow screens retain pins as overlays.
+- Separate pointer-focused actions from editing and keyboard focus so tool selection does not prevent auto-close. Preserve form drafts through stable hidden panel content. Shared AI authority remains in the bridge outside panel visibility.
+- Persist dock choices in layout v2 independently of LCANVAS, migrate old widths without rewriting old storage, and retain the same validated operations/history/transport. No dependencies were added.
+- Remove decorative text and repeated instructions; icon controls retain accessible names and hover titles. Keep editable labels, file names, real errors and sharing access details.

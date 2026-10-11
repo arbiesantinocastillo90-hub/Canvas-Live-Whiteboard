@@ -11,6 +11,10 @@ type IconName =
   | 'device'
   | 'edit'
   | 'close'
+  | 'files'
+  | 'import'
+  | 'export'
+  | 'save'
 const paths: Record<IconName, ReactNode> = {
   canvas: (
     <>
@@ -54,6 +58,27 @@ const paths: Record<IconName, ReactNode> = {
   ),
   edit: <path d="m15 5 4 4M4 20l4-1L20 7a2.8 2.8 0 0 0-4-4L4 15Z" />,
   close: <path d="m6 6 12 12M18 6 6 18" />,
+  files: (
+    <>
+      <path d="M8 3h9l4 4v14H8Z M17 3v5h4 M4 7H3v14h2" />
+      <path d="M11 12h7M11 16h5" />
+    </>
+  ),
+  import: (
+    <>
+      <path d="M12 3v12m-4-4 4 4 4-4M4 16v5h16v-5" />
+    </>
+  ),
+  export: (
+    <>
+      <path d="M12 16V3m-4 4 4-4 4 4M4 16v5h16v-5" />
+    </>
+  ),
+  save: (
+    <>
+      <path d="M4 3h13l4 4v14H4Z M8 3v6h8V3M8 21v-8h9v8" />
+    </>
+  ),
 }
 export default function Icon({ name }: { name: IconName }) {
   return (

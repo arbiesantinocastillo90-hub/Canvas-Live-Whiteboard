@@ -5,14 +5,17 @@ export default function ProjectDialog({
   initialName,
   onClose,
   onSubmit,
+  entity = 'project',
 }: {
   kind: 'create' | 'rename'
   initialName: string
   onClose: () => void
-  onSubmit: (name: string) => string | null
+  onSubmit: (name: string) => string | null | Promise<string | null>
+  entity?: 'project' | 'file'
 }) {
   const [name, setName] = useState(initialName)
   const [error, setError] = useState<string | null>(null)
+  const [pending, setPending] = useState(false)
   const input = useRef<HTMLInputElement>(null)
   const dialog = useRef<HTMLDivElement>(null)
   useEffect(() => {
@@ -27,12 +30,14 @@ export default function ProjectDialog({
     }
   }, [])
   function handleKeys(event: KeyboardEvent<HTMLDivElement>) {
-    if (event.key === 'Escape') {
+    if (event.key === 'Escape' && !pending) {
       event.preventDefault()
       onClose()
     }
     if (event.key !== 'Tab') return
-    const items = dialog.current?.querySelectorAll<HTMLElement>('button, input')
+    const items = dialog.current?.querySelectorAll<HTMLElement>(
+      'button:not(:disabled), input:not(:disabled)',
+    )
     if (!items?.length) return
     const first = items[0],
       last = items[items.length - 1]
@@ -56,19 +61,26 @@ export default function ProjectDialog({
       >
         <button
           className="icon-button dialog-close"
-          aria-label="Close project dialog"
+          aria-label={`Close ${entity} dialog`}
           onClick={onClose}
+          disabled={pending}
         >
           <Icon name="close" />
         </button>
         <span className="dialog-icon">
-          <Icon name="folder" />
+          <Icon name={entity === 'file' ? 'canvas' : 'folder'} />
         </span>
         <p className="eyebrow">
           {kind === 'create' ? 'A new beginning' : 'Make it yours'}
         </p>
         <h2 id="dialog-title">
-          {kind === 'create' ? 'Create a project' : 'Rename your project'}
+          {entity === 'file'
+            ? kind === 'create'
+              ? 'Create a canvas file'
+              : 'Rename your canvas'
+            : kind === 'create'
+              ? 'Create a project'
+              : 'Rename your project'}
         </h2>
         <p className="dialog-description">
           {kind === 'create'
@@ -76,20 +88,30 @@ export default function ProjectDialog({
             : 'Choose a name that feels right for this space.'}
         </p>
         <form
-          onSubmit={(event) => {
+          onSubmit={async (event) => {
             event.preventDefault()
-            setError(onSubmit(name))
+            if (pending) return
+            setPending(true)
+            try {
+              const result = onSubmit(name)
+              setError(result instanceof Promise ? await result : result)
+            } catch {
+              setError('The name could not be saved. Please try again.')
+            } finally {
+              setPending(false)
+            }
           }}
         >
           <label className="input-label" htmlFor="project-name">
-            Project name
+            {entity === 'file' ? 'Canvas name' : 'Project name'}
           </label>
           <input
             className="project-name-input"
             ref={input}
             id="project-name"
             value={name}
-            maxLength={80}
+            disabled={pending}
+            maxLength={entity === 'file' ? 120 : 80}
             placeholder="e.g. My next big idea"
             aria-invalid={Boolean(error)}
             aria-describedby={error ? 'project-name-error' : undefined}
@@ -104,18 +126,27 @@ export default function ProjectDialog({
             </p>
           )}
           <p className="quiet-note">
-            Project names stay in this browser. Canvas saving comes next.
+            {entity === 'file'
+              ? 'Saved in this browser. Export an LCANVAS copy to keep a portable backup.'
+              : 'Project names stay in this browser. Each project organizes its canvas files.'}
           </p>
           <div className="dialog-actions">
             <button
               type="button"
               className="button secondary"
               onClick={onClose}
+              disabled={pending}
             >
               Cancel
             </button>
-            <button type="submit" className="button primary">
-              {kind === 'create' ? 'Create project' : 'Save name'}
+            <button type="submit" className="button primary" disabled={pending}>
+              {pending
+                ? 'Saving…'
+                : kind === 'create'
+                  ? entity === 'file'
+                    ? 'Create canvas'
+                    : 'Create project'
+                  : 'Save name'}
               <Icon name="arrow" />
             </button>
           </div>

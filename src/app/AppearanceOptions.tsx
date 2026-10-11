@@ -1,3 +1,4 @@
+import { resolveAppearanceVariables, type AppearanceMode } from './appearance'
 import { DEFAULT_PREFERENCES, type Preferences } from './workspace'
 
 const accents = [
@@ -8,63 +9,63 @@ const accents = [
   { name: 'Rose', color: '#C35070' },
 ]
 
+const customColors = [
+  { key: 'backgroundColor', label: 'Background', token: '--bg' },
+  { key: 'surfaceColor', label: 'Panels', token: '--panel' },
+  { key: 'textColor', label: 'Text', token: '--ink' },
+  { key: 'borderColor', label: 'Borders', token: '--line' },
+  { key: 'gridColor', label: 'Canvas grid', token: '--grid' },
+] as const
+
 type AppearanceOptionsProps = {
   preferences: Preferences
   onChange: (preferences: Preferences) => void
+  mode?: AppearanceMode
 }
 
 export default function AppearanceOptions({
   preferences,
   onChange,
+  mode = preferences.mode === 'dark' ? 'dark' : 'light',
 }: AppearanceOptionsProps) {
   function update<K extends keyof Preferences>(key: K, value: Preferences[K]) {
     onChange({ ...preferences, [key]: value })
   }
 
+  const colors = resolveAppearanceVariables(preferences, mode)
+
   return (
     <section className="options-view" aria-labelledby="options-title">
       <div className="page-heading">
-        <p className="eyebrow">Options</p>
-        <h1 id="options-title">Make it feel like you.</h1>
-        <p className="description">
-          A few thoughtful adjustments for your space. Changes apply immediately
-          and stay in this browser.
-        </p>
+        <h1 id="options-title">Appearance</h1>
       </div>
 
       <div className="options-grid">
-        <fieldset className="option-card">
-          <legend className="option-title">Appearance</legend>
-          <p className="option-description">
-            Follow your device or choose a look of your own.
-          </p>
+        <fieldset className="option-card appearance-colors-card">
+          <legend className="option-title">Colors and contrast</legend>
+          <p className="option-description">A quiet look, in your colors.</p>
           <div className="radio-options">
-            {(['system', 'light', 'dark'] as const).map((mode) => (
-              <label className="radio-option" key={mode}>
+            {(['system', 'light', 'dark'] as const).map((appearance) => (
+              <label className="radio-option" key={appearance}>
                 <input
                   type="radio"
                   name="appearance"
-                  value={mode}
-                  checked={preferences.mode === mode}
-                  onChange={() => update('mode', mode)}
+                  value={appearance}
+                  checked={preferences.mode === appearance}
+                  onChange={() => update('mode', appearance)}
                 />
                 <span>
-                  {mode === 'system'
+                  {appearance === 'system'
                     ? 'Follow system'
-                    : mode === 'light'
+                    : appearance === 'light'
                       ? 'Light'
                       : 'Dark'}
                 </span>
               </label>
             ))}
           </div>
-        </fieldset>
 
-        <fieldset className="option-card">
-          <legend className="option-title">Accent color</legend>
-          <p className="option-description">
-            Add your color to buttons and selected items.
-          </p>
+          <h2 className="option-subtitle">Accent</h2>
           <div className="accent-swatches">
             {accents.map(({ name, color }) => (
               <button
@@ -95,12 +96,74 @@ export default function AppearanceOptions({
               onChange={(event) => update('accent', event.target.value)}
             />
           </label>
+
+          <div className="range-control">
+            <label htmlFor="interface-contrast">Interface contrast</label>
+            <output htmlFor="interface-contrast">
+              {preferences.contrast}%
+            </output>
+            <input
+              id="interface-contrast"
+              type="range"
+              min="0"
+              max="100"
+              step="1"
+              value={preferences.contrast}
+              onChange={(event) =>
+                update('contrast', Number(event.target.value))
+              }
+            />
+            <span>Soft</span>
+            <span>Strong</span>
+          </div>
+
+          <details className="advanced-colors">
+            <summary>Fine-tune colors</summary>
+            <div className="custom-color-list">
+              {customColors.map(({ key, label, token }) => (
+                <div className="custom-color-row" key={key}>
+                  <label htmlFor={`custom-${key}`}>{label}</label>
+                  <input
+                    id={`custom-${key}`}
+                    type="color"
+                    aria-label={`${label} color`}
+                    value={preferences[key] ?? colors[token]}
+                    onChange={(event) => update(key, event.target.value)}
+                  />
+                  <button
+                    className="text-button"
+                    type="button"
+                    aria-label={`Automatic ${label.toLowerCase()} color`}
+                    disabled={preferences[key] === null}
+                    onClick={() => update(key, null)}
+                  >
+                    Automatic
+                  </button>
+                </div>
+              ))}
+            </div>
+          </details>
+
+          <div className="appearance-preview" aria-label="Appearance preview">
+            <div className="appearance-preview-rail" aria-hidden="true">
+              <span />
+              <span />
+              <span />
+            </div>
+            <div className="appearance-preview-content">
+              <span className="appearance-preview-title">Your workspace</span>
+              <span className="appearance-preview-note">
+                Room for your ideas
+              </span>
+              <span className="appearance-preview-chip">Selected</span>
+            </div>
+          </div>
         </fieldset>
 
         <fieldset className="option-card">
-          <legend className="option-title">Workspace spacing</legend>
+          <legend className="option-title">Spacing and canvas</legend>
           <p className="option-description">
-            Choose more breathing room or a closer arrangement.
+            More room, or a closer arrangement.
           </p>
           <div className="radio-options">
             {(['comfortable', 'compact'] as const).map((density) => (
@@ -118,13 +181,7 @@ export default function AppearanceOptions({
               </label>
             ))}
           </div>
-        </fieldset>
-
-        <fieldset className="option-card">
-          <legend className="option-title">Canvas background</legend>
-          <p className="option-description">
-            Choose the backdrop for your canvas preview.
-          </p>
+          <h2 className="option-subtitle">Canvas background</h2>
           <div className="radio-options">
             {(['dots', 'lines', 'none'] as const).map((grid) => (
               <label className="radio-option" key={grid}>
@@ -149,9 +206,7 @@ export default function AppearanceOptions({
 
         <fieldset className="option-card">
           <legend className="option-title">Motion</legend>
-          <p className="option-description">
-            Keep interface transitions gentle.
-          </p>
+          <p className="option-description">Choose how your interface moves.</p>
           <label className="toggle-control">
             <input
               type="checkbox"
@@ -160,16 +215,46 @@ export default function AppearanceOptions({
             />
             <span>Reduce motion</span>
           </label>
+          <div className="radio-options">
+            {(['subtle', 'smooth'] as const).map((style) => (
+              <label className="radio-option" key={style}>
+                <input
+                  type="radio"
+                  name="motion-style"
+                  checked={preferences.motionStyle === style}
+                  disabled={preferences.reduceMotion}
+                  onChange={() => update('motionStyle', style)}
+                />
+                <span>{style === 'subtle' ? 'Subtle' : 'Smooth'}</span>
+              </label>
+            ))}
+          </div>
+          <label className="select-control" htmlFor="motion-speed">
+            <span>Animation speed</span>
+            <select
+              id="motion-speed"
+              value={preferences.motionSpeed}
+              disabled={preferences.reduceMotion}
+              onChange={(event) =>
+                update(
+                  'motionSpeed',
+                  event.target.value as Preferences['motionSpeed'],
+                )
+              }
+            >
+              <option value="slow">Slow</option>
+              <option value="normal">Normal</option>
+              <option value="fast">Fast</option>
+            </select>
+          </label>
           <p className="option-description">
-            Your device’s reduced motion setting is also respected.
+            Your device’s reduced motion setting is always respected.
           </p>
         </fieldset>
 
         <div className="option-card reset-card">
           <h2 className="option-title">A fresh look</h2>
-          <p className="option-description">
-            Restore the default appearance. Your project names stay as they are.
-          </p>
+          <p className="option-description">Restore the default appearance.</p>
           <button
             className="button button-secondary"
             type="button"

@@ -81,6 +81,15 @@ input:focus-visible {
   --gap: 16px;
   --nav-pad: 9px;
 }
+.app-shell[data-focused='true'] {
+  grid-template-columns: minmax(0, 1fr);
+}
+.app-shell[data-focused='true'] > .sidebar,
+.app-shell[data-focused='true'] > .skip-link,
+.app-shell[data-focused='true'] .topbar,
+.app-shell[data-focused='true'] .workspace-footer {
+  display: none;
+}
 .skip-link {
   position: fixed;
   top: 8px;

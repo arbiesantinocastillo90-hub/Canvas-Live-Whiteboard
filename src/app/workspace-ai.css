@@ -1,0 +1,83 @@
+.ai-pairing-form {
+  display: grid;
+  gap: 9px;
+  margin-top: 20px;
+}
+.ai-pairing-form label,
+.ai-last-operation > span {
+  font-size: 10px;
+  color: var(--muted);
+}
+.ai-pairing-form input {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--well);
+  color: var(--ink);
+  padding: 10px;
+  font: inherit;
+  font-size: 11px;
+}
+.ai-share-button {
+  width: 100%;
+  justify-content: center;
+  margin-top: 10px;
+  font-size: 11px;
+}
+.ai-status-card[data-sharing='true'] .status-dot {
+  background: #4d9e77;
+}
+.ai-connection-error {
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  color: #bd424e;
+  font-size: 11px;
+  overflow-wrap: anywhere;
+  line-height: 1.6;
+}
+.ai-last-operation {
+  margin-top: 16px;
+  font-size: 11px;
+  line-height: 1.6;
+}
+.ai-last-operation p {
+  margin: 5px 0;
+}
+.ai-setup {
+  margin-top: 20px;
+  padding-top: 15px;
+  border-top: 1px solid var(--line);
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.7;
+}
+.ai-setup summary {
+  cursor: pointer;
+  color: var(--ink);
+}
+.ai-setup ol {
+  padding-left: 17px;
+}
+.ai-setup li {
+  margin: 8px 0;
+}
+.ai-setup code {
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+.ai-setup a {
+  color: var(--accent-text);
+}
+.mcp-sharing-status {
+  color: var(--accent-text);
+}
+.mcp-focus-sharing {
+  flex-shrink: 0;
+  padding: 3px 5px;
+  border-radius: 4px;
+  font-size: 9px;
+  color: var(--accent-text);
+  background: var(--tint);
+}

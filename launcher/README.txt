@@ -18,5 +18,20 @@ If that port is busy, Canvas Live chooses another local port automatically.
 
 This package includes Options, Projects, Work, and customizable themes.
 Appearance preferences and project names are remembered in this browser.
-Drawing, canvas saving, LCANVAS files, and AI editing are still upcoming features.
+Each project organizes multiple LCANVAS files with create, import, save and export.
+Canvas editing includes shapes, text, resizing, containing areas, layers and connections.
+Connection arrows and paths are configurable and follow their linked objects.
+The right rail includes edit/view undo/redo, fit, zoom and fullscreen controls.
+Fullscreen focuses on the current file. Exit with the control or Escape.
+Use Properties for labels, exact geometry, area membership and layer organization.
+Save remembers changes in this browser; Export downloads the current LCANVAS v2 file.
+Existing LCANVAS v1 files remain importable. Tabs and panels can be closed and reopened.
+Files stay in this browser's local storage. Export .lcanvas copies for portable backups.
+A different browser or local port opens a separate file library.
+For optional AI editing, open "Start Canvas Live MCP.cmd" (requires Node.js 24).
+Open Workspace AI in the website, paste the companion's browser pairing code,
+and choose "Share this canvas". "Stop sharing" disconnects this file.
+Connect ChatGPT using the included CHATGPT_MCP.md setup guide.
+The companion runs only on this laptop; ChatGPT web requires a configured tunnel.
+AI edits use the same Undo/Redo and remain unsaved until you press Save.
 Original project code is MIT licensed; keep the included license notices with the folder.
