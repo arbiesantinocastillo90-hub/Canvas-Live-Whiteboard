@@ -190,6 +190,35 @@ describe('manual LCANVAS editor', () => {
     expect(onToggleFocus).toHaveBeenCalledOnce()
   })
 
+  it('temporarily pans over an object while Space is held and restores the select tool on release', () => {
+    const { stage, object, latest } = mount(shape())
+    stage.focus()
+    fireEvent.keyDown(stage, { key: ' ' })
+    expect(stage).toHaveAttribute('data-mode', 'pan')
+    fireEvent.pointerDown(object('box'), {
+      button: 0,
+      clientX: 10,
+      clientY: 20,
+    })
+    fireEvent.pointerMove(stage, { clientX: 50, clientY: 70 })
+    fireEvent.pointerUp(stage, { clientX: 50, clientY: 70 })
+    expect(latest().viewport).toMatchObject({ x: 40, y: 50 })
+    expect(latest().elements[0]).toMatchObject({ x: 10, y: 20 })
+    fireEvent.keyUp(window, { key: ' ' })
+    expect(stage).toHaveAttribute('data-mode', 'select')
+    fireEvent.pointerDown(object('box'), {
+      button: 0,
+      clientX: 10,
+      clientY: 20,
+    })
+    fireEvent.pointerMove(stage, { clientX: 30, clientY: 40 })
+    fireEvent.pointerUp(stage, { clientX: 30, clientY: 40 })
+    expect(latest().elements[0]).toMatchObject({ x: 30, y: 40 })
+    fireEvent.keyDown(stage, { key: ' ' })
+    fireEvent.blur(window)
+    expect(stage).toHaveAttribute('data-mode', 'select')
+  })
+
   it('creates plain elbow connections and recalculates endpoints when shapes move', () => {
     const document = shape(
       shape(createCanvasDocument('Plan'), 'from', 10, 20),

@@ -14,6 +14,14 @@ Closing tabs never deletes files. Content and view changes stay in memory until 
 
 No third-party drawing engine has been adopted. Excalidraw licensing/runtime evaluation remains separate from the implemented editor. The MCP companion uses the official TypeScript SDK v2; its bridge and shared operations are described below.
 
+## Adaptable workspace
+
+`layout.ts` validates and persists bounded panel preferences under its own localStorage key. `PanelResizeHandle.tsx` provides pointer capture and accessible keyboard adjustment. App/FileWorkspace/CanvasEditor use the same layout model; Workspace AI's painted width is measured for insertion and view fitting. Full screen temporarily hides panels and restores the ordinary layout on exit. These preferences never enter the LCANVAS model or MCP content stamp.
+
+`WorkspaceCommands.tsx` owns the palette, current-project quick switcher and shortcut recorder. `workspaceCommandsContext.ts` registers current handlers without capturing stale document state; `shortcuts.ts` validates bindings and restores safe defaults from invalid storage. Keyboard routing protects input, composition, dialogs and resize controls. Provider-managed shortcuts replace legacy local defaults, so clearing or remapping an action is effective. Overlays render inside the native fullscreen element when required. Commands invoke existing UI operations rather than defining a second mutation path.
+
+`appearance.ts` resolves shared palette and motion tokens from existing preferences. Optional colors, contrast and motion settings have backwards-compatible defaults. `workspace-adaptable.css` applies the final panel and compact-workspace rules. App and operating-system reduced-motion settings take precedence. See [Adaptable workspace](ADAPTABLE_WORKSPACE.md).
+
 ## Implemented Windows launcher
 
 `launcher/CanvasLiveLauncher.cs` is a small Windows GUI executable built with the laptop's .NET Framework compiler. `scripts/package-windows.ps1` places it beside the production website under `release/Canvas Live/app`. It uses its own executable location, so the complete folder can be moved and launched from another working directory. The runtime is supplied by Windows; no Node.js process or new third-party runtime is packaged.

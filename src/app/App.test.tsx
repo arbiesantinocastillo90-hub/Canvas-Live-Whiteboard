@@ -9,6 +9,8 @@ import {
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import App from './App'
 import { STORAGE_KEY, createProject, EMPTY_STATE } from './workspace'
+import { DEFAULT_LAYOUT, LAYOUT_STORAGE_KEY } from './layout'
+import { SHORTCUT_STORAGE_KEY } from './shortcuts'
 
 function createNamedProject(name: string) {
   fireEvent.click(screen.getByRole('button', { name: 'Create a new project' }))
@@ -124,7 +126,9 @@ describe('workspace navigation and appearance', () => {
       }),
     ).toBeInTheDocument()
     expect(
-      screen.queryByRole('button', { name: /^Open / }),
+      within(
+        screen.getByRole('complementary', { name: 'Workspace sidebar' }),
+      ).queryByRole('button', { name: /^Open / }),
     ).not.toBeInTheDocument()
   })
 
@@ -151,7 +155,150 @@ describe('workspace navigation and appearance', () => {
     expect(
       screen.getByRole('heading', { name: 'New roadmap', level: 1 }),
     ).toBeInTheDocument()
-    expect(screen.getByText(/LCANVAS editor · Add shapes/)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Import' })).toBeInTheDocument()
+  })
+
+  it('persists collapsed panels and resized widths without changing saved canvas content', async () => {
+    const view = render(<App />)
+    await createEditableCanvas()
+    fireEvent.click(screen.getByRole('button', { name: 'Add rectangle' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() =>
+      expect(
+        screen.queryByText('Unsaved changes · Save to remember'),
+      ).not.toBeInTheDocument(),
+    )
+    fireEvent.keyDown(
+      screen.getByRole('separator', { name: 'Resize workspace sidebar' }),
+      { key: 'ArrowRight' },
+    )
+    fireEvent.keyDown(
+      screen.getByRole('separator', { name: 'Resize project files' }),
+      { key: 'End' },
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Close file panel' }))
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Open AI workspace panel' }),
+    )
+    fireEvent.keyDown(
+      screen.getByRole('separator', { name: 'Resize right panel' }),
+      { key: 'ArrowLeft' },
+    )
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Collapse workspace sidebar' }),
+    )
+    expect(
+      screen.getByLabelText('Editing canvas: 1 visible objects'),
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByText('Unsaved changes · Save to remember'),
+    ).not.toBeInTheDocument()
+    expect(JSON.parse(localStorage.getItem(LAYOUT_STORAGE_KEY)!)).toMatchObject(
+      {
+        sidebarOpen: false,
+        sidebarWidth: 256,
+        filesOpen: false,
+        filesWidth: 340,
+        rightPanel: 'ai',
+        rightWidth: 290,
+      },
+    )
+    view.unmount()
+    render(<App />)
+    await screen.findByLabelText('Editing canvas: 1 visible objects')
+    expect(
+      screen.getByRole('button', { name: 'Expand workspace sidebar' }),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: 'Open file panel' }),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('complementary', { name: 'Workspace AI' }),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('separator', { name: 'Resize right panel' }),
+    ).toHaveAttribute('aria-valuenow', '290')
+    fireEvent.click(screen.getByRole('button', { name: 'Options' }))
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Reset workspace layout' }),
+    )
+    expect(JSON.parse(localStorage.getItem(LAYOUT_STORAGE_KEY)!)).toEqual(
+      DEFAULT_LAYOUT,
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Work' }))
+    await screen.findByLabelText('Editing canvas: 1 visible objects')
+  })
+
+  it('temporarily hides right panels in fullscreen and restores the chosen panel on exit', async () => {
+    render(<App />)
+    await createEditableCanvas()
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Open object properties' }),
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Full screen canvas' }))
+    expect(
+      screen.queryByRole('complementary', {
+        name: 'Canvas properties and layers',
+      }),
+    ).not.toBeInTheDocument()
+    expect(
+      JSON.parse(localStorage.getItem(LAYOUT_STORAGE_KEY)!).rightPanel,
+    ).toBe('properties')
+    fireEvent.keyDown(window, { key: 'Escape' })
+    expect(
+      screen.getByRole('complementary', {
+        name: 'Canvas properties and layers',
+      }),
+    ).toBeInTheDocument()
+  })
+
+  it('honors remapped drawing shortcuts and cleared Undo and Delete bindings in the actual editor', async () => {
+    localStorage.setItem(
+      SHORTCUT_STORAGE_KEY,
+      JSON.stringify({
+        'canvas.rectangle': 'X',
+        'canvas.undo': '',
+        'canvas.delete': '',
+      }),
+    )
+    render(<App />)
+    await createEditableCanvas()
+    const stage = screen.getByRole('region', {
+      name: 'Editing canvas canvas view',
+    })
+    stage.focus()
+    fireEvent.keyDown(stage, { key: 'r', code: 'KeyR' })
+    expect(
+      screen.getByLabelText('Editing canvas: 0 visible objects'),
+    ).toBeInTheDocument()
+    fireEvent.keyDown(stage, { key: 'x', code: 'KeyX' })
+    expect(
+      screen.getByLabelText('Editing canvas: 1 visible objects'),
+    ).toBeInTheDocument()
+    fireEvent.keyDown(stage, { key: 'z', code: 'KeyZ', ctrlKey: true })
+    expect(
+      screen.getByLabelText('Editing canvas: 1 visible objects'),
+    ).toBeInTheDocument()
+    fireEvent.keyDown(stage, { key: 'Delete' })
+    fireEvent.keyDown(stage, { key: 'Backspace' })
+    expect(
+      screen.getByLabelText('Editing canvas: 1 visible objects'),
+    ).toBeInTheDocument()
+  })
+
+  it('allows workspace navigation shortcuts from appearance controls', async () => {
+    render(<App />)
+    await createEditableCanvas()
+    fireEvent.click(screen.getByRole('button', { name: 'Options' }))
+    const motion = screen.getByRole('checkbox', { name: 'Reduce motion' })
+    motion.focus()
+    fireEvent.keyDown(motion, {
+      key: 'w',
+      code: 'KeyW',
+      ctrlKey: true,
+      altKey: true,
+    })
+    await screen.findByRole('region', { name: 'Editing canvas canvas view' })
   })
 
   it('filters projects and clears an empty search', () => {

@@ -1,6 +1,20 @@
 import { useEffect, useState, type CSSProperties } from 'react'
 import AppearanceOptions from './AppearanceOptions'
+import { resolveAppearanceVariables } from './appearance'
 import FileWorkspace from './FileWorkspace'
+import {
+  DEFAULT_LAYOUT,
+  loadLayout,
+  PANEL_LIMITS,
+  persistLayout,
+} from './layout'
+import PanelResizeHandle from './PanelResizeHandle'
+import HotkeyOptions, {
+  WorkspaceCommandsProvider,
+  WorkspaceLauncher,
+  WorkspaceOverlays,
+} from './WorkspaceCommands'
+import { useRegisterCommands } from './workspaceCommandsContext'
 import { useCanvasDraftProtection } from './canvasDrafts'
 import Icon from './Icon'
 import ProjectDialog from './ProjectDialog'
@@ -18,20 +32,6 @@ import {
 type Section = 'work' | 'projects' | 'options'
 type ProjectPrompt = { kind: 'create' } | { kind: 'rename'; project: Project }
 
-function accentInk(hex: string) {
-  const rgb = hex
-    .slice(1)
-    .match(/.{2}/g)!
-    .map((part) => {
-      const channel = parseInt(part, 16) / 255
-      return channel <= 0.04045
-        ? channel / 12.92
-        : ((channel + 0.055) / 1.055) ** 2.4
-    })
-  const luminance = rgb[0] * 0.2126 + rgb[1] * 0.7152 + rgb[2] * 0.0722
-  return luminance > 0.179 ? '#111111' : '#ffffff'
-}
-
 function openedDate(timestamp: number) {
   return new Intl.DateTimeFormat(undefined, {
     month: 'short',
@@ -40,6 +40,14 @@ function openedDate(timestamp: number) {
 }
 
 export default function App() {
+  return (
+    <WorkspaceCommandsProvider>
+      <WorkspaceApp />
+    </WorkspaceCommandsProvider>
+  )
+}
+
+function WorkspaceApp() {
   useCanvasDraftProtection()
   const [workspace, setWorkspace] = useState(loadWorkspace)
   const [section, setSection] = useState<Section>(() =>
@@ -49,6 +57,7 @@ export default function App() {
   const [search, setSearch] = useState('')
   const [storageError, setStorageError] = useState(false)
   const [canvasFocused, setCanvasFocused] = useState(false)
+  const [layout, setLayout] = useState(loadLayout)
   const [systemDark, setSystemDark] = useState(
     () => window.matchMedia?.('(prefers-color-scheme: dark)').matches ?? false,
   )
@@ -107,9 +116,60 @@ export default function App() {
         : 'This project could not be created. Please try again.'
     }
   }
+  function updateLayout(next: typeof layout) {
+    persistLayout(next)
+    setLayout(next)
+  }
+  function resetLayout() {
+    updateLayout({ ...DEFAULT_LAYOUT })
+  }
+  useRegisterCommands([
+    {
+      id: 'app.options',
+      label: 'Open Options',
+      category: 'Workspace',
+      execute: () => navigate('options'),
+      enabled: !canvasFocused,
+      allowWhileTyping: true,
+    },
+    {
+      id: 'app.projects',
+      label: 'Open Projects',
+      category: 'Workspace',
+      execute: () => navigate('projects'),
+      enabled: !canvasFocused,
+      allowWhileTyping: true,
+    },
+    {
+      id: 'app.work',
+      label: 'Return to Work',
+      category: 'Workspace',
+      execute: () => navigate('work'),
+      enabled: !canvasFocused,
+      allowWhileTyping: true,
+    },
+    {
+      id: 'app.toggleSidebar',
+      label: 'Toggle navigation',
+      category: 'Panels',
+      execute: () =>
+        updateLayout({ ...layout, sidebarOpen: !layout.sidebarOpen }),
+      enabled: !canvasFocused,
+      allowWhileTyping: true,
+    },
+    {
+      id: 'app.resetLayout',
+      label: 'Reset panel layout',
+      category: 'Panels',
+      execute: resetLayout,
+      enabled: !canvasFocused,
+    },
+  ])
   const colors = {
-    '--accent': workspace.preferences.accent,
-    '--accent-ink': accentInk(workspace.preferences.accent),
+    ...resolveAppearanceVariables(workspace.preferences, theme),
+    '--sidebar-width': `${layout.sidebarWidth}px`,
+    '--file-panel-width': `${layout.filesWidth}px`,
+    '--right-panel-width': `${layout.rightWidth}px`,
   } as CSSProperties
 
   return (
@@ -118,7 +178,10 @@ export default function App() {
       data-theme={theme}
       data-density={workspace.preferences.density}
       data-motion={workspace.preferences.reduceMotion ? 'reduced' : 'normal'}
+      data-motion-style={workspace.preferences.motionStyle}
       data-focused={canvasFocused}
+      data-sidebar-open={layout.sidebarOpen}
+      data-section={section}
       style={colors}
     >
       <a className="skip-link" href="#main-content">
@@ -126,10 +189,28 @@ export default function App() {
       </a>
       <aside
         className="sidebar"
+        data-collapsed={!layout.sidebarOpen}
         aria-label="Workspace sidebar"
         inert={canvasFocused}
         aria-hidden={canvasFocused}
       >
+        <button
+          className="icon-button sidebar-layout-toggle"
+          aria-label={
+            layout.sidebarOpen
+              ? 'Collapse workspace sidebar'
+              : 'Expand workspace sidebar'
+          }
+          aria-expanded={layout.sidebarOpen}
+          onClick={() =>
+            updateLayout({ ...layout, sidebarOpen: !layout.sidebarOpen })
+          }
+          title={
+            layout.sidebarOpen ? 'Collapse navigation' : 'Expand navigation'
+          }
+        >
+          <Icon name="files" />
+        </button>
         <a className="brand" href="/" aria-label="Canvas Live home">
           <span className="brand-mark">
             <img src="/canvas-live-logo.png" alt="" />
@@ -143,6 +224,8 @@ export default function App() {
         <nav className="section-nav" aria-label="Main navigation">
           <button
             className="nav-item"
+            aria-label="Work"
+            title="Work"
             aria-current={section === 'work' ? 'page' : undefined}
             onClick={() => navigate('work')}
           >
@@ -152,6 +235,8 @@ export default function App() {
           </button>
           <button
             className="nav-item"
+            aria-label="Projects"
+            title="Projects"
             aria-current={section === 'projects' ? 'page' : undefined}
             onClick={() => navigate('projects')}
           >
@@ -161,6 +246,8 @@ export default function App() {
           </button>
           <button
             className="nav-item"
+            aria-label="Options"
+            title="Options"
             aria-current={section === 'options' ? 'page' : undefined}
             onClick={() => navigate('options')}
           >
@@ -215,6 +302,17 @@ export default function App() {
           <p>On your device. At your pace.</p>
           <span className="version-label">Canvas Live · Early workspace</span>
         </div>
+        {layout.sidebarOpen && (
+          <PanelResizeHandle
+            label="Resize workspace sidebar"
+            value={layout.sidebarWidth}
+            {...PANEL_LIMITS.sidebar}
+            defaultValue={PANEL_LIMITS.sidebar.default}
+            onChange={(sidebarWidth) =>
+              updateLayout({ ...layout, sidebarWidth })
+            }
+          />
+        )}
       </aside>
       <div className="main-shell">
         <header className="topbar">
@@ -229,6 +327,7 @@ export default function App() {
                   : 'Options'}
             </strong>
           </div>
+          <WorkspaceLauncher />
           <span className="local-badge">
             <span />
             Local workspace
@@ -242,12 +341,32 @@ export default function App() {
             </div>
           )}
           {section === 'options' && (
-            <AppearanceOptions
-              preferences={workspace.preferences}
-              onChange={(preferences) =>
-                updateWorkspace({ ...workspace, preferences })
-              }
-            />
+            <>
+              <AppearanceOptions
+                preferences={workspace.preferences}
+                mode={theme}
+                onChange={(preferences) =>
+                  updateWorkspace({ ...workspace, preferences })
+                }
+              />
+              <section
+                className="layout-options"
+                aria-labelledby="layout-options-title"
+              >
+                <h2 id="layout-options-title">Workspace layout</h2>
+                <p>
+                  Drag panel edges to resize. Collapse panels when you need more
+                  space.
+                </p>
+                <button
+                  className="button secondary layout-reset-button"
+                  onClick={resetLayout}
+                >
+                  Reset workspace layout
+                </button>
+              </section>
+              <HotkeyOptions />
+            </>
           )}
           {section === 'projects' && (
             <section
@@ -375,6 +494,8 @@ export default function App() {
                 key={activeProject.id}
                 project={activeProject}
                 preferences={workspace.preferences}
+                layout={layout}
+                onLayoutChange={updateLayout}
                 onFocusChange={setCanvasFocused}
                 onRenameProject={() =>
                   setPrompt({ kind: 'rename', project: activeProject })
@@ -423,6 +544,7 @@ export default function App() {
           onSubmit={submitProject}
         />
       )}
+      <WorkspaceOverlays />
     </div>
   )
 }

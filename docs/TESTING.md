@@ -45,6 +45,10 @@ The MCP suite adds strict commands/read pagination, deletion limits, atomic batc
 
 The Windows launcher has a separate integration test. Run `npm.cmd run package:windows`, then `npm.cmd run test:launcher`. It copies the package to a temporary folder with spaces and checks startup from an unrelated working directory, packaged assets/notices, HTTP restrictions, occupied-port fallback, repeated launch, restart recovery and missing-file errors. The executed result was **24 passed checks**. It uses `--no-browser` and force-stops its own processes; it does not exercise the tray's Close action or observe the operating system's default-browser window. See [WINDOWS_LAUNCHER.md](WINDOWS_LAUNCHER.md) for the normal-launch browser check and coverage limits.
 
+## Adaptable workspace verification
+
+The 2026-10-11 update passed **352 application tests**, **63 MCP tests**, TypeScript, lint, formatting and the production build with the unchanged **232-package** license gate. It also passed **12 isolated production Chrome UI scenarios**, **9 production MCP camera scenarios** against the updated UI and **23 updater fixture checks**. Layout changes preserve saved document content; bindings protect typing/dialogs and replace cleared legacy defaults. Browser checks cover actual painted colors and motion, storage reload, keyboard commands and 760/320-pixel panel bounds. See [ADAPTABLE_WORKSPACE.md](ADAPTABLE_WORKSPACE.md) for evidence and limits.
+
 ## Troubleshooting
 
 - If npm cannot be resolved, reopen PowerShell after installing Node and use `npm.cmd`.

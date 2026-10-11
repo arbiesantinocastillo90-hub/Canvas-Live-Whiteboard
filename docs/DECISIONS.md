@@ -71,6 +71,13 @@
 - After a content conflict, read again and use the new revision with a new operation identifier. Identical retries continue to return their original outcome. New browsers retain strict checks with older companions that omit the optional content stamp.
 - Update the built app and companion together. Stage the local package update while the user's live services run; retain its private tunnel launchers, client and credential folder. Activating the update requires stopping those services and restarting the tunnel through its local hidden key prompt.
 
+## 2026-10-11 — Adaptable workspace and keyboard governance
+
+- Implement the owner's requested minimal, adjustable workspace on the existing React/SVG editor. Use collapsible panels, bounded resizers, a command palette and a current-project file switcher without adding dependencies or adopting another editor.
+- Keep layout and shortcut persistence separate from LCANVAS content and MCP revisions. Properties and Workspace AI share one right-panel width; hiding AI does not revoke explicit sharing. Preserve full screen and dirty drafts.
+- Register keyboard commands against the same UI handlers. Preserve text editing, dialogs, composition and fixed navigation keys; custom bindings suppress previous local defaults. Reject duplicate and protected browser combinations, and support storage failure within the current session.
+- Extend existing preferences with contrast, optional interface colors and motion style/speed. Old metadata receives defaults. Explicit colors affect interface tokens rather than canvas objects. App and operating-system reduced-motion settings override animation.
+
 ## Remaining open decisions
 
 - Whether SIL OFL 1.1 is acceptable specifically for engine fonts, or a supported replacement is needed.

@@ -6,6 +6,8 @@ Version of Canvas OS that multiple users and AI's could interact and collaborate
 
 The workspace includes customizable themes, Options, Projects with recent openings, and Work that returns to the latest project. Each project organizes multiple LCANVAS files. Edit rectangles, ellipses, diamonds, text, containing areas, layers and attached connections with configurable arrowheads. Full screen focuses on the current file while keeping drawing, save and view controls available. Save files individually in browser IndexedDB and export portable LCANVAS v2 backups; existing v1 files remain importable. The optional MCP companion provides 15 bounded tools for the file explicitly shared through Workspace AI, including shared Undo/Redo. Ordinary AI edits tolerate completed camera navigation while preserving content conflict checks. The owner's ChatGPT plugin is installed and has read the shared canvas; confirming live edits remains an acceptance step.
 
+The adaptable workspace adds remembered panel widths and visibility, a narrow navigation rail, contrast and interface color controls, adjustable motion, a command palette and a current-project file switcher. Customize shortcuts in Options; Ctrl+P opens commands, Ctrl+O opens files and Space temporarily pans the canvas. See [Adaptable workspace](docs/ADAPTABLE_WORKSPACE.md) for controls and release activation.
+
 - [Project specification](PROJECT_SPEC.md)
 - [Agent instructions](AGENTS.md)
 - [Initial inspection and Milestone 0–1 plan](docs/INSPECTION.md)
@@ -14,6 +16,7 @@ The workspace includes customizable themes, Options, Projects with recent openin
 - [Milestone 0 verification results](docs/MILESTONE_0.md)
 - [Windows executable and verification](docs/WINDOWS_LAUNCHER.md)
 - [Themes, Projects and Work](docs/UI_WORKSPACE.md)
+- [Adaptable layout, appearance, motion and keyboard shortcuts](docs/ADAPTABLE_WORKSPACE.md)
 - [LCANVAS files and viewer](docs/LCANVAS.md)
 - [Canvas editing and controls](docs/EDITOR.md)
 - [Editor verification](docs/EDITOR_VERIFICATION.md)

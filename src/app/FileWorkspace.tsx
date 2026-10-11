@@ -4,11 +4,23 @@ import {
   useRef,
   useState,
   type ChangeEvent,
+  type CSSProperties,
 } from 'react'
 import CanvasEditor, { type CanvasEditorController } from './CanvasEditor'
 import WorkspaceAI from './WorkspaceAI'
 import useMcpBridge from './useMcpBridge'
 import useCanvasFocus from './useCanvasFocus'
+import {
+  loadLayout,
+  PANEL_LIMITS,
+  persistLayout,
+  type WorkspaceLayout,
+} from './layout'
+import PanelResizeHandle from './PanelResizeHandle'
+import {
+  useRegisterCommands,
+  useRegisterFiles,
+} from './workspaceCommandsContext'
 import {
   projectDrafts,
   useCanvasDraftProtection,
@@ -50,26 +62,51 @@ function openingTimestamp(entries: Entry[]) {
   )
 }
 
+function savingTimestamp(previous: number) {
+  return Math.max(Date.now(), previous)
+}
+
 export default function FileWorkspace({
   project,
   preferences,
   onRenameProject,
   store = canvasFileStore,
   onFocusChange,
+  layout: controlledLayout,
+  onLayoutChange,
 }: {
   project: Project
   preferences: Preferences
   onRenameProject: () => void
   store?: typeof canvasFileStore
   onFocusChange?: (focused: boolean) => void
+  layout?: WorkspaceLayout
+  onLayoutChange?: (layout: WorkspaceLayout) => void
 }) {
   const [entries, setEntries] = useState<Entry[]>([])
   const [openIds, setOpenIds] = useState<string[]>([])
   const [activeId, setActiveId] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
-  const [filesOpen, setFilesOpen] = useState(true)
-  const [aiOpen, setAiOpen] = useState(false)
+  const [localLayout, setLocalLayout] = useState(loadLayout)
+  const layout = controlledLayout ?? localLayout
+  const filesOpen = layout.filesOpen
+  const [focusRightPanel, setFocusRightPanel] =
+    useState<WorkspaceLayout['rightPanel']>('none')
+  function changeLayout(next: WorkspaceLayout) {
+    if (onLayoutChange) onLayoutChange(next)
+    else {
+      persistLayout(next)
+      setLocalLayout(next)
+    }
+  }
+  function setFilesOpen(open: boolean) {
+    changeLayout({ ...layout, filesOpen: open })
+  }
+  function setAiOpen(open: boolean) {
+    if (focused) setFocusRightPanel(open ? 'ai' : 'none')
+    else changeLayout({ ...layout, rightPanel: open ? 'ai' : 'none' })
+  }
   const [search, setSearch] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
@@ -79,7 +116,11 @@ export default function FileWorkspace({
   const alive = useRef(false)
   const openingSequence = useRef(0)
   const focusRoot = useRef<HTMLElement>(null)
+  const aiDock = useRef<HTMLDivElement>(null)
+  const [aiInset, setAiInset] = useState(0)
   const { focused, toggle } = useCanvasFocus(focusRoot, onFocusChange)
+  const rightPanel = focused ? focusRightPanel : layout.rightPanel
+  const aiOpen = rightPanel === 'ai'
   useCanvasDraftProtection(store)
   const active = entries.find((entry) => entry.record.id === activeId)
   const editorController = useRef<{
@@ -115,9 +156,116 @@ export default function FileWorkspace({
   )
 
   function toggleFocus() {
-    if (!focused) setAiOpen(false)
+    if (!focused) setFocusRightPanel('none')
     void toggle()
   }
+
+  useEffect(() => {
+    if (!aiOpen || !aiDock.current) {
+      setAiInset(0)
+      return
+    }
+    const panel = aiDock.current
+    const measure = () => setAiInset(panel.getBoundingClientRect().width)
+    measure()
+    const observer =
+      typeof ResizeObserver === 'function' ? new ResizeObserver(measure) : null
+    observer?.observe(panel)
+    window.addEventListener('resize', measure)
+    return () => {
+      observer?.disconnect()
+      window.removeEventListener('resize', measure)
+    }
+  }, [aiOpen, layout.rightWidth, focused])
+
+  function nextTab(direction: number) {
+    const index = openIds.indexOf(activeId ?? '')
+    const id = openIds[(index + direction + openIds.length) % openIds.length]
+    const entry = entries.find((item) => item.record.id === id)
+    if (entry) openFile(entry)
+  }
+  useRegisterCommands([
+    {
+      id: 'file.new',
+      label: 'New canvas',
+      category: 'Files',
+      execute: () => setPrompt({ kind: 'create' }),
+      enabled: !loading && !busy && !focused,
+    },
+    {
+      id: 'file.import',
+      label: 'Import LCANVAS',
+      category: 'Files',
+      execute: () => importInput.current?.click(),
+      enabled: !loading && !busy && !focused,
+    },
+    {
+      id: 'file.save',
+      label: 'Save current canvas',
+      category: 'Files',
+      execute: () => {
+        void saveFile()
+      },
+      enabled: Boolean(active) && !busy,
+      allowWhileTyping: true,
+    },
+    {
+      id: 'file.export',
+      label: 'Export current canvas',
+      category: 'Files',
+      execute: exportFile,
+      enabled: Boolean(active),
+    },
+    {
+      id: 'file.toggleFiles',
+      label: 'Toggle files panel',
+      category: 'Panels',
+      execute: () => setFilesOpen(!filesOpen),
+      enabled: !focused,
+    },
+    {
+      id: 'file.toggleAI',
+      label: 'Toggle Workspace AI',
+      category: 'Panels',
+      execute: () => setAiOpen(!aiOpen),
+    },
+    {
+      id: 'file.next',
+      label: 'Next canvas tab',
+      category: 'Files',
+      execute: () => nextTab(1),
+      enabled: openIds.length > 1 && !focused,
+    },
+    {
+      id: 'file.previous',
+      label: 'Previous canvas tab',
+      category: 'Files',
+      execute: () => nextTab(-1),
+      enabled: openIds.length > 1 && !focused,
+    },
+    {
+      id: 'file.close',
+      label: 'Close current canvas tab',
+      category: 'Files',
+      execute: () => {
+        if (activeId) closeTab(activeId)
+      },
+      enabled: Boolean(activeId) && !focused,
+    },
+  ])
+  useRegisterFiles(
+    entries.map((entry) => ({
+      id: entry.record.id,
+      name: entry.record.document.name,
+      projectName: project.name,
+      open: () => {
+        void (async () => {
+          if (focused) await toggle()
+          openFile(entry)
+        })()
+      },
+    })),
+  )
 
   useEffect(() => {
     alive.current = true
@@ -327,7 +475,7 @@ export default function FileWorkspace({
     if (!active || busy) return
     const snapshot = {
       ...active.record,
-      updatedAt: Math.max(Date.now(), active.record.updatedAt),
+      updatedAt: savingTimestamp(active.record.updatedAt),
     }
     setBusy(true)
     try {
@@ -379,6 +527,12 @@ export default function FileWorkspace({
       ref={focusRoot}
       className="file-workspace"
       data-focus={focused}
+      style={
+        {
+          '--file-panel-width': `${layout.filesWidth}px`,
+          '--right-panel-width': `${layout.rightWidth}px`,
+        } as CSSProperties
+      }
       aria-label={
         focused
           ? `${active?.record.document.name ?? 'Canvas'} fullscreen editor`
@@ -431,7 +585,6 @@ export default function FileWorkspace({
       )}
       <header className="file-work-heading">
         <div>
-          <p className="eyebrow">Your project workspace</p>
           <h1 id="work-title">{project.name}</h1>
         </div>
         <button
@@ -485,6 +638,7 @@ export default function FileWorkspace({
           className="button secondary"
           disabled={!active || busy}
           onClick={saveFile}
+          aria-label="Save"
           title="Save this canvas in your browser"
         >
           <Icon name="save" />
@@ -494,6 +648,7 @@ export default function FileWorkspace({
           className="button secondary"
           disabled={!active}
           onClick={exportFile}
+          aria-label="Export"
           title="Download a portable LCANVAS file"
         >
           <Icon name="export" />
@@ -581,6 +736,14 @@ export default function FileWorkspace({
               <br />
               Export a copy to take them with you.
             </p>
+            <PanelResizeHandle
+              label="Resize project files"
+              value={layout.filesWidth}
+              min={PANEL_LIMITS.files.min}
+              max={PANEL_LIMITS.files.max}
+              defaultValue={PANEL_LIMITS.files.default}
+              onChange={(filesWidth) => changeLayout({ ...layout, filesWidth })}
+            />
           </aside>
         )}
         <div className="canvas-column">
@@ -639,8 +802,21 @@ export default function FileWorkspace({
                 document={active.record.document}
                 grid={preferences.grid}
                 aiOpen={aiOpen}
-                rightInset={aiOpen ? 260 : 0}
+                rightInset={aiInset}
                 onToggleAI={() => setAiOpen(!aiOpen)}
+                propertiesOpen={rightPanel === 'properties'}
+                onPropertiesOpenChange={(open) => {
+                  if (focused) setFocusRightPanel(open ? 'properties' : 'none')
+                  else
+                    changeLayout({
+                      ...layout,
+                      rightPanel: open ? 'properties' : 'none',
+                    })
+                }}
+                propertiesWidth={layout.rightWidth}
+                onPropertiesWidthChange={(rightWidth) =>
+                  changeLayout({ ...layout, rightWidth })
+                }
                 onDocumentChange={changeDocument}
                 focusMode={focused}
                 onToggleFocus={toggleFocus}
@@ -702,25 +878,32 @@ export default function FileWorkspace({
           </div>
         </div>
         {aiOpen && (
-          <WorkspaceAI
-            projectName={project.name}
-            canvasName={active?.record.document.name ?? null}
-            bridge={bridge}
-            onClose={() => {
-              setAiOpen(false)
-              document
-                .querySelector<HTMLButtonElement>(
-                  '[aria-controls="workspace-ai-panel"]',
-                )
-                ?.focus()
-            }}
-          />
+          <div className="workspace-ai-dock" ref={aiDock}>
+            <PanelResizeHandle
+              label="Resize right panel"
+              value={layout.rightWidth}
+              min={PANEL_LIMITS.right.min}
+              max={PANEL_LIMITS.right.max}
+              defaultValue={PANEL_LIMITS.right.default}
+              edge="left"
+              onChange={(rightWidth) => changeLayout({ ...layout, rightWidth })}
+            />
+            <WorkspaceAI
+              projectName={project.name}
+              canvasName={active?.record.document.name ?? null}
+              bridge={bridge}
+              onClose={() => {
+                setAiOpen(false)
+                document
+                  .querySelector<HTMLButtonElement>(
+                    '[aria-controls="workspace-ai-panel"]',
+                  )
+                  ?.focus()
+              }}
+            />
+          </div>
         )}
       </div>
-      <p className="viewer-scope-note">
-        LCANVAS editor · Add shapes, text, areas and connections. Use Properties
-        for layers and object details. Save to remember your changes.
-      </p>
       {prompt && (
         <ProjectDialog
           entity="file"

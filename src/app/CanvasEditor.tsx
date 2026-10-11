@@ -40,6 +40,12 @@ import {
   type CanvasCommandResult,
 } from '../mcp/canvasCommands'
 import type { BridgeCommand } from '../mcp/bridgeProtocol'
+import { PANEL_LIMITS } from './layout'
+import PanelResizeHandle from './PanelResizeHandle'
+import {
+  useCommandsEnabled,
+  useRegisterCommands,
+} from './workspaceCommandsContext'
 import './canvas-viewer.css'
 import './canvas-editor.css'
 
@@ -53,6 +59,10 @@ export type CanvasEditorProps = {
   focusMode?: boolean
   onToggleFocus?: () => void
   onControllerReady?: (controller: CanvasEditorController | null) => void
+  propertiesOpen?: boolean
+  onPropertiesOpenChange?: (open: boolean) => void
+  propertiesWidth?: number
+  onPropertiesWidthChange?: (width: number) => void
 }
 
 export type CanvasEditorController = {
@@ -301,6 +311,10 @@ export default function CanvasEditor({
   focusMode = false,
   onToggleFocus,
   onControllerReady,
+  propertiesOpen,
+  onPropertiesOpenChange,
+  propertiesWidth = PANEL_LIMITS.right.default,
+  onPropertiesWidthChange,
 }: CanvasEditorProps) {
   const [history, setHistory] = useState(() => createEditorHistory(document))
   const currentHistory = useRef(history)
@@ -310,7 +324,15 @@ export default function CanvasEditor({
   const [dragging, setDragging] = useState(false)
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [mode, setMode] = useState<Mode>('select')
-  const [inspectorOpen, setInspectorOpen] = useState(false)
+  const [spaceHeld, setSpaceHeld] = useState(false)
+  const temporaryPan = useRef(false)
+  const [localInspectorOpen, setLocalInspectorOpen] = useState(false)
+  const inspectorOpen = propertiesOpen ?? localInspectorOpen
+  const managedCommands = useCommandsEnabled()
+  function setInspectorOpen(open: boolean) {
+    if (onPropertiesOpenChange) onPropertiesOpenChange(open)
+    else setLocalInspectorOpen(open)
+  }
   const [layerId, setLayerId] = useState(document.layers[0].id)
   const [connectionSource, setConnectionSource] = useState<string | null>(null)
   const [arrowStyle, setArrowStyle] = useState<
@@ -446,7 +468,7 @@ export default function CanvasEditor({
   function center() {
     const bounds = stage.current?.getBoundingClientRect()
     return {
-      x: Math.max(0, (bounds?.width ?? 600) - rightInset) / 2,
+      x: Math.max(40, (bounds?.width ?? 600) - Math.max(0, rightInset)) / 2,
       y: (bounds?.height ?? 400) / 2,
     }
   }
@@ -474,7 +496,7 @@ export default function CanvasEditor({
     const maxX = Math.max(...boxes.map((box) => box.x + box.width))
     const maxY = Math.max(...boxes.map((box) => box.y + box.height))
     const bounds = stage.current?.getBoundingClientRect()
-    const width = Math.max(1, (bounds?.width ?? 600) - rightInset)
+    const width = Math.max(40, (bounds?.width ?? 600) - Math.max(0, rightInset))
     const height = Math.max(1, bounds?.height ?? 400)
     const zoom = Math.min(
       MAX_ZOOM,
@@ -548,7 +570,12 @@ export default function CanvasEditor({
 
   function beginStage(event: PointerEvent<HTMLDivElement>) {
     if (event.button !== 0 && event.button !== 1) return
-    if (mode === 'pan' || event.button === 1 || event.altKey)
+    if (
+      mode === 'pan' ||
+      temporaryPan.current ||
+      event.button === 1 ||
+      event.altKey
+    )
       beginGesture(event, 'pan')
     else if (
       event.target === event.currentTarget ||
@@ -595,7 +622,13 @@ export default function CanvasEditor({
     element: CanvasElement,
   ) {
     if (event.button !== 0 && event.button !== 1) return
-    if (mode === 'pan' || event.button === 1 || event.altKey) return
+    if (
+      mode === 'pan' ||
+      temporaryPan.current ||
+      event.button === 1 ||
+      event.altKey
+    )
+      return
     event.stopPropagation()
     chooseObject(element.id)
     if (
@@ -656,15 +689,27 @@ export default function CanvasEditor({
       stage.current.releasePointerCapture(event.pointerId)
   }
 
-  function navigateByKey(event: KeyboardEvent<HTMLDivElement>) {
+  function navigateByKey(event: KeyboardEvent<HTMLElement | SVGElement>) {
     if (
+      event.defaultPrevented ||
+      event.nativeEvent.isComposing ||
       gesture.current ||
+      (event.target instanceof Element &&
+        Boolean(
+          event.target.closest('[contenteditable="true"], [role="textbox"]'),
+        )) ||
       event.target instanceof HTMLInputElement ||
       event.target instanceof HTMLTextAreaElement ||
       event.target instanceof HTMLSelectElement
     )
       return
     const modifier = event.ctrlKey || event.metaKey
+    if (
+      managedCommands &&
+      ((modifier && ['z', 'y', 'd'].includes(event.key.toLowerCase())) ||
+        ['Delete', 'Backspace', '+', '=', '-', '_', '0'].includes(event.key))
+    )
+      return
     if (modifier && event.key.toLowerCase() === 'z') {
       event.preventDefault()
       showHistory(
@@ -680,6 +725,14 @@ export default function CanvasEditor({
       return
     }
     if (modifier || event.altKey) return
+    if (event.key === ' ') {
+      event.preventDefault()
+      if (!event.repeat) {
+        temporaryPan.current = true
+        setSpaceHeld(true)
+      }
+      return
+    }
     if (event.key === 'Escape') {
       setSelectedId(null)
       setConnectionSource(null)
@@ -745,6 +798,24 @@ export default function CanvasEditor({
   }
 
   useEffect(() => {
+    function releaseSpace(event: globalThis.KeyboardEvent) {
+      if (event.key !== ' ') return
+      temporaryPan.current = false
+      setSpaceHeld(false)
+    }
+    function release() {
+      temporaryPan.current = false
+      setSpaceHeld(false)
+    }
+    window.addEventListener('keyup', releaseSpace)
+    window.addEventListener('blur', release)
+    return () => {
+      window.removeEventListener('keyup', releaseSpace)
+      window.removeEventListener('blur', release)
+    }
+  }, [])
+
+  useEffect(() => {
     const surface = stage.current
     if (!surface) return
     function wheel(event: WheelEvent) {
@@ -774,6 +845,181 @@ export default function CanvasEditor({
     return () => surface.removeEventListener('wheel', wheel)
   }, [document.name, onDocumentChange])
 
+  function runCanvas(action: () => void) {
+    if (gesture.current) return
+    safely(action)
+    stage.current?.focus()
+  }
+  function duplicateSelected() {
+    if (
+      !selected ||
+      !isElementEditable(currentHistory.current.present, selected.id)
+    )
+      return
+    const { id, ...copy } = selected
+    void id
+    const shifted =
+      copy.type === 'connection'
+        ? copy
+        : copy.type === 'line'
+          ? {
+              ...copy,
+              x: copy.x + 24,
+              y: copy.y + 24,
+              x2: copy.x2 + 24,
+              y2: copy.y2 + 24,
+            }
+          : { ...copy, x: copy.x + 24, y: copy.y + 24 }
+    const next = createElement(currentHistory.current.present, shifted)
+    commit(next)
+    setSelectedId(next.elements[next.elements.length - 1].id)
+  }
+  const commandAvailable = !dragging
+  useRegisterCommands([
+    {
+      id: 'canvas.select',
+      label: 'Select tool',
+      category: 'Canvas',
+      execute: () =>
+        runCanvas(() => {
+          setMode('select')
+          setConnectionSource(null)
+        }),
+      enabled: commandAvailable,
+      scope: 'canvas',
+    },
+    {
+      id: 'canvas.pan',
+      label: 'Pan tool',
+      category: 'Canvas',
+      execute: () =>
+        runCanvas(() => {
+          setMode('pan')
+          setConnectionSource(null)
+        }),
+      enabled: commandAvailable,
+      scope: 'canvas',
+    },
+    ...(['rectangle', 'ellipse', 'diamond', 'text', 'area'] as const).map(
+      (type) => ({
+        id: `canvas.${type}` as const,
+        label: `Add ${type}`,
+        category: 'Canvas',
+        execute: () => runCanvas(() => add(type)),
+        enabled: commandAvailable,
+        scope: 'canvas' as const,
+      }),
+    ),
+    {
+      id: 'canvas.connection',
+      label: 'Connection tool',
+      category: 'Canvas',
+      execute: () =>
+        runCanvas(() => {
+          setMode('connect')
+          setConnectionSource(null)
+        }),
+      enabled: commandAvailable,
+      scope: 'canvas',
+    },
+    {
+      id: 'canvas.undo',
+      label: 'Undo',
+      category: 'Canvas',
+      execute: () =>
+        runCanvas(() => showHistory(undoEditorHistory(currentHistory.current))),
+      enabled: commandAvailable && history.past.length > 0,
+      scope: 'canvas',
+    },
+    {
+      id: 'canvas.redo',
+      label: 'Redo',
+      category: 'Canvas',
+      execute: () =>
+        runCanvas(() => showHistory(redoEditorHistory(currentHistory.current))),
+      enabled: commandAvailable && history.future.length > 0,
+      scope: 'canvas',
+    },
+    {
+      id: 'canvas.delete',
+      label: 'Delete selected object',
+      category: 'Canvas',
+      execute: () =>
+        runCanvas(() => {
+          if (selected)
+            commit(removeElement(currentHistory.current.present, selected.id))
+        }),
+      enabled:
+        commandAvailable &&
+        Boolean(selected && isElementEditable(board, selected.id)),
+      scope: 'canvas',
+    },
+    {
+      id: 'canvas.duplicate',
+      label: 'Duplicate selected object',
+      category: 'Canvas',
+      execute: () => runCanvas(duplicateSelected),
+      enabled:
+        commandAvailable &&
+        Boolean(selected && isElementEditable(board, selected.id)),
+      scope: 'canvas',
+    },
+    {
+      id: 'canvas.zoomIn',
+      label: 'Zoom in',
+      category: 'View',
+      execute: () => runCanvas(() => changeZoom(1.2)),
+      enabled: commandAvailable && view.zoom < MAX_ZOOM,
+      scope: 'canvas',
+    },
+    {
+      id: 'canvas.zoomOut',
+      label: 'Zoom out',
+      category: 'View',
+      execute: () => runCanvas(() => changeZoom(1 / 1.2)),
+      enabled: commandAvailable && view.zoom > MIN_ZOOM,
+      scope: 'canvas',
+    },
+    {
+      id: 'canvas.resetView',
+      label: 'Reset canvas view',
+      category: 'View',
+      execute: () => runCanvas(resetView),
+      enabled: commandAvailable,
+      scope: 'canvas',
+    },
+    {
+      id: 'canvas.fitView',
+      label: 'Fit canvas content',
+      category: 'View',
+      execute: () => runCanvas(resetView),
+      enabled: commandAvailable,
+      scope: 'canvas',
+    },
+    {
+      id: 'canvas.toggleProperties',
+      label: 'Toggle Properties',
+      category: 'Panels',
+      execute: () =>
+        runCanvas(() => {
+          if (inspectorOpen) setInspectorOpen(false)
+          else openInspector()
+        }),
+      enabled: commandAvailable,
+    },
+    {
+      id: 'canvas.focus',
+      label: 'Toggle full screen canvas',
+      category: 'View',
+      execute: () =>
+        runCanvas(() => {
+          if (propertiesOpen === undefined && !focusMode)
+            setInspectorOpen(false)
+          onToggleFocus?.()
+        }),
+      enabled: commandAvailable && Boolean(onToggleFocus),
+    },
+  ])
   const gridStyle = {
     '--canvas-grid-size': `${(view.zoom < 0.5 ? 120 : 24) * view.zoom}px`,
     '--canvas-grid-x': `${view.x}px`,
@@ -783,6 +1029,7 @@ export default function CanvasEditor({
     <section
       className={`canvas-editor${inspectorOpen ? ' has-inspector' : ''}`}
       aria-label="LCANVAS editor"
+      data-canvas-root
     >
       <div
         className="canvas-edit-toolbar"
@@ -919,7 +1166,7 @@ export default function CanvasEditor({
           className="lcanvas-stage canvas-edit-stage"
           data-grid={grid}
           data-dragging={dragging}
-          data-mode={mode}
+          data-mode={spaceHeld ? 'pan' : mode}
           style={gridStyle}
           tabIndex={0}
           role="region"
@@ -931,6 +1178,15 @@ export default function CanvasEditor({
           onPointerCancel={(event) => endGesture(event, true)}
           onLostPointerCapture={(event) => endGesture(event)}
           onKeyDown={navigateByKey}
+          onBlurCapture={(event) => {
+            if (
+              !(event.relatedTarget instanceof Node) ||
+              !event.currentTarget.contains(event.relatedTarget)
+            ) {
+              temporaryPan.current = false
+              setSpaceHeld(false)
+            }
+          }}
         >
           <svg
             className="lcanvas-drawing"
@@ -953,7 +1209,11 @@ export default function CanvasEditor({
                     className="canvas-edit-object"
                     onPointerDown={(event) => beginObject(event, element)}
                     onKeyDown={(event) => {
-                      if (event.key === 'Enter' || event.key === ' ') {
+                      if (event.key === ' ') {
+                        navigateByKey(event)
+                        return
+                      }
+                      if (event.key === 'Enter') {
                         event.preventDefault()
                         event.stopPropagation()
                         chooseObject(element.id)
@@ -1094,7 +1354,23 @@ export default function CanvasEditor({
           )}
         </div>
         {inspectorOpen && (
-          <div className="canvas-inspector-slot">
+          <div
+            className="canvas-inspector-slot"
+            style={
+              { '--right-panel-width': `${propertiesWidth}px` } as CSSProperties
+            }
+          >
+            {onPropertiesWidthChange && (
+              <PanelResizeHandle
+                label="Resize right panel"
+                value={propertiesWidth}
+                min={PANEL_LIMITS.right.min}
+                max={PANEL_LIMITS.right.max}
+                defaultValue={PANEL_LIMITS.right.default}
+                edge="left"
+                onChange={onPropertiesWidthChange}
+              />
+            )}
             <CanvasInspector
               document={board}
               selectedId={selected?.id ?? null}
@@ -1178,7 +1454,8 @@ export default function CanvasEditor({
               aria-pressed={focusMode}
               title={focusMode ? 'Exit full screen' : 'Focus on this canvas'}
               onClick={() => {
-                if (!focusMode) setInspectorOpen(false)
+                if (!focusMode && propertiesOpen === undefined)
+                  setInspectorOpen(false)
                 onToggleFocus()
               }}
             >
