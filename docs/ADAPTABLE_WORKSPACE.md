@@ -1,5 +1,7 @@
 # Adaptable workspace
 
+The app now starts on a separate Home page before opening a file. [HOME_AND_LOCAL_FILES.md](HOME_AND_LOCAL_FILES.md) describes Home, group/clipboard/inline editing, camera-aware Undo and physical local file saving. The dock layout below applies when a canvas file is open.
+
 Canvas Live centers the current LCANVAS file in a full-height editor with file tabs. A 44-pixel icon ribbon opens workspace navigation; the fixed right rail keeps Undo, Redo, zoom, fit, fullscreen and panel launchers available. Compact controls show their names on hover and keep accessible labels. File names, values and editable field labels remain visible; decorative headings and repeated instructions have been removed.
 
 ## Layout

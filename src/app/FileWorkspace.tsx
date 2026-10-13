@@ -1,6 +1,8 @@
 import {
   useCallback,
   useEffect,
+  useEffectEvent,
+  useLayoutEffect,
   useRef,
   useState,
   type ChangeEvent,
@@ -29,6 +31,18 @@ import {
   type CanvasDraft,
 } from './canvasDrafts'
 import Icon from './Icon'
+import {
+  chooseLocalCanvasFiles,
+  chooseLocalCanvasSave,
+  allowLocalWrite,
+  localFilesFor,
+  supportsLocalCanvasOpen,
+  supportsLocalCanvasSave,
+  writeLocalCanvas,
+  type LocalCanvasBinding,
+  type LocalCanvasImport,
+} from './canvasLocalFiles'
+import { recoveryFor, mergeRecoveredDrafts } from './canvasRecovery'
 import ProjectDialog from './ProjectDialog'
 import {
   canvasFileStore,
@@ -47,9 +61,19 @@ import './file-workspace.css'
 
 type Entry = CanvasDraft
 type FilePrompt = { kind: 'create' } | { kind: 'rename'; id: string }
+export type WorkspaceOpenRequest = {
+  sequence: number
+  fileId?: string
+  action?: 'create'
+  imports?: File[]
+  localImports?: LocalCanvasImport[]
+}
 
 function message(error: unknown) {
-  return error instanceof Error
+  return error &&
+    typeof error === 'object' &&
+    'message' in error &&
+    typeof error.message === 'string'
     ? error.message
     : 'The file could not be opened.'
 }
@@ -78,6 +102,8 @@ export default function FileWorkspace({
   onLayoutChange,
   projectPanel,
   showFileToggle = true,
+  workspaceActive = true,
+  openRequest,
 }: {
   project: Project
   preferences: Preferences
@@ -88,12 +114,26 @@ export default function FileWorkspace({
   onLayoutChange?: (layout: WorkspaceLayout) => void
   projectPanel?: ReactNode
   showFileToggle?: boolean
+  workspaceActive?: boolean
+  openRequest?: WorkspaceOpenRequest
 }) {
   const [entries, setEntries] = useState<Entry[]>([])
   const [openIds, setOpenIds] = useState<string[]>([])
   const [activeId, setActiveId] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
+  const [localBindings, setLocalBindings] = useState(
+    new Map<string, LocalCanvasBinding>(),
+  )
+  const [downloadedIds, setDownloadedIds] = useState(new Set<string>())
+  const [savingIds, setSavingIds] = useState(new Set<string>())
+  const [permissionIds, setPermissionIds] = useState(new Set<string>())
+  const [failedSaveIds, setFailedSaveIds] = useState(new Set<string>())
+  const entriesRef = useRef<Entry[]>([])
+  const bindingsRef = useRef(localBindings)
+  const workspaceActiveRef = useRef(workspaceActive)
+  const manualSaving = useRef(false)
+  const pendingFileSaves = useRef(new Map<string, Promise<void>>())
   const [localLayout, setLocalLayout] = useState(loadLayout)
   const layout = controlledLayout ?? localLayout
   const filesOpen = layout.filesOpen
@@ -126,6 +166,8 @@ export default function FileWorkspace({
   const fileTabs = useRef<HTMLDivElement>(null)
   const alive = useRef(false)
   const openingSequence = useRef(0)
+  const handledOpenRequest = useRef<number | null>(null)
+  const initialOpenRequest = useRef(openRequest)
   const focusRoot = useRef<HTMLElement>(null)
   const [rightHost, setRightHost] = useState<HTMLDivElement | null>(null)
   const [rightInset, setRightInset] = useState(0)
@@ -135,6 +177,17 @@ export default function FileWorkspace({
   const aiOpen = rightPanel === 'ai'
   useCanvasDraftProtection(store)
   const active = entries.find((entry) => entry.record.id === activeId)
+  const localBinding = activeId ? localBindings.get(activeId) : undefined
+  const localDirty = Boolean(
+    active &&
+    localBinding &&
+    !sameDocument(active.record.document, localBinding.savedDocument),
+  )
+  useLayoutEffect(() => {
+    entriesRef.current = entries
+    bindingsRef.current = localBindings
+    workspaceActiveRef.current = workspaceActive
+  })
   const editorController = useRef<{
     fileId: string
     controller: CanvasEditorController
@@ -158,7 +211,7 @@ export default function FileWorkspace({
   const bridge = useMcpBridge({
     projectId: project.id,
     projectName: project.name,
-    fileId: activeId,
+    fileId: workspaceActive ? activeId : null,
     getController,
   })
   const visible = entries.filter((entry) =>
@@ -224,95 +277,119 @@ export default function FileWorkspace({
       ?.querySelectorAll<HTMLButtonElement>('[role="tab"]')
       [nextIndex]?.focus()
   }
-  useRegisterCommands([
-    {
-      id: 'file.new',
-      label: 'New canvas',
-      category: 'Files',
-      execute: () => setPrompt({ kind: 'create' }),
-      enabled: !loading && !busy && !focused,
-    },
-    {
-      id: 'file.import',
-      label: 'Import LCANVAS',
-      category: 'Files',
-      execute: () => importInput.current?.click(),
-      enabled: !loading && !busy && !focused,
-    },
-    {
-      id: 'file.save',
-      label: 'Save current canvas',
-      category: 'Files',
-      execute: () => {
-        void saveFile()
-      },
-      enabled: Boolean(active) && !busy,
-      allowWhileTyping: true,
-    },
-    {
-      id: 'file.export',
-      label: 'Export current canvas',
-      category: 'Files',
-      execute: exportFile,
-      enabled: Boolean(active),
-    },
-    {
-      id: 'file.toggleFiles',
-      label: 'Toggle files panel',
-      category: 'Panels',
-      execute: () => setFilesOpen(!filesOpen),
-      enabled: !focused,
-    },
-    {
-      id: 'file.toggleAI',
-      label: 'Toggle Workspace AI',
-      category: 'Panels',
-      execute: () => setAiOpen(!aiOpen),
-    },
-    {
-      id: 'file.next',
-      label: 'Next canvas tab',
-      category: 'Files',
-      execute: () => nextTab(1),
-      enabled: openIds.length > 1 && !focused,
-    },
-    {
-      id: 'file.previous',
-      label: 'Previous canvas tab',
-      category: 'Files',
-      execute: () => nextTab(-1),
-      enabled: openIds.length > 1 && !focused,
-    },
-    {
-      id: 'file.close',
-      label: 'Close current canvas tab',
-      category: 'Files',
-      execute: () => {
-        if (activeId) closeTab(activeId)
-      },
-      enabled: Boolean(activeId) && !focused,
-    },
-  ])
+  useRegisterCommands(
+    workspaceActive
+      ? [
+          {
+            id: 'file.new',
+            label: 'New canvas',
+            category: 'Files',
+            execute: () => setPrompt({ kind: 'create' }),
+            enabled: !loading && !busy && !focused,
+          },
+          {
+            id: 'file.import',
+            label: 'Import LCANVAS',
+            category: 'Files',
+            execute: () => {
+              void openLocalFiles()
+            },
+            enabled: !loading && !busy && !focused,
+          },
+          {
+            id: 'file.saveAs',
+            label: 'Save canvas as local file',
+            category: 'Files',
+            execute: () => {
+              void saveFile(true)
+            },
+            enabled: Boolean(active) && !busy,
+            allowWhileTyping: true,
+          },
+          {
+            id: 'file.save',
+            label: 'Save current canvas',
+            category: 'Files',
+            execute: () => {
+              void saveFile()
+            },
+            enabled: Boolean(active) && !busy,
+            allowWhileTyping: true,
+          },
+          {
+            id: 'file.export',
+            label: 'Export current canvas',
+            category: 'Files',
+            execute: exportFile,
+            enabled: Boolean(active),
+            allowWhileTyping: true,
+          },
+          {
+            id: 'file.toggleFiles',
+            label: 'Toggle files panel',
+            category: 'Panels',
+            execute: () => setFilesOpen(!filesOpen),
+            enabled: !focused,
+          },
+          {
+            id: 'file.toggleAI',
+            label: 'Toggle Workspace AI',
+            category: 'Panels',
+            execute: () => setAiOpen(!aiOpen),
+          },
+          {
+            id: 'file.next',
+            label: 'Next canvas tab',
+            category: 'Files',
+            execute: () => nextTab(1),
+            enabled: openIds.length > 1 && !focused,
+          },
+          {
+            id: 'file.previous',
+            label: 'Previous canvas tab',
+            category: 'Files',
+            execute: () => nextTab(-1),
+            enabled: openIds.length > 1 && !focused,
+          },
+          {
+            id: 'file.close',
+            label: 'Close current canvas tab',
+            category: 'Files',
+            execute: () => {
+              if (activeId) closeTab(activeId)
+            },
+            enabled: Boolean(activeId) && !focused,
+          },
+        ]
+      : [],
+  )
   useRegisterFiles(
-    entries.map((entry) => ({
-      id: entry.record.id,
-      name: entry.record.document.name,
-      projectName: project.name,
-      open: () => {
-        void (async () => {
-          if (focused) await toggle()
-          openFile(entry)
-        })()
-      },
-    })),
+    workspaceActive
+      ? entries.map((entry) => ({
+          id: entry.record.id,
+          name: entry.record.document.name,
+          projectName: project.name,
+          open: () => {
+            void (async () => {
+              if (focused) await toggle()
+              openFile(entry)
+            })()
+          },
+        }))
+      : [],
   )
 
   useEffect(() => {
     alive.current = true
     let cancelled = false
-    store
+    const recovered = recoveryFor(store)
       .list(project.id)
-      .then((result) => {
+      .catch((failure: unknown) => {
+        if (!cancelled) setNotice(message(failure))
+        return []
+      })
+    Promise.all([store.list(project.id), recovered])
+      .then(async ([result, recoveredDrafts]) => {
         if (cancelled) return
         const files = [...result.value].sort(
           (a, b) => b.lastOpenedAt - a.lastOpenedAt,
@@ -322,26 +399,93 @@ export default function FileWorkspace({
           ...files.map((file) => file.lastOpenedAt),
         )
         const cachedDrafts = projectDrafts(store).get(project.id) ?? []
-        setEntries(
-          files.map(
-            (record) =>
-              cachedDrafts.find(
-                (entry) => entry.record.id === record.id && entry.dirty,
-              ) ?? {
-                record,
-                dirty: false,
-                savedDocument: record.document,
-                persistence: result.persistence,
-              },
+        const savedEntries = files.map(
+          (record) =>
+            cachedDrafts.find(
+              (entry) => entry.record.id === record.id && entry.dirty,
+            ) ?? {
+              record,
+              dirty: false,
+              savedDocument: record.document,
+              persistence: result.persistence,
+            },
+        )
+        // Drafts can exist without a saved record (for example after a failed write).
+        savedEntries.push(
+          ...cachedDrafts.filter(
+            (draft) =>
+              !savedEntries.some(
+                (entry) => entry.record.id === draft.record.id,
+              ),
           ),
         )
-        setOpenIds(files.length ? [files[0].id] : [])
-        setActiveId(files[0]?.id ?? null)
-        setNotice(result.error ?? null)
+        let restored = mergeRecoveredDrafts(savedEntries, recoveredDrafts)
+        const remembered = await Promise.all(
+          restored.map(async (entry) => {
+            try {
+              return [
+                entry.record.id,
+                await localFilesFor(store).get(project.id, entry.record.id),
+              ] as const
+            } catch (failure) {
+              if (!cancelled) setNotice(message(failure))
+              return [entry.record.id, null] as const
+            }
+          }),
+        )
+        if (cancelled) return
+        const rememberedBindings = new Map(
+          remembered.filter(
+            (entry): entry is readonly [string, LocalCanvasBinding] =>
+              entry[1] !== null,
+          ),
+        )
+        // Physical commits remain authoritative if updating their browser copy failed.
+        // Reconcile the saved baseline before merging recovery to retain later drafts too.
+        restored = mergeRecoveredDrafts(
+          savedEntries.map((entry) => {
+            const local = rememberedBindings.get(entry.record.id)
+            return local && !entry.dirty
+              ? {
+                  ...entry,
+                  record: { ...entry.record, document: local.savedDocument },
+                  savedDocument: local.savedDocument,
+                }
+              : entry
+          }),
+          recoveredDrafts,
+        )
+        setLocalBindings(rememberedBindings)
+        setEntries(restored)
+        const requested = initialOpenRequest.current
+        const initial =
+          requested?.action || requested?.imports || requested?.localImports
+            ? null
+            : requested?.fileId
+              ? restored.find((entry) => entry.record.id === requested.fileId)
+              : restored[0]
+        setOpenIds(initial ? [initial.record.id] : [])
+        setActiveId(initial?.record.id ?? null)
+        if (result.error) setNotice(result.error)
         setLoading(false)
       })
-      .catch((failure: unknown) => {
+      .catch(async (failure: unknown) => {
         if (cancelled) return
+        const cached = mergeRecoveredDrafts(
+          projectDrafts(store).get(project.id) ?? [],
+          await recovered,
+        )
+        if (cancelled) return
+        setEntries(cached)
+        const requested = initialOpenRequest.current
+        const initial =
+          requested?.action || requested?.imports || requested?.localImports
+            ? null
+            : requested?.fileId
+              ? cached.find((entry) => entry.record.id === requested.fileId)
+              : cached[0]
+        setOpenIds(initial ? [initial.record.id] : [])
+        setActiveId(initial?.record.id ?? null)
         setError(message(failure))
         setLoading(false)
       })
@@ -358,6 +502,45 @@ export default function FileWorkspace({
         entries.filter((entry) => entry.dirty),
       )
   }, [entries, loading, project.id, store])
+
+  useEffect(() => {
+    if (loading) return
+    const snapshot = entries.filter((entry) => entry.dirty)
+    const timer = setTimeout(() => {
+      void recoveryFor(store)
+        .replace(project.id, snapshot)
+        .catch((failure: unknown) => {
+          if (alive.current) setNotice(message(failure))
+        })
+    }, 400)
+    return () => clearTimeout(timer)
+  }, [entries, loading, project.id, store])
+  useEffect(() => {
+    function flushRecovery() {
+      const drafts = entriesRef.current.filter((entry) => entry.dirty)
+      void recoveryFor(store)
+        .replace(project.id, drafts)
+        .catch((failure: unknown) => {
+          if (alive.current) setNotice(message(failure))
+        })
+    }
+    window.addEventListener('pagehide', flushRecovery)
+    return () => {
+      window.removeEventListener('pagehide', flushRecovery)
+      flushRecovery()
+    }
+  }, [project.id, store])
+  useEffect(() => {
+    if (!workspaceActive && !loading)
+      void recoveryFor(store)
+        .replace(
+          project.id,
+          entriesRef.current.filter((entry) => entry.dirty),
+        )
+        .catch((failure: unknown) => {
+          if (alive.current) setNotice(message(failure))
+        })
+  }, [workspaceActive, loading, project.id, store])
 
   function accept(record: CanvasFileRecord, persistence: Entry['persistence']) {
     openingSequence.current = Math.max(
@@ -390,13 +573,29 @@ export default function FileWorkspace({
         ? {
             ...existing.record,
             document: { ...existing.record.document, name: document.name },
-            updatedAt: Math.max(Date.now(), existing.record.updatedAt),
+            updatedAt: savingTimestamp(existing.record.updatedAt),
           }
         : createCanvasFileRecord(
             project.id,
             document,
             Math.max(openingTimestamp(entries), openingSequence.current + 1),
           )
+      if (existing && bindingsRef.current.has(existing.record.id)) {
+        setEntries((current) =>
+          current.map((entry) =>
+            entry.record.id === existing.record.id
+              ? {
+                  ...entry,
+                  record,
+                  dirty: !sameDocument(entry.savedDocument, record.document),
+                }
+              : entry,
+          ),
+        )
+        setError(null)
+        setPrompt(null)
+        return null
+      }
       const result = await store.save(record)
       if (!alive.current) return null
       accept(result.value, result.persistence)
@@ -412,6 +611,9 @@ export default function FileWorkspace({
   async function importFiles(event: ChangeEvent<HTMLInputElement>) {
     const selected = Array.from(event.target.files ?? [])
     event.target.value = ''
+    await importSelectedFiles(selected)
+  }
+  async function importSelectedFiles(selected: File[]) {
     if (!selected.length) return
     setBusy(true)
     setError(null)
@@ -442,7 +644,111 @@ export default function FileWorkspace({
     setBusy(false)
   }
 
-  function openFile(entry: Entry) {
+  async function importBoundFiles(selected: LocalCanvasImport[]) {
+    if (!selected.length) return
+    setBusy(true)
+    const failures: string[] = []
+    for (const source of selected) {
+      try {
+        if (
+          !/\.lcanvas$/iu.test(source.file.name) ||
+          source.file.size > 10 * 1024 * 1024
+        )
+          throw new Error('Choose an .lcanvas file no larger than 10 MiB.')
+        const document = parseLCANVAS(await source.file.text())
+        if (!alive.current) break
+        let prior: Entry | undefined
+        for (const [id, bound] of bindingsRef.current) {
+          if (
+            bound.handle === source.handle ||
+            (bound.handle.isSameEntry &&
+              (await bound.handle.isSameEntry(source.handle)))
+          ) {
+            prior = entriesRef.current.find((entry) => entry.record.id === id)
+            if (prior) break
+          }
+        }
+        if (
+          prior?.dirty ||
+          (prior &&
+            !sameDocument(
+              prior.record.document,
+              bindingsRef.current.get(prior.record.id)!.savedDocument,
+            ))
+        ) {
+          openFile(prior, true)
+          setNotice(
+            'This local file is already open. Your unsaved edits have been kept.',
+          )
+          continue
+        }
+        const record = prior
+          ? {
+              ...prior.record,
+              document,
+              updatedAt: savingTimestamp(prior.record.updatedAt),
+              lastOpenedAt: Math.max(
+                openingTimestamp(entriesRef.current),
+                openingSequence.current + 1,
+              ),
+            }
+          : createCanvasFileRecord(
+              project.id,
+              document,
+              Math.max(
+                openingTimestamp(entriesRef.current),
+                openingSequence.current + 1,
+              ),
+            )
+        const result = await store.save(record)
+        if (!alive.current) break
+        const bound = {
+          handle: source.handle,
+          autoSave: bindingsRef.current.get(record.id)?.autoSave ?? true,
+          savedDocument: document,
+        }
+        await localFilesFor(store)
+          .set(project.id, record.id, bound)
+          .catch((failure: unknown) => {
+            failures.push(message(failure))
+          })
+        if (!alive.current) break
+        bindingsRef.current = new Map(bindingsRef.current).set(record.id, bound)
+        setLocalBindings((current) => new Map(current).set(record.id, bound))
+        setFailedSaveIds((current) => {
+          const next = new Set(current)
+          next.delete(record.id)
+          return next
+        })
+        setNotice(
+          result.error
+            ? 'This .lcanvas file is stored locally. Browser recovery is unavailable.'
+            : null,
+        )
+        accept(result.value, result.persistence)
+      } catch (failure) {
+        failures.push(`${source.file.name}: ${message(failure)}`)
+      }
+    }
+    if (!alive.current) return
+    setBusy(false)
+    setError(failures.length ? failures.join('\n') : null)
+  }
+
+  async function openLocalFiles() {
+    if (!supportsLocalCanvasOpen()) {
+      importInput.current?.click()
+      return
+    }
+    try {
+      const selected = await chooseLocalCanvasFiles()
+      if (selected && alive.current) await importBoundFiles(selected)
+    } catch (failure) {
+      if (alive.current) setError(message(failure))
+    }
+  }
+
+  function openFile(entry: Entry, keepNotice = false) {
     const id = entry.record.id
     setOpenIds((current) => (current.includes(id) ? current : [...current, id]))
     setActiveId(id)
@@ -471,12 +777,43 @@ export default function FileWorkspace({
               : item,
           ),
         )
-        if (result.error) setNotice(result.error)
+        if (result.error && !keepNotice) setNotice(result.error)
       })
       .catch((failure: unknown) => {
         if (alive.current) setError(message(failure))
       })
   }
+
+  const handleOpenRequest = useEffectEvent((request: WorkspaceOpenRequest) => {
+    handledOpenRequest.current = request.sequence
+    if (request.action === 'create') setPrompt({ kind: 'create' })
+    else if (request.localImports) void importBoundFiles(request.localImports)
+    else if (request.imports) void importSelectedFiles(request.imports)
+    else if (request.fileId) {
+      const entry = entries.find((item) => item.record.id === request.fileId)
+      if (entry) openFile(entry)
+      else
+        setError(
+          'This canvas could not be found. Choose another file from Home.',
+        )
+    }
+  })
+  useEffect(() => {
+    if (
+      !workspaceActive ||
+      loading ||
+      !openRequest ||
+      handledOpenRequest.current === openRequest.sequence
+    )
+      return
+    let cancelled = false
+    queueMicrotask(() => {
+      if (!cancelled && alive.current) handleOpenRequest(openRequest)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [workspaceActive, loading, openRequest])
 
   function closeTab(id: string) {
     const next = openIds.filter((open) => open !== id)
@@ -511,51 +848,275 @@ export default function FileWorkspace({
     )
   }
 
-  async function saveFile() {
-    if (!active || busy) return
-    const snapshot = {
-      ...active.record,
-      updatedAt: savingTimestamp(active.record.updatedAt),
+  function rememberSaved(
+    snapshot: CanvasFileRecord,
+    persistence: Entry['persistence'],
+  ) {
+    const update = (current: Entry[]) =>
+      current.map((entry) =>
+        entry.record.id === snapshot.id
+          ? {
+              ...entry,
+              savedDocument: snapshot.document,
+              dirty: !sameDocument(entry.record.document, snapshot.document),
+              persistence,
+              record: { ...entry.record, updatedAt: snapshot.updatedAt },
+            }
+          : entry,
+      )
+    // Update refs before awaiting anything else so a newly requested save sees this commit.
+    entriesRef.current = update(entriesRef.current)
+    projectDrafts(store).set(
+      project.id,
+      entriesRef.current.filter((entry) => entry.dirty),
+    )
+    if (alive.current) setEntries(update)
+  }
+
+  function currentSnapshot(id: string) {
+    const entry = entriesRef.current.find((item) => item.record.id === id)
+    if (!entry) return null
+    const document =
+      editorController.current?.fileId === id
+        ? editorController.current.controller.getDocument()
+        : entry.record.document
+    return {
+      ...entry.record,
+      document,
+      updatedAt: savingTimestamp(entry.record.updatedAt),
     }
-    setBusy(true)
+  }
+
+  async function cacheSaved(snapshot: CanvasFileRecord) {
     try {
       const result = await store.save(snapshot)
-      if (!alive.current) return
-      setEntries((current) =>
-        current.map((entry) =>
-          entry.record.id === snapshot.id
-            ? {
-                ...entry,
-                savedDocument: snapshot.document,
-                dirty: !sameDocument(entry.record.document, snapshot.document),
-                persistence: result.persistence,
-                record: { ...entry.record, updatedAt: result.value.updatedAt },
-              }
-            : entry,
-        ),
-      )
-      setNotice(result.error ?? null)
-      setError(null)
+      rememberSaved(snapshot, result.persistence)
+      if (alive.current && result.error)
+        setNotice(
+          'Saved to file. Browser recovery is unavailable; the .lcanvas file is stored locally.',
+        )
     } catch (failure) {
-      if (alive.current) setError(message(failure))
+      // A completed physical file remains saved even if its browser copy fails.
+      rememberSaved(snapshot, 'session')
+      if (alive.current)
+        setNotice(
+          `The local file is saved. Its browser copy could not be updated: ${message(failure)}`,
+        )
+    }
+  }
+
+  async function saveBoundFile(
+    id: string,
+    target: LocalCanvasBinding,
+    newTarget: boolean,
+    interactive: boolean,
+  ) {
+    const previousSave = pendingFileSaves.current.get(id)
+    // Ask only during the explicit save gesture; autosave may query existing grants only.
+    const permission = newTarget
+      ? Promise.resolve(true)
+      : allowLocalWrite(target.handle, interactive)
+    const task = (async () => {
+      if (!(await permission)) {
+        if (alive.current)
+          setPermissionIds((current) => new Set(current).add(id))
+        if (interactive)
+          throw new Error(
+            'Local file permission was not granted. Save again to allow access, or use Save as.',
+          )
+        return
+      }
+      await previousSave?.catch(() => undefined)
+      if (!alive.current || (!interactive && !workspaceActiveRef.current))
+        return
+      const snapshot = currentSnapshot(id)
+      if (!snapshot) return
+      const latest = bindingsRef.current.get(id)
+      const expected = newTarget
+        ? undefined
+        : (latest?.savedDocument ?? target.savedDocument)
+      await writeLocalCanvas(target.handle, snapshot.document, expected)
+      const nextBinding = {
+        ...target,
+        autoSave: bindingsRef.current.get(id)?.autoSave ?? target.autoSave,
+        savedDocument: snapshot.document,
+      }
+      bindingsRef.current = new Map(bindingsRef.current).set(id, nextBinding)
+      if (alive.current) {
+        setLocalBindings((current) => new Map(current).set(id, nextBinding))
+        setFailedSaveIds((current) => {
+          const next = new Set(current)
+          next.delete(id)
+          return next
+        })
+        setPermissionIds((current) => {
+          const next = new Set(current)
+          next.delete(id)
+          return next
+        })
+      }
+      await localFilesFor(store)
+        .set(project.id, id, nextBinding)
+        .catch((failure: unknown) => {
+          if (alive.current)
+            setNotice(
+              `Saved to file. The browser could not remember its handle: ${message(failure)}`,
+            )
+        })
+      await cacheSaved(snapshot)
+    })()
+    pendingFileSaves.current.set(id, task)
+    if (alive.current) setSavingIds((current) => new Set(current).add(id))
+    try {
+      await task
     } finally {
+      const lastSave = pendingFileSaves.current.get(id) === task
+      if (lastSave) pendingFileSaves.current.delete(id)
+      if (alive.current && lastSave)
+        setSavingIds((current) => {
+          const next = new Set(current)
+          next.delete(id)
+          return next
+        })
+    }
+  }
+
+  async function saveFile(saveAs = false) {
+    if (!activeId || busy || manualSaving.current) return
+    const id = activeId
+    manualSaving.current = true
+    setBusy(true)
+    setError(null)
+    setNotice(null)
+    try {
+      if (editorController.current?.fileId === id)
+        editorController.current.controller.flushDraft?.()
+      const existing = bindingsRef.current.get(id)
+      if (!supportsLocalCanvasSave() && saveAs && existing) {
+        exportFile()
+        return
+      }
+      if (!supportsLocalCanvasSave() && !existing) {
+        const snapshot = currentSnapshot(id)
+        if (!snapshot) return
+        const result = await store.save(snapshot)
+        rememberSaved(snapshot, result.persistence)
+        if (alive.current)
+          setNotice(
+            'Browser copy only. Use Export to download a local .lcanvas backup, or open Canvas Live in Chrome or Edge for Save and Save as.',
+          )
+        return
+      }
+      let target = existing
+      if (saveAs || !target) {
+        // Invoke the picker directly from the user's click, before any other awaited work.
+        const chosen = await chooseLocalCanvasSave(
+          active?.record.document.name ?? 'Canvas',
+        )
+        if (!chosen || !alive.current) return
+        for (const [boundId, bound] of bindingsRef.current) {
+          if (
+            boundId !== id &&
+            (bound.handle === chosen ||
+              (bound.handle.isSameEntry &&
+                (await bound.handle.isSameEntry(chosen))))
+          )
+            throw new Error(
+              'This file already belongs to another canvas in this project. Use Save as to choose a different local file.',
+            )
+        }
+        target = {
+          handle: chosen,
+          autoSave: existing?.autoSave ?? true,
+          savedDocument: active!.record.document,
+        }
+      }
+      await saveBoundFile(id, target, saveAs || !existing, true)
+    } catch (failure) {
+      if (alive.current) {
+        setError(message(failure))
+        setFailedSaveIds((current) => new Set(current).add(id))
+      }
+    } finally {
+      manualSaving.current = false
       if (alive.current) setBusy(false)
     }
   }
 
-  function exportFile() {
-    if (!active) return
+  const autosaveCurrent = useEffectEvent(() => {
+    if (manualSaving.current || !workspaceActiveRef.current) return
+    for (const entry of entriesRef.current) {
+      const id = entry.record.id
+      const target = bindingsRef.current.get(id)
+      if (
+        !target?.autoSave ||
+        permissionIds.has(id) ||
+        pendingFileSaves.current.has(id) ||
+        sameDocument(entry.record.document, target.savedDocument)
+      )
+        continue
+      void saveBoundFile(id, target, false, false).catch((failure: unknown) => {
+        if (alive.current) {
+          setError(message(failure))
+          setFailedSaveIds((current) => new Set(current).add(id))
+          // A denied write or external conflict waits for explicit Save rather than retrying forever.
+          setPermissionIds((current) => new Set(current).add(id))
+        }
+      })
+    }
+  })
+  useEffect(() => {
+    if (loading || !workspaceActive || busy) return
+    const timer = setTimeout(() => autosaveCurrent(), 900)
+    return () => clearTimeout(timer)
+  }, [
+    entries,
+    localBindings,
+    permissionIds,
+    loading,
+    workspaceActive,
+    busy,
+    savingIds,
+  ])
+
+  async function toggleLocalAutosave() {
+    if (!activeId) return
+    const id = activeId
+    const previous = bindingsRef.current.get(id)
+    if (!previous) return
+    const next = { ...previous, autoSave: !previous.autoSave }
+    bindingsRef.current = new Map(bindingsRef.current).set(id, next)
+    setLocalBindings((current) => new Map(current).set(id, next))
     try {
+      await localFilesFor(store).set(project.id, id, next)
+    } catch (failure) {
+      if (alive.current) setNotice(message(failure))
+    }
+  }
+
+  function exportFile() {
+    if (!activeId) return
+    const id = activeId
+    try {
+      if (editorController.current?.fileId === id)
+        editorController.current.controller.flushDraft?.()
+      const snapshot = currentSnapshot(id)
+      if (!snapshot) return
       const url = URL.createObjectURL(
-        new Blob([serializeLCANVAS(active.record.document)], {
+        new Blob([serializeLCANVAS(snapshot.document)], {
           type: 'application/json',
         }),
       )
       const link = document.createElement('a')
       link.href = url
-      link.download = canvasExportFilename(active.record.document.name)
+      link.download = canvasExportFilename(snapshot.document.name)
       link.click()
-      setTimeout(() => URL.revokeObjectURL(url), 1000)
+      const revoke = URL.revokeObjectURL.bind(URL)
+      setTimeout(() => revoke(url), 1000)
+      setDownloadedIds((current) => new Set(current).add(id))
+      setNotice(
+        'Download copy requested. Keep the .lcanvas file from Downloads or your chosen folder as a backup.',
+      )
       setError(null)
     } catch (failure) {
       setError(message(failure))
@@ -595,7 +1156,7 @@ export default function FileWorkspace({
       )}
       {notice && (
         <div className="file-message" role="status">
-          {notice} Export your files to keep a backup.
+          {notice}
         </div>
       )}
       <div className="workspace-deck">
@@ -667,7 +1228,9 @@ export default function FileWorkspace({
                   title="Import LCANVAS files"
                   aria-label="Import"
                   disabled={loading || busy}
-                  onClick={() => importInput.current?.click()}
+                  onClick={() => {
+                    void openLocalFiles()
+                  }}
                 >
                   <Icon name="import" />
                 </button>
@@ -815,12 +1378,42 @@ export default function FileWorkspace({
               <button
                 className="icon-button"
                 disabled={!active || busy}
-                onClick={saveFile}
+                onClick={() => {
+                  void saveFile()
+                }}
                 aria-label="Save"
                 title="Save this canvas · Ctrl+S"
               >
                 <Icon name="save" />
               </button>
+              <button
+                className="icon-button"
+                disabled={!active || busy}
+                onClick={() => {
+                  void saveFile(true)
+                }}
+                aria-label="Save as"
+                title="Save as a local LCANVAS file · Ctrl+Shift+S"
+              >
+                <Icon name="files" />
+              </button>
+              {localBinding && (
+                <button
+                  className="icon-button"
+                  aria-label="Auto-save local file"
+                  aria-pressed={localBinding.autoSave}
+                  title={
+                    localBinding.autoSave
+                      ? 'Auto-save local file on · click to pause'
+                      : 'Auto-save local file off · click to enable'
+                  }
+                  onClick={() => {
+                    void toggleLocalAutosave()
+                  }}
+                >
+                  <Icon name="clock" />
+                </button>
+              )}
               <button
                 className="icon-button"
                 disabled={!active}
@@ -856,6 +1449,7 @@ export default function FileWorkspace({
               <CanvasEditor
                 key={active.record.id}
                 document={active.record.document}
+                active={workspaceActive}
                 grid={preferences.grid}
                 aiOpen={aiOpen}
                 rightInset={rightPanel === 'none' ? 0 : rightInset}
@@ -906,24 +1500,38 @@ export default function FileWorkspace({
             )}
           </div>
           <div className="file-statusbar">
-            <span className={`save-dot ${active?.dirty ? 'unsaved' : ''}`} />
+            <span
+              className={`save-dot ${active?.dirty || localDirty ? 'unsaved' : ''}`}
+            />
             <span
               title={
-                active?.dirty
-                  ? 'Save this canvas in your browser'
-                  : active?.persistence === 'browser'
-                    ? 'Saved in this browser'
-                    : active
-                      ? 'Export a backup to keep this canvas'
-                      : undefined
+                localBinding
+                  ? `${localBinding.handle.name} · ${permissionIds.has(activeId!) ? 'Click Save to resume local writes' : localBinding.autoSave ? 'Auto-save enabled' : 'Auto-save paused'}`
+                  : active?.dirty
+                    ? 'Save to a local .lcanvas file to keep these changes'
+                    : active?.persistence === 'browser'
+                      ? 'Browser copy only; Save or Export to keep a physical .lcanvas file'
+                      : active
+                        ? 'This tab only; Save or Export to keep a physical .lcanvas file'
+                        : undefined
               }
             >
               {active
-                ? active.dirty
-                  ? 'Unsaved changes'
-                  : active.persistence === 'browser'
-                    ? 'Saved'
-                    : 'Session only'
+                ? savingIds.has(active.record.id)
+                  ? 'Saving to file…'
+                  : active.dirty || localDirty
+                    ? 'Unsaved changes'
+                    : failedSaveIds.has(active.record.id)
+                      ? 'Save failed'
+                      : permissionIds.has(active.record.id)
+                        ? 'File access needed'
+                        : localBinding
+                          ? 'Saved to file'
+                          : downloadedIds.has(active.record.id)
+                            ? 'Download copy requested'
+                            : active.persistence === 'browser'
+                              ? 'Browser copy'
+                              : 'Session only'
                 : 'No canvas open'}
             </span>
             {bridge.status === 'sharing' && (

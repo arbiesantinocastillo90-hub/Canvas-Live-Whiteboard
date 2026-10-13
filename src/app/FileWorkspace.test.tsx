@@ -453,7 +453,7 @@ describe('LCANVAS project workspace', () => {
     expect((await store.list(project.id)).value).toHaveLength(2)
   })
 
-  it('marks view navigation dirty, clears it when undone, and remembers an explicitly saved view on remount', async () => {
+  it('persists camera navigation independently of content undo and remembers a saved view on remount', async () => {
     const store = createCanvasFileStore({ indexedDB: null })
     await store.save(canvas('First canvas', 'first'))
     const view = await mount(store)
@@ -463,7 +463,8 @@ describe('LCANVAS project workspace', () => {
     expect(
       (await store.get(project.id, 'first')).value?.document.viewport.zoom,
     ).toBe(1)
-    fireEvent.click(screen.getByRole('button', { name: 'Undo' }))
+    expect(screen.getByRole('button', { name: 'Undo' })).toBeDisabled()
+    fireEvent.click(screen.getByRole('button', { name: 'Zoom out' }))
     expect(screen.queryByText('Unsaved changes')).not.toBeInTheDocument()
     expect(screen.getByLabelText('Canvas zoom')).toHaveTextContent('100%')
     fireEvent.click(screen.getByRole('button', { name: 'Zoom out' }))

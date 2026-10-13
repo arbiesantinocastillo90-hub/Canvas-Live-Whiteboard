@@ -277,6 +277,7 @@
   --dock-direction: 1;
 }
 .dock-panel[data-pinned='false'] {
+  top: 40px;
   box-shadow: 0 8px 28px #00000024;
 }
 .dock-panel[data-pinned='true'] {
@@ -564,7 +565,7 @@
 @media (max-width: 900px) {
   .dock-panel[data-pinned='true'] {
     position: absolute;
-    top: 0;
+    top: 40px;
     bottom: 0;
     max-width: calc(100% - 42px);
     box-shadow: 0 8px 28px #00000024;

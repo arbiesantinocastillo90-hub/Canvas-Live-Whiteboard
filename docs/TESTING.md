@@ -1,5 +1,7 @@
 # Setup and testing
 
+The Home/local-file revision passed 470 application tests, 63 MCP tests, production/license/lint/format checks, 40 actual browser scenarios (18 UI, 9 SDK camera, 13 file streams) and 23 updater fixtures. See [HOME_AND_INTERACTIONS_VERIFICATION.md](HOME_AND_INTERACTIONS_VERIFICATION.md) for exact assets, resolved findings and the Windows chooser boundary.
+
 ## Windows prerequisites
 
 Use Node.js 24 LTS, version 24.15 or newer in the 24.x line, with npm. The verified environment for this implementation reports Node 24.21.0 and npm 11.19.0. `npm.cmd` works in PowerShell without needing a PowerShell script execution-policy change.
@@ -55,7 +57,7 @@ The 2026-10-11 update passed **352 application tests**, **63 MCP tests**, TypeSc
 - Run `npm.cmd ci` after pulling dependency changes; do not change the lockfile just to work around an unknown error.
 - An occupied strict port is reported instead of silently switching ports.
 - The development watcher explicitly ignores `dist` and `release`, including their directory roots, to avoid Windows output-folder locks. If another application holds output files open and a build reports `EPERM`, close that application and retry. Close a running packaged launcher before replacing its folder.
-- This checkout is on a filesystem without recorded ownership. For scoped Git commands, use `git -c safe.directory='D:/Canvas OS/Canvas Live (Project)/Canvas-Live-Whiteboard' ...`; no wildcard exception is needed.
+- This checkout is on a filesystem without recorded ownership. For scoped Git commands, use `git -c safe.directory='D:/Canvas Live Environment/Canvas Live (Project)/Canvas-Live-Whiteboard' ...`; no wildcard exception is needed.
 
 Actual executed results, resolved failures and remaining scope are recorded in [MILESTONE_0.md](MILESTONE_0.md).
 
