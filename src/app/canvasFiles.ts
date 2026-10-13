@@ -468,3 +468,4 @@ export function createCanvasFileStore(
 }
 
 export const canvasFileStore = createCanvasFileStore()
+export { validateRecord as validateCanvasFileRecord }

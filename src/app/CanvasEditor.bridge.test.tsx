@@ -165,6 +165,7 @@ function stage() {
 
 function changeCamera() {
   fireEvent.pointerDown(stage(), { button: 0, clientX: 0, clientY: 0 })
+  fireEvent.pointerUp(stage(), { clientX: 0, clientY: 0 })
   fireEvent.click(screen.getByRole('button', { name: 'Zoom out' }))
   fireEvent.keyDown(stage(), { key: 'ArrowRight' })
 }

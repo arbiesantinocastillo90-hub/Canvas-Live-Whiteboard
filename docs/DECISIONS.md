@@ -78,6 +78,14 @@
 - Register keyboard commands against the same UI handlers. Preserve text editing, dialogs, composition and fixed navigation keys; custom bindings suppress previous local defaults. Reject duplicate and protected browser combinations, and support storage failure within the current session.
 - Extend existing preferences with contrast, optional interface colors and motion style/speed. Old metadata receives defaults. Explicit colors affect interface tokens rather than canvas objects. App and operating-system reduced-motion settings override animation.
 
+## 2026-10-12 — Home, practical editing and physical files
+
+- Start with a separate Home file/project library. Enter Work only on an explicit request. Retain the current editor through Home/Options with commands and sharing disabled; do not restore AI authority automatically.
+- Refine the existing SVG editor with atomic group transformations, bounded clipboard data, inline text, eight resize handles and frame-batched camera updates. Keep navigation out of content Undo/Redo while preserving it in saved LCANVAS files.
+- The owner requires physical local LCANVAS files. Use user-selected native file handles for Save/Save as/open, keep handles out of LCANVAS and MCP, and acknowledge writes after stream close. Bound autosave uses already granted permission. Browser/session copies and draft recovery are separate from a physical save.
+- Use separate IndexedDB databases for dirty recovery and file handles, preserving the existing document database/schema. Skip recovery based on a different saved document. Keep cancelled/failed saves and edits during a pending write recoverable.
+- No dependency, drawing engine, paid model API, public hosting or general filesystem MCP tool is introduced.
+
 ## Remaining open decisions
 
 - Whether SIL OFL 1.1 is acceptable specifically for engine fonts, or a supported replacement is needed.

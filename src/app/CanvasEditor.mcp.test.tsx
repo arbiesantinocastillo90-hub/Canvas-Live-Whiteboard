@@ -33,6 +33,7 @@ function mount() {
   }
   return {
     ...rendered,
+    document,
     ready,
     onDocumentChange,
     stage: screen.getByRole('region', { name: 'MCP plan canvas view' }),
@@ -44,6 +45,31 @@ describe('MCP edits in the manual editor history', () => {
     vi.stubGlobal('PointerEvent', MouseEvent)
   })
   afterEach(() => vi.unstubAllGlobals())
+
+  it.each(['inactive', 'unmounted'])(
+    'rejects a retained controller after its canvas is %s',
+    (state) => {
+      const test = mount()
+      const controller = test.ready()
+      if (state === 'unmounted') test.unmount()
+      else
+        test.rerender(
+          <CanvasEditor
+            document={test.document}
+            active={false}
+            grid="dots"
+            aiOpen={false}
+            onToggleAI={vi.fn()}
+            onDocumentChange={test.onDocumentChange}
+          />,
+        )
+      expect(() =>
+        controller.execute({ kind: 'move', id: 'existing', x: 250, y: 120 }),
+      ).toThrow('Open this canvas before editing it.')
+      expect(controller.getDocument().elements[0]).toMatchObject({ x: 0, y: 0 })
+      expect(test.onDocumentChange).not.toHaveBeenCalled()
+    },
+  )
 
   it('renders an AI transaction and shares the same undo/redo stack with manual edits', () => {
     const test = mount()

@@ -1,11 +1,14 @@
 import {
   useEffect,
+  useEffectEvent,
   useId,
   useLayoutEffect,
   useRef,
   useState,
   type CSSProperties,
+  type ClipboardEvent,
   type KeyboardEvent,
+  type MouseEvent,
   type PointerEvent,
   type ReactNode,
 } from 'react'
@@ -21,18 +24,32 @@ import {
   connectElements,
   createElement,
   isElementEditable,
-  moveElement,
   orderedVisibleElements,
-  removeElement,
-  resizeElement,
+  updateElement,
 } from './canvasOperations'
+import {
+  moveSelection,
+  removeSelection,
+  resizeSelection,
+  selectionBounds,
+  selectionIds,
+} from './canvasSelection'
+import {
+  CANVAS_CLIPBOARD_MIME,
+  createCanvasClipboard,
+  duplicateSelection,
+  isCanvasClipboard,
+  pasteCanvasClipboard,
+  pasteCanvasText,
+} from './canvasClipboard'
 import { MAX_ZOOM, MIN_ZOOM, panBy, zoomAt } from './canvasViewport'
 import {
   commitEditorHistory,
   createEditorHistory,
-  redoEditorHistory,
+  navigateEditorHistory,
+  redoEditorContentHistory,
   sameDocument,
-  undoEditorHistory,
+  undoEditorContentHistory,
   type EditorHistory,
 } from './editorHistory'
 import { CanvasInspector } from './CanvasInspector'
@@ -51,6 +68,7 @@ import './canvas-viewer.css'
 import './canvas-editor.css'
 
 export type CanvasEditorProps = {
+  active?: boolean
   document: CanvasDocument
   grid: 'dots' | 'lines' | 'none'
   aiOpen: boolean
@@ -72,17 +90,91 @@ export type CanvasEditorProps = {
 export type CanvasEditorController = {
   getDocument: () => CanvasDocument
   execute: (command: BridgeCommand) => CanvasCommandResult
+  flushDraft?: () => void
 }
 
 type Mode = 'select' | 'pan' | 'connect'
 type SizedType = 'rectangle' | 'ellipse' | 'diamond' | 'text' | 'area'
+type ResizeHandle = 'nw' | 'n' | 'ne' | 'e' | 'se' | 's' | 'sw' | 'w'
+type Point = { x: number; y: number }
+type Box = Point & { width: number; height: number }
+type PointerSample = Point & { shiftKey: boolean }
+type InlineEdit = { id: string; value: string; original: string }
 type Gesture = {
-  kind: 'pan' | 'move' | 'resize'
+  kind: 'pan' | 'move' | 'resize' | 'marquee'
   pointerId: number
   x: number
   y: number
   history: EditorHistory
-  elementId?: string
+  ids: string[]
+  handle?: ResizeHandle
+  bounds?: Box | null
+  selectionBefore: string[]
+}
+
+const resizeHandles: {
+  id: ResizeHandle
+  x: number
+  y: number
+  label: string
+}[] = [
+  { id: 'nw', x: 0, y: 0, label: 'top left' },
+  { id: 'n', x: 0.5, y: 0, label: 'top' },
+  { id: 'ne', x: 1, y: 0, label: 'top right' },
+  { id: 'e', x: 1, y: 0.5, label: 'right' },
+  { id: 'se', x: 1, y: 1, label: 'bottom right' },
+  { id: 's', x: 0.5, y: 1, label: 'bottom' },
+  { id: 'sw', x: 0, y: 1, label: 'bottom left' },
+  { id: 'w', x: 0, y: 0.5, label: 'left' },
+]
+
+function resizedBounds(
+  box: Box,
+  handle: ResizeHandle,
+  dx: number,
+  dy: number,
+  keepRatio: boolean,
+): Box {
+  const west = handle.includes('w')
+  const east = handle.includes('e')
+  const north = handle.includes('n')
+  const south = handle.includes('s')
+  let width = Math.max(24, box.width + (west ? -dx : east ? dx : 0))
+  let height = Math.max(24, box.height + (north ? -dy : south ? dy : 0))
+  if (keepRatio) {
+    let scale =
+      west || east
+        ? width / Math.max(1, box.width)
+        : height / Math.max(1, box.height)
+    if (
+      (west || east) &&
+      (north || south) &&
+      Math.abs(dy / Math.max(1, box.height)) >
+        Math.abs(dx / Math.max(1, box.width))
+    )
+      scale = height / Math.max(1, box.height)
+    scale = Math.max(
+      scale,
+      24 / Math.max(1, box.width),
+      24 / Math.max(1, box.height),
+    )
+    width = box.width * scale
+    height = box.height * scale
+  }
+  return {
+    x: west
+      ? box.x + box.width - width
+      : east
+        ? box.x
+        : box.x + (box.width - width) / 2,
+    y: north
+      ? box.y + box.height - height
+      : south
+        ? box.y
+        : box.y + (box.height - height) / 2,
+    width,
+    height,
+  }
 }
 
 function ToolIcon({ children }: { children: ReactNode }) {
@@ -162,10 +254,12 @@ export function EditorObject({
   document,
   element,
   prefix,
+  editing = false,
 }: {
   document: CanvasDocument
   element: CanvasElement
   prefix: string
+  editing?: boolean
 }) {
   const common = {
     stroke: element.color,
@@ -205,7 +299,9 @@ export function EditorObject({
               {...common}
             />
           )}
-          <ObjectText element={element} prefix={prefix} centered />
+          {!editing && (
+            <ObjectText element={element} prefix={prefix} centered />
+          )}
         </>
       )
     }
@@ -223,20 +319,24 @@ export function EditorObject({
             strokeDasharray="7 5"
             {...common}
           />
-          <text
-            x={element.x + 14}
-            y={element.y + 24}
-            fill={element.color}
-            fontFamily="'Segoe UI', system-ui, sans-serif"
-            fontSize="14"
-            pointerEvents="none"
-          >
-            {element.name}
-          </text>
+          {!editing && (
+            <text
+              x={element.x + 14}
+              y={element.y + 24}
+              fill={element.color}
+              fontFamily="'Segoe UI', system-ui, sans-serif"
+              fontSize="14"
+              pointerEvents="none"
+            >
+              {element.name}
+            </text>
+          )}
         </>
       )
     case 'text':
-      return <ObjectText element={element} prefix={prefix} centered={false} />
+      return editing ? null : (
+        <ObjectText element={element} prefix={prefix} centered={false} />
+      )
     case 'line':
       return (
         <line
@@ -306,6 +406,7 @@ function objectLabel(element: CanvasElement) {
 }
 
 export default function CanvasEditor({
+  active = true,
   document,
   grid,
   aiOpen,
@@ -325,12 +426,24 @@ export default function CanvasEditor({
 }: CanvasEditorProps) {
   const dockMode = dockHost !== undefined
   const [history, setHistory] = useState(() => createEditorHistory(document))
+  const activeRef = useRef(active)
   const currentHistory = useRef(history)
   const notified = useRef(document)
   const stage = useRef<HTMLDivElement>(null)
   const gesture = useRef<Gesture | null>(null)
+  const pointerSample = useRef<PointerSample | null>(null)
+  const pointerFrame = useRef<number | null>(null)
+  const wheelFrame = useRef<number | null>(null)
+  const pendingWheel = useRef<CanvasViewport | null>(null)
   const [dragging, setDragging] = useState(false)
-  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [gestureKind, setGestureKind] = useState<Gesture['kind'] | ''>('')
+  const [selectedIds, setSelectedIds] = useState<string[]>([])
+  const selectedId = selectedIds.at(-1) ?? null
+  const [marquee, setMarquee] = useState<Box | null>(null)
+  const [inlineEdit, setInlineEdit] = useState<InlineEdit | null>(null)
+  const inlineEditRef = useRef<InlineEdit | null>(null)
+  const textInput = useRef<HTMLTextAreaElement>(null)
+  const lastPointer = useRef<Point | null>(null)
   const [mode, setMode] = useState<Mode>('select')
   const [spaceHeld, setSpaceHeld] = useState(false)
   const temporaryPan = useRef(false)
@@ -359,23 +472,46 @@ export default function CanvasEditor({
   const activeLayerId = board.layers.some((layer) => layer.id === layerId)
     ? layerId
     : board.layers[0].id
-  const selectedBounds = selected ? elementBounds(board, selected) : null
+  const visibleSelection = visible.filter((element) =>
+    selectedIds.includes(element.id),
+  )
+  const selectedBounds = selectionBounds(
+    board,
+    visibleSelection.map((element) => element.id),
+  )
+  const canTransformSelection =
+    visibleSelection.some((element) => element.type !== 'connection') &&
+    visibleSelection
+      .filter((element) => element.type !== 'connection')
+      .every(
+        (element) =>
+          element.type !== 'line' && isElementEditable(board, element.id),
+      )
+  function setSelectedId(id: string | null) {
+    setSelectedIds(id ? [id] : [])
+  }
   const executeCommand = useRef<
     (command: BridgeCommand) => CanvasCommandResult
   >(() => {
     throw new Error('The canvas editor is not ready.')
   })
   const currentName = useRef(document.name)
+  const flushCurrentDraft = useRef<() => void>(() => {
+    throw new Error('The canvas editor is not ready.')
+  })
   const controller = useRef<CanvasEditorController>({
     getDocument: () => {
       // A pointer preview is not a committed canvas change.
-      const present =
+      let present =
         gesture.current?.history.present ?? currentHistory.current.present
+      if (pendingWheel.current && !gesture.current)
+        present = { ...present, viewport: pendingWheel.current }
       return present.name === currentName.current
         ? present
         : { ...present, name: currentName.current }
     },
     execute: (command) => executeCommand.current(command),
+    flushDraft: () => flushCurrentDraft.current(),
   })
 
   function openInspector() {
@@ -385,9 +521,12 @@ export default function CanvasEditor({
 
   function showHistory(next: EditorHistory, committed = true) {
     const renamed =
-      next.present.name === document.name
+      next.present.name === currentName.current
         ? next
-        : { ...next, present: { ...next.present, name: document.name } }
+        : {
+            ...next,
+            present: { ...next.present, name: currentName.current },
+          }
     currentHistory.current = renamed
     setHistory(renamed)
     if (committed && !sameDocument(notified.current, renamed.present)) {
@@ -401,14 +540,28 @@ export default function CanvasEditor({
     setError('')
   }
 
+  const flushWheel = function flushWheelBatch() {
+    if (wheelFrame.current !== null) cancelAnimationFrame(wheelFrame.current)
+    wheelFrame.current = null
+    const viewport = pendingWheel.current
+    pendingWheel.current = null
+    if (viewport)
+      showHistory(navigateEditorHistory(currentHistory.current, viewport))
+  }
+
   function executeBridgeCommand(command: BridgeCommand): CanvasCommandResult {
+    if (!activeRef.current)
+      throw new Error('Open this canvas before editing it.')
     if (gesture.current) throw new Error('Finish the current drag first.')
+    if (inlineEditRef.current)
+      throw new Error('Finish the current text edit first.')
+    flushWheel()
     if (command.kind === 'undo' || command.kind === 'redo') {
       const before = controller.current.getDocument()
       showHistory(
         command.kind === 'undo'
-          ? undoEditorHistory(currentHistory.current)
-          : redoEditorHistory(currentHistory.current),
+          ? undoEditorContentHistory(currentHistory.current)
+          : redoEditorContentHistory(currentHistory.current),
       )
       const after = controller.current.getDocument()
       const ids = new Set([
@@ -451,10 +604,29 @@ export default function CanvasEditor({
     return { ...result, document: controller.current.getDocument() }
   }
 
+  function flushEditorDraft() {
+    if (!activeRef.current)
+      throw new Error('Open this canvas before editing it.')
+    if (gesture.current) throw new Error('Finish the current drag first.')
+    flushWheel()
+    finishTextEdit()
+    if (inlineEditRef.current)
+      throw new Error('Correct or cancel the current text draft before saving.')
+  }
+
   useLayoutEffect(() => {
+    activeRef.current = active
     currentName.current = document.name
     executeCommand.current = executeBridgeCommand
+    flushCurrentDraft.current = flushEditorDraft
   })
+
+  useEffect(() => {
+    activeRef.current = active
+    return () => {
+      activeRef.current = false
+    }
+  }, [active])
 
   useEffect(() => {
     onControllerReady?.(controller.current)
@@ -482,15 +654,17 @@ export default function CanvasEditor({
   }
 
   function changeView(viewport: CanvasViewport) {
-    commit({ ...currentHistory.current.present, viewport })
+    showHistory(navigateEditorHistory(currentHistory.current, viewport))
   }
 
   function changeZoom(factor: number) {
+    flushWheel()
     const viewport = currentHistory.current.present.viewport
     changeView(zoomAt(viewport, viewport.zoom * factor, center()))
   }
 
   function resetView() {
+    flushWheel()
     const elements = orderedVisibleElements(currentHistory.current.present)
     if (!elements.length) {
       changeView({ x: 0, y: 0, zoom: 1 })
@@ -530,6 +704,7 @@ export default function CanvasEditor({
   }
 
   function add(type: SizedType) {
+    flushWheel()
     safely(() => {
       const document = currentHistory.current.present
       const viewport = document.viewport
@@ -560,23 +735,33 @@ export default function CanvasEditor({
   function beginGesture(
     event: PointerEvent,
     kind: Gesture['kind'],
-    elementId?: string,
+    ids: string[] = [],
+    handle?: ResizeHandle,
   ) {
-    if (gesture.current || !stage.current) return
+    if (!active || gesture.current || !stage.current) return
+    if (inlineEditRef.current) finishTextEdit()
+    if (inlineEditRef.current) return
+    flushWheel()
+    event.preventDefault()
     gesture.current = {
       kind,
       pointerId: event.pointerId,
       x: event.clientX,
       y: event.clientY,
       history: currentHistory.current,
-      elementId,
+      ids,
+      handle,
+      bounds: selectionBounds(currentHistory.current.present, ids),
+      selectionBefore: selectedIds,
     }
     stage.current.focus({ preventScroll: true })
     stage.current.setPointerCapture?.(event.pointerId)
     setDragging(true)
+    setGestureKind(kind)
   }
 
   function beginStage(event: PointerEvent<HTMLDivElement>) {
+    if (!active) return
     if (event.button !== 0 && event.button !== 1) return
     if (
       mode === 'pan' ||
@@ -589,15 +774,21 @@ export default function CanvasEditor({
       event.target === event.currentTarget ||
       event.target === event.currentTarget.querySelector('svg')
     ) {
-      setSelectedId(null)
-      if (mode !== 'connect') setConnectionSource(null)
-      event.currentTarget.focus({ preventScroll: true })
+      if (mode !== 'connect') {
+        setConnectionSource(null)
+        beginGesture(event, 'marquee', event.shiftKey ? selectedIds : [])
+        if (!event.shiftKey) setSelectedIds([])
+      } else event.currentTarget.focus({ preventScroll: true })
     }
   }
 
-  function chooseObject(id: string) {
+  function chooseObject(id: string, additive = false) {
     if (mode !== 'connect') {
-      setSelectedId(id)
+      if (additive)
+        setSelectedIds((ids) =>
+          ids.includes(id) ? ids.filter((item) => item !== id) : [...ids, id],
+        )
+      else setSelectedId(id)
       return
     }
     const document = currentHistory.current.present
@@ -629,6 +820,9 @@ export default function CanvasEditor({
     event: PointerEvent<SVGGElement>,
     element: CanvasElement,
   ) {
+    if (!active) return
+    if (inlineEditRef.current) finishTextEdit()
+    if (inlineEditRef.current) return
     if (event.button !== 0 && event.button !== 1) return
     if (
       mode === 'pan' ||
@@ -638,66 +832,187 @@ export default function CanvasEditor({
     )
       return
     event.stopPropagation()
-    chooseObject(element.id)
+    if (mode === 'connect') chooseObject(element.id)
+    else if (event.shiftKey) {
+      chooseObject(element.id, true)
+      stage.current?.focus({ preventScroll: true })
+      return
+    } else if (!selectedIds.includes(element.id)) setSelectedId(element.id)
     if (
       mode === 'connect' ||
       element.type === 'connection' ||
       !isElementEditable(currentHistory.current.present, element.id)
     )
       return
-    beginGesture(event, 'move', element.id)
+    const ids = selectedIds.includes(element.id) ? selectedIds : [element.id]
+    beginGesture(
+      event,
+      'move',
+      ids.filter((id) => {
+        const candidate = currentHistory.current.present.elements.find(
+          (item) => item.id === id,
+        )
+        return candidate?.type !== 'connection'
+      }),
+    )
   }
 
-  function moveGesture(event: PointerEvent<HTMLDivElement>) {
+  function applyPointerSample(sample: PointerSample) {
     const active = gesture.current
-    if (!active || active.pointerId !== event.pointerId) return
+    if (!active) return
     const original = active.history.present
-    const dx = event.clientX - active.x
-    const dy = event.clientY - active.y
+    const dx = sample.x - active.x
+    const dy = sample.y - active.y
     safely(() => {
+      if (active.kind === 'marquee') {
+        const rect = stage.current?.getBoundingClientRect()
+        if (!rect) return
+        const x =
+          (Math.min(active.x, sample.x) - rect.left - original.viewport.x) /
+          original.viewport.zoom
+        const y =
+          (Math.min(active.y, sample.y) - rect.top - original.viewport.y) /
+          original.viewport.zoom
+        const bounds = {
+          x,
+          y,
+          width: Math.abs(dx) / original.viewport.zoom,
+          height: Math.abs(dy) / original.viewport.zoom,
+        }
+        setMarquee(bounds)
+        const inside = orderedVisibleElements(original)
+          .filter((element) => {
+            const box = elementBounds(original, element)
+            return (
+              element.type !== 'connection' &&
+              box.x >= bounds.x &&
+              box.y >= bounds.y &&
+              box.x + box.width <= bounds.x + bounds.width &&
+              box.y + box.height <= bounds.y + bounds.height
+            )
+          })
+          .map((element) => element.id)
+        setSelectedIds([...new Set([...active.ids, ...inside])])
+        return
+      }
+      if (active.kind !== 'pan' && Math.abs(dx) + Math.abs(dy) < 3) {
+        showHistory(active.history, false)
+        return
+      }
       let present: CanvasDocument
       if (active.kind === 'pan')
         present = { ...original, viewport: panBy(original.viewport, dx, dy) }
-      else {
-        const element = original.elements.find(
-          (item) => item.id === active.elementId,
+      else if (active.kind === 'move')
+        present = moveSelection(
+          original,
+          active.ids,
+          dx / original.viewport.zoom,
+          dy / original.viewport.zoom,
         )
-        if (!element || element.type === 'connection') return
-        const bounds = elementBounds(original, element)
-        present =
-          active.kind === 'move'
-            ? moveElement(
-                original,
-                element.id,
-                element.x + dx / original.viewport.zoom,
-                element.y + dy / original.viewport.zoom,
-              )
-            : resizeElement(
-                original,
-                element.id,
-                Math.max(24, bounds.width + dx / original.viewport.zoom),
-                Math.max(24, bounds.height + dy / original.viewport.zoom),
-              )
+      else {
+        if (!active.bounds || !active.handle) return
+        present = resizeSelection(
+          original,
+          active.ids,
+          resizedBounds(
+            active.bounds,
+            active.handle,
+            dx / original.viewport.zoom,
+            dy / original.viewport.zoom,
+            sample.shiftKey,
+          ),
+        )
       }
       showHistory({ ...active.history, present }, false)
     })
   }
 
+  function flushPointer() {
+    if (pointerFrame.current !== null)
+      cancelAnimationFrame(pointerFrame.current)
+    pointerFrame.current = null
+    const sample = pointerSample.current
+    pointerSample.current = null
+    if (sample) applyPointerSample(sample)
+  }
+
+  function moveGesture(event: PointerEvent<HTMLDivElement>) {
+    const rect = stage.current?.getBoundingClientRect()
+    if (rect)
+      lastPointer.current = {
+        x: event.clientX - rect.left,
+        y: event.clientY - rect.top,
+      }
+    const current = gesture.current
+    if (!current || current.pointerId !== event.pointerId) return
+    pointerSample.current = {
+      x: event.clientX,
+      y: event.clientY,
+      shiftKey: event.shiftKey,
+    }
+    if (pointerFrame.current === null)
+      pointerFrame.current = requestAnimationFrame(() => {
+        pointerFrame.current = null
+        const sample = pointerSample.current
+        pointerSample.current = null
+        if (sample) applyPointerSample(sample)
+      })
+  }
+
   function endGesture(event: PointerEvent<HTMLDivElement>, cancelled = false) {
     const active = gesture.current
     if (!active || active.pointerId !== event.pointerId) return
+    if (
+      !cancelled &&
+      event.type === 'pointerup' &&
+      'pointerType' in event.nativeEvent
+    )
+      pointerSample.current = {
+        x: event.clientX,
+        y: event.clientY,
+        shiftKey: event.shiftKey,
+      }
+    if (cancelled) {
+      pointerSample.current = null
+      if (pointerFrame.current !== null)
+        cancelAnimationFrame(pointerFrame.current)
+      pointerFrame.current = null
+      if (active.kind === 'marquee') setSelectedIds(active.selectionBefore)
+    } else flushPointer()
     gesture.current = null
+    setMarquee(null)
     showHistory(
       cancelled
         ? active.history
-        : commitEditorHistory(active.history, currentHistory.current.present),
+        : active.kind === 'pan' || active.kind === 'marquee'
+          ? { ...active.history, present: currentHistory.current.present }
+          : commitEditorHistory(active.history, currentHistory.current.present),
     )
     setDragging(false)
+    setGestureKind('')
     if (stage.current?.hasPointerCapture?.(event.pointerId))
       stage.current.releasePointerCapture(event.pointerId)
   }
 
   function navigateByKey(event: KeyboardEvent<HTMLElement | SVGElement>) {
+    if (!active) return
+    if (event.key === 'Escape' && gesture.current) {
+      event.preventDefault()
+      const current = gesture.current
+      pointerSample.current = null
+      if (pointerFrame.current !== null)
+        cancelAnimationFrame(pointerFrame.current)
+      pointerFrame.current = null
+      gesture.current = null
+      showHistory(current.history, false)
+      if (current.kind === 'marquee') setSelectedIds(current.selectionBefore)
+      setMarquee(null)
+      setDragging(false)
+      setGestureKind('')
+      if (stage.current?.hasPointerCapture?.(current.pointerId))
+        stage.current.releasePointerCapture(current.pointerId)
+      return
+    }
     if (
       event.defaultPrevented ||
       event.nativeEvent.isComposing ||
@@ -722,17 +1037,32 @@ export default function CanvasEditor({
       event.preventDefault()
       showHistory(
         event.shiftKey
-          ? redoEditorHistory(currentHistory.current)
-          : undoEditorHistory(currentHistory.current),
+          ? redoEditorContentHistory(currentHistory.current)
+          : undoEditorContentHistory(currentHistory.current),
       )
+      return
+    }
+    if (!managedCommands && modifier && event.key.toLowerCase() === 'a') {
+      event.preventDefault()
+      selectAll()
       return
     }
     if (modifier && event.key.toLowerCase() === 'y') {
       event.preventDefault()
-      showHistory(redoEditorHistory(currentHistory.current))
+      showHistory(redoEditorContentHistory(currentHistory.current))
+      return
+    }
+    if (!managedCommands && modifier && event.key.toLowerCase() === 'd') {
+      event.preventDefault()
+      safely(duplicateSelected)
       return
     }
     if (modifier || event.altKey) return
+    if ((event.key === 'Enter' || event.key === 'F2') && selected) {
+      event.preventDefault()
+      startTextEdit(selected)
+      return
+    }
     if (event.key === ' ') {
       event.preventDefault()
       if (!event.repeat) {
@@ -749,9 +1079,7 @@ export default function CanvasEditor({
     }
     if ((event.key === 'Delete' || event.key === 'Backspace') && selected) {
       event.preventDefault()
-      safely(() =>
-        commit(removeElement(currentHistory.current.present, selected.id)),
-      )
+      safely(() => removeSelected())
       return
     }
     if (event.key === '+' || event.key === '=') {
@@ -773,7 +1101,7 @@ export default function CanvasEditor({
       ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)
     ) {
       event.preventDefault()
-      const step = event.shiftKey ? 20 : 5
+      const step = event.shiftKey ? 10 : 1
       const dx =
         event.key === 'ArrowLeft'
           ? -step
@@ -782,20 +1110,10 @@ export default function CanvasEditor({
             : 0
       const dy =
         event.key === 'ArrowUp' ? -step : event.key === 'ArrowDown' ? step : 0
-      if (
-        selected &&
-        selected.type !== 'connection' &&
-        isElementEditable(currentHistory.current.present, selected.id)
-      ) {
-        const bounds = elementBounds(currentHistory.current.present, selected)
+      if (selectedIds.length) {
         safely(() =>
           commit(
-            moveElement(
-              currentHistory.current.present,
-              selected.id,
-              bounds.x + dx,
-              bounds.y + dy,
-            ),
+            moveSelection(currentHistory.current.present, selectedIds, dx, dy),
           ),
         )
       } else
@@ -821,69 +1139,364 @@ export default function CanvasEditor({
       window.removeEventListener('keyup', releaseSpace)
       window.removeEventListener('blur', release)
     }
-  }, [])
+  }, [active])
 
+  const hideEditor = useEffectEvent(() => {
+    temporaryPan.current = false
+    setSpaceHeld(false)
+    if (gesture.current) {
+      const previous = gesture.current.history
+      gesture.current = null
+      pointerSample.current = null
+      if (pointerFrame.current !== null)
+        cancelAnimationFrame(pointerFrame.current)
+      pointerFrame.current = null
+      showHistory(previous, false)
+      setDragging(false)
+      setGestureKind('')
+      setMarquee(null)
+    }
+    flushWheel()
+  })
+
+  useEffect(() => {
+    if (active) return
+    const frame = requestAnimationFrame(() => hideEditor())
+    return () => cancelAnimationFrame(frame)
+  }, [active])
+
+  const surfaceWheel = useEffectEvent((event: WheelEvent) => {
+    const surface = stage.current
+    if (
+      !active ||
+      (event.target instanceof Element &&
+        event.target.closest('textarea,input,select,[contenteditable="true"]'))
+    )
+      return
+    event.preventDefault()
+    if (gesture.current || inlineEditRef.current || !surface) return
+    const bounds = surface.getBoundingClientRect()
+    const current =
+      pendingWheel.current ?? currentHistory.current.present.viewport
+    const deltaScale =
+      event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? bounds.height : 1
+    const deltaY = event.deltaY * deltaScale
+    const deltaX = event.deltaX * deltaScale
+    pendingWheel.current =
+      event.shiftKey && !event.ctrlKey && !event.metaKey
+        ? panBy(current, -(deltaX || deltaY), deltaX ? -deltaY : 0)
+        : deltaX && !event.ctrlKey && !event.metaKey
+          ? panBy(current, -deltaX, -deltaY)
+          : zoomAt(
+              current,
+              current.zoom *
+                Math.exp(-Math.max(-160, Math.min(160, deltaY)) * 0.002),
+              {
+                x: event.clientX - bounds.left,
+                y: event.clientY - bounds.top,
+              },
+            )
+    if (wheelFrame.current === null)
+      wheelFrame.current = requestAnimationFrame(flushWheel)
+  })
   useEffect(() => {
     const surface = stage.current
     if (!surface) return
-    function wheel(event: WheelEvent) {
-      event.preventDefault()
-      if (gesture.current || !surface) return
-      const bounds = surface.getBoundingClientRect()
-      const present = currentHistory.current.present
-      const viewport = zoomAt(
-        present.viewport,
-        present.viewport.zoom *
-          Math.exp(-Math.max(-100, Math.min(100, event.deltaY)) * 0.002),
-        { x: event.clientX - bounds.left, y: event.clientY - bounds.top },
-      )
-      const next = commitEditorHistory(currentHistory.current, {
-        ...present,
-        name: document.name,
-        viewport,
-      })
-      currentHistory.current = next
-      setHistory(next)
-      if (!sameDocument(notified.current, next.present)) {
-        notified.current = next.present
-        onDocumentChange(next.present)
-      }
+    surface.addEventListener('wheel', surfaceWheel, { passive: false })
+    return () => {
+      surface.removeEventListener('wheel', surfaceWheel)
     }
-    surface.addEventListener('wheel', wheel, { passive: false })
-    return () => surface.removeEventListener('wheel', wheel)
-  }, [document.name, onDocumentChange])
+  }, [])
+
+  useEffect(
+    () => () => {
+      if (pointerFrame.current !== null)
+        cancelAnimationFrame(pointerFrame.current)
+      if (wheelFrame.current !== null) cancelAnimationFrame(wheelFrame.current)
+      pointerFrame.current = null
+      wheelFrame.current = null
+      pendingWheel.current = null
+    },
+    [],
+  )
 
   function runCanvas(action: () => void) {
-    if (gesture.current) return
+    if (!active || gesture.current || inlineEditRef.current) return
+    flushWheel()
     safely(action)
     stage.current?.focus()
   }
-  function duplicateSelected() {
+
+  function startTextEdit(element: CanvasElement) {
     if (
-      !selected ||
-      !isElementEditable(currentHistory.current.present, selected.id)
+      !active ||
+      gesture.current ||
+      !isElementEditable(currentHistory.current.present, element.id)
     )
       return
-    const { id, ...copy } = selected
-    void id
-    const shifted =
-      copy.type === 'connection'
-        ? copy
-        : copy.type === 'line'
-          ? {
-              ...copy,
-              x: copy.x + 24,
-              y: copy.y + 24,
-              x2: copy.x2 + 24,
-              y2: copy.y2 + 24,
-            }
-          : { ...copy, x: copy.x + 24, y: copy.y + 24 }
-    const next = createElement(currentHistory.current.present, shifted)
-    commit(next)
-    setSelectedId(next.elements[next.elements.length - 1].id)
+    if (element.type === 'connection' || element.type === 'line') {
+      setSelectedId(element.id)
+      openInspector()
+      return
+    }
+    const value = element.type === 'area' ? element.name : element.text
+    const draft = { id: element.id, value, original: value }
+    inlineEditRef.current = draft
+    setInlineEdit(draft)
+    setSelectedId(element.id)
+    setError('')
   }
-  const commandAvailable = !dragging
+
+  function editAtPointer(event: MouseEvent<HTMLDivElement>) {
+    if (!active || event.defaultPrevented) return
+    const direct = event.target instanceof Element ? event.target : null
+    if (
+      direct?.closest(
+        'textarea, input, select, [data-resize-handle], .canvas-resize-handle',
+      )
+    )
+      return
+    // Captured pointer-up events make Chrome dispatch double-click on the stage.
+    // Resolve the actual object under the pointer before opening its text editor.
+    const pointed = event.currentTarget.ownerDocument.elementFromPoint?.(
+      event.clientX,
+      event.clientY,
+    )
+    const hit = pointed ?? direct
+    if (!hit || !event.currentTarget.contains(hit)) return
+    const id = hit.closest('[data-element-id]')?.getAttribute('data-element-id')
+    const element = currentHistory.current.present.elements.find(
+      (item) => item.id === id,
+    )
+    if (element) startTextEdit(element)
+  }
+
+  function finishTextEdit(cancelled = false) {
+    const draft = inlineEditRef.current
+    if (!draft) return
+    if (cancelled || draft.value === draft.original) {
+      inlineEditRef.current = null
+      setInlineEdit(null)
+      return
+    }
+    safely(() => {
+      const current = currentHistory.current.present
+      const element = current.elements.find((item) => item.id === draft.id)
+      if (!element || element.type === 'connection' || element.type === 'line')
+        throw new Error('The edited object no longer exists.')
+      const value = element.type === 'area' ? element.name : element.text
+      if (value !== draft.original)
+        throw new Error(
+          'This text changed while you were editing. Reopen it to edit the latest version.',
+        )
+      commit(
+        updateElement(
+          current,
+          draft.id,
+          element.type === 'area'
+            ? { name: draft.value }
+            : { text: draft.value },
+        ),
+      )
+      inlineEditRef.current = null
+      setInlineEdit(null)
+    })
+  }
+
+  useLayoutEffect(() => {
+    if (inlineEdit?.id && active) {
+      textInput.current?.focus({ preventScroll: true })
+      textInput.current?.select()
+    }
+  }, [inlineEdit?.id, active])
+
+  function selectAll() {
+    setSelectedIds(
+      orderedVisibleElements(currentHistory.current.present).map(
+        (element) => element.id,
+      ),
+    )
+    setMode('select')
+    setConnectionSource(null)
+  }
+
+  function removeSelected() {
+    commit(removeSelection(currentHistory.current.present, selectedIds))
+    setSelectedIds([])
+  }
+
+  function isTyping(target: EventTarget | null) {
+    return (
+      target instanceof Element &&
+      Boolean(
+        target.closest(
+          'input,textarea,select,[contenteditable="true"],[role="textbox"]',
+        ),
+      )
+    )
+  }
+
+  function clipboardCopy(event: ClipboardEvent<HTMLElement>, cut = false) {
+    if (
+      !active ||
+      gesture.current ||
+      inlineEditRef.current ||
+      isTyping(event.target)
+    )
+      return
+    safely(() => {
+      const current = currentHistory.current.present
+      const raw = createCanvasClipboard(current, selectedIds)
+      if (!raw) return
+      event.clipboardData.setData(CANVAS_CLIPBOARD_MIME, raw)
+      event.clipboardData.setData('text/plain', raw)
+      event.preventDefault()
+      if (cut)
+        commit(removeSelection(current, selectionIds(current, selectedIds)))
+    })
+  }
+
+  function pasteAtPointer(raw: string, structured = false) {
+    if (!activeRef.current || gesture.current || inlineEditRef.current || !raw)
+      return
+    const current = currentHistory.current.present
+    const screenPoint = lastPointer.current ?? center()
+    const point = {
+      x: (screenPoint.x - current.viewport.x) / current.viewport.zoom,
+      y: (screenPoint.y - current.viewport.y) / current.viewport.zoom,
+    }
+    const result =
+      structured || isCanvasClipboard(raw)
+        ? pasteCanvasClipboard(current, raw, {
+            layerId: activeLayerId,
+            center: point,
+          })
+        : pasteCanvasText(current, raw, {
+            layerId: activeLayerId,
+            center: point,
+          })
+    commit(result.document)
+    setSelectedIds(result.selectedIds)
+    setMode('select')
+    setConnectionSource(null)
+  }
+
+  function clipboardPaste(event: ClipboardEvent<HTMLElement>) {
+    if (
+      !active ||
+      gesture.current ||
+      inlineEditRef.current ||
+      isTyping(event.target)
+    )
+      return
+    const structured = event.clipboardData.getData(CANVAS_CLIPBOARD_MIME)
+    const raw = structured || event.clipboardData.getData('text/plain')
+    if (!raw) return
+    event.preventDefault()
+    safely(() => pasteAtPointer(raw, Boolean(structured)))
+  }
+
+  async function copyToSystem(cut = false) {
+    if (!active || gesture.current || inlineEditRef.current) return
+    try {
+      const current = currentHistory.current.present
+      const raw = createCanvasClipboard(current, selectedIds)
+      if (!raw) return
+      if (!navigator.clipboard?.writeText)
+        throw new Error(
+          'Clipboard access is unavailable. Use the browser copy action while the canvas is focused.',
+        )
+      await navigator.clipboard.writeText(raw)
+      if (cut) {
+        if (!activeRef.current) return
+        if (gesture.current || inlineEditRef.current)
+          throw new Error(
+            'Finish the current edit before cutting. Copied objects remain on the canvas.',
+          )
+        if (!sameDocument(current, currentHistory.current.present))
+          throw new Error(
+            'The canvas changed while copying. Copied objects remain on the canvas.',
+          )
+        commit(removeSelection(current, selectionIds(current, selectedIds)))
+      }
+    } catch (caught) {
+      setError(
+        caught instanceof Error
+          ? caught.message
+          : 'The clipboard could not be written.',
+      )
+    }
+  }
+
+  async function pasteFromSystem() {
+    if (!active || gesture.current || inlineEditRef.current) return
+    try {
+      if (!navigator.clipboard?.readText)
+        throw new Error(
+          'Clipboard access is unavailable. Paste while the canvas is focused.',
+        )
+      const raw = await navigator.clipboard.readText()
+      pasteAtPointer(raw)
+    } catch (caught) {
+      setError(
+        caught instanceof Error
+          ? caught.message
+          : 'The clipboard could not be read.',
+      )
+    }
+  }
+  function duplicateSelected() {
+    const result = duplicateSelection(
+      currentHistory.current.present,
+      selectedIds,
+      { layerId: activeLayerId },
+    )
+    commit(result.document)
+    setSelectedIds(result.selectedIds)
+  }
+  const commandAvailable = active && !dragging && !inlineEdit
   useRegisterCommands([
+    {
+      id: 'canvas.copy',
+      label: 'Copy selected objects',
+      category: 'Canvas',
+      execute: () => {
+        void copyToSystem()
+      },
+      enabled: commandAvailable && selectedIds.length > 0,
+      scope: 'canvas',
+    },
+    {
+      id: 'canvas.cut',
+      label: 'Cut selected objects',
+      category: 'Canvas',
+      execute: () => {
+        void copyToSystem(true)
+      },
+      enabled:
+        commandAvailable &&
+        selectedIds.length > 0 &&
+        selectedIds.every((id) => isElementEditable(board, id)),
+      scope: 'canvas',
+    },
+    {
+      id: 'canvas.paste',
+      label: 'Paste',
+      category: 'Canvas',
+      execute: () => {
+        void pasteFromSystem()
+      },
+      enabled: commandAvailable,
+      scope: 'canvas',
+    },
+    {
+      id: 'canvas.selectAll',
+      label: 'Select all objects',
+      category: 'Canvas',
+      execute: () => runCanvas(selectAll),
+      enabled: commandAvailable,
+      scope: 'canvas',
+    },
     {
       id: 'canvas.select',
       label: 'Select tool',
@@ -935,7 +1548,9 @@ export default function CanvasEditor({
       label: 'Undo',
       category: 'Canvas',
       execute: () =>
-        runCanvas(() => showHistory(undoEditorHistory(currentHistory.current))),
+        runCanvas(() =>
+          showHistory(undoEditorContentHistory(currentHistory.current)),
+        ),
       enabled: commandAvailable && history.past.length > 0,
       scope: 'canvas',
     },
@@ -944,7 +1559,9 @@ export default function CanvasEditor({
       label: 'Redo',
       category: 'Canvas',
       execute: () =>
-        runCanvas(() => showHistory(redoEditorHistory(currentHistory.current))),
+        runCanvas(() =>
+          showHistory(redoEditorContentHistory(currentHistory.current)),
+        ),
       enabled: commandAvailable && history.future.length > 0,
       scope: 'canvas',
     },
@@ -954,8 +1571,7 @@ export default function CanvasEditor({
       category: 'Canvas',
       execute: () =>
         runCanvas(() => {
-          if (selected)
-            commit(removeElement(currentHistory.current.present, selected.id))
+          if (selectedIds.length) removeSelected()
         }),
       enabled:
         commandAvailable &&
@@ -1044,6 +1660,10 @@ export default function CanvasEditor({
       onError={setError}
     />
   )
+  const editedElement = inlineEdit
+    ? board.elements.find((element) => element.id === inlineEdit.id)
+    : null
+  const editBounds = editedElement ? elementBounds(board, editedElement) : null
   const connectionOptions = (
     <div className="canvas-connection-options">
       <span>
@@ -1228,6 +1848,9 @@ export default function CanvasEditor({
       aria-label="LCANVAS editor"
       data-canvas-root
       data-dock-mode={dockMode}
+      onCopy={clipboardCopy}
+      onCut={(event) => clipboardCopy(event, true)}
+      onPaste={clipboardPaste}
     >
       {!dockMode && drawingTools}
       {dockMode &&
@@ -1253,6 +1876,8 @@ export default function CanvasEditor({
           className="lcanvas-stage canvas-edit-stage"
           data-grid={grid}
           data-dragging={dragging}
+          data-gesture={gestureKind}
+          data-selection-count={selectedIds.length}
           data-mode={spaceHeld ? 'pan' : mode}
           style={gridStyle}
           tabIndex={0}
@@ -1262,6 +1887,7 @@ export default function CanvasEditor({
           onPointerDown={beginStage}
           onPointerMove={moveGesture}
           onPointerUp={endGesture}
+          onDoubleClick={editAtPointer}
           onPointerCancel={(event) => endGesture(event, true)}
           onLostPointerCapture={(event) => endGesture(event)}
           onKeyDown={navigateByKey}
@@ -1288,7 +1914,7 @@ export default function CanvasEditor({
                     role="button"
                     tabIndex={0}
                     aria-label={objectLabel(element)}
-                    aria-pressed={selectedId === element.id}
+                    aria-pressed={selectedIds.includes(element.id)}
                     data-element-id={element.id}
                     data-layer-id={element.layerId}
                     data-area-id={element.areaId ?? ''}
@@ -1303,12 +1929,13 @@ export default function CanvasEditor({
                       if (event.key === 'Enter') {
                         event.preventDefault()
                         event.stopPropagation()
-                        chooseObject(element.id)
+                        if (mode === 'connect') chooseObject(element.id)
+                        else startTextEdit(element)
                       }
                     }}
-                    onDoubleClick={() => {
-                      setSelectedId(element.id)
-                      openInspector()
+                    onDoubleClick={(event) => {
+                      event.stopPropagation()
+                      startTextEdit(element)
                     }}
                   >
                     {element.type !== 'connection' &&
@@ -1326,6 +1953,7 @@ export default function CanvasEditor({
                       document={board}
                       element={element}
                       prefix={`${prefix}-${index}`}
+                      editing={inlineEdit?.id === element.id}
                     />
                   </g>
                 )
@@ -1343,21 +1971,27 @@ export default function CanvasEditor({
                     vectorEffect="non-scaling-stroke"
                     pointerEvents="none"
                   />
-                  {selected.type !== 'connection' &&
-                    selected.type !== 'line' &&
-                    isElementEditable(board, selected.id) && (
+                  {canTransformSelection &&
+                    !inlineEdit &&
+                    resizeHandles.map((handle) => (
                       <rect
+                        key={handle.id}
                         className="canvas-resize-handle"
                         role="button"
-                        aria-label="Resize selected object"
+                        aria-label={
+                          handle.id === 'se'
+                            ? 'Resize selected object'
+                            : `Resize selected object ${handle.label}`
+                        }
+                        data-resize-handle={handle.id}
                         x={
                           selectedBounds.x +
-                          selectedBounds.width -
+                          selectedBounds.width * handle.x -
                           6 / view.zoom
                         }
                         y={
                           selectedBounds.y +
-                          selectedBounds.height -
+                          selectedBounds.height * handle.y -
                           6 / view.zoom
                         }
                         width={12 / view.zoom}
@@ -1370,14 +2004,90 @@ export default function CanvasEditor({
                         onPointerDown={(event) => {
                           if (event.button !== 0) return
                           event.stopPropagation()
-                          beginGesture(event, 'resize', selected.id)
+                          beginGesture(event, 'resize', selectedIds, handle.id)
                         }}
-                      />
-                    )}
+                      >
+                        <title>{`Resize ${handle.label} · Shift keeps proportions`}</title>
+                      </rect>
+                    ))}
                 </g>
+              )}
+              {marquee && (
+                <rect
+                  className="canvas-marquee"
+                  data-testid="canvas-marquee"
+                  x={marquee.x}
+                  y={marquee.y}
+                  width={marquee.width}
+                  height={marquee.height}
+                  fill="var(--tint)"
+                  stroke="var(--accent)"
+                  strokeWidth="1"
+                  vectorEffect="non-scaling-stroke"
+                  pointerEvents="none"
+                />
               )}
             </g>
           </svg>
+          {inlineEdit && editBounds && editedElement && (
+            <div
+              className="canvas-inline-edit"
+              data-centered={
+                editedElement.type !== 'text' && editedElement.type !== 'area'
+              }
+              style={{
+                left: editBounds.x * view.zoom + view.x,
+                top: editBounds.y * view.zoom + view.y,
+                width: Math.max(48, editBounds.width * view.zoom),
+                height: Math.max(
+                  32,
+                  (editedElement.type === 'area' ? 42 : editBounds.height) *
+                    view.zoom,
+                ),
+              }}
+            >
+              <textarea
+                ref={textInput}
+                aria-label={
+                  editedElement.type === 'area'
+                    ? 'Edit area name'
+                    : 'Edit object text'
+                }
+                title="Enter for a new line · Ctrl+Enter to apply · Escape to cancel"
+                value={inlineEdit.value}
+                maxLength={editedElement.type === 'area' ? 120 : 20000}
+                spellCheck
+                style={{
+                  fontSize:
+                    (editedElement.type === 'area'
+                      ? 14
+                      : 'fontSize' in editedElement
+                        ? editedElement.fontSize
+                        : 20) * view.zoom,
+                  color: editedElement.color,
+                }}
+                onChange={(event) => {
+                  const draft = { ...inlineEdit, value: event.target.value }
+                  inlineEditRef.current = draft
+                  setInlineEdit(draft)
+                }}
+                onPointerDown={(event) => event.stopPropagation()}
+                onBlur={() => finishTextEdit()}
+                onKeyDown={(event) => {
+                  event.stopPropagation()
+                  if (event.nativeEvent.isComposing) return
+                  if (
+                    event.key === 'Escape' ||
+                    ((event.ctrlKey || event.metaKey) && event.key === 'Enter')
+                  ) {
+                    event.preventDefault()
+                    finishTextEdit(event.key === 'Escape')
+                    stage.current?.focus({ preventScroll: true })
+                  }
+                }}
+              />
+            </div>
+          )}
           {!board.elements.length && (
             <div className="lcanvas-empty" aria-hidden="true">
               <span className="lcanvas-empty-symbol">＋</span>
@@ -1438,9 +2148,13 @@ export default function CanvasEditor({
         <button
           type="button"
           aria-label="Undo"
-          title="Undo edit or view change (Ctrl+Z)"
+          title="Undo edit (Ctrl+Z)"
           disabled={!history.past.length || dragging}
-          onClick={() => showHistory(undoEditorHistory(currentHistory.current))}
+          onClick={() =>
+            runCanvas(() =>
+              showHistory(undoEditorContentHistory(currentHistory.current)),
+            )
+          }
         >
           <ToolIcon>
             <path d="m8 6-5 5 5 5M3 11h10a7 7 0 0 1 7 7" />
@@ -1461,9 +2175,13 @@ export default function CanvasEditor({
         <button
           type="button"
           aria-label="Redo"
-          title="Redo edit or view change (Ctrl+Shift+Z)"
+          title="Redo edit (Ctrl+Shift+Z)"
           disabled={!history.future.length || dragging}
-          onClick={() => showHistory(redoEditorHistory(currentHistory.current))}
+          onClick={() =>
+            runCanvas(() =>
+              showHistory(redoEditorContentHistory(currentHistory.current)),
+            )
+          }
         >
           <ToolIcon>
             <path d="m16 6 5 5-5 5m5-5H11a7 7 0 0 0-7 7" />

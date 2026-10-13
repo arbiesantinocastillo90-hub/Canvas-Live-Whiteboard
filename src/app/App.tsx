@@ -1,7 +1,8 @@
-import { useEffect, useState, type CSSProperties } from 'react'
+import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import AppearanceOptions from './AppearanceOptions'
 import { resolveAppearanceVariables } from './appearance'
-import FileWorkspace from './FileWorkspace'
+import FileWorkspace, { type WorkspaceOpenRequest } from './FileWorkspace'
+import HomePage from './HomePage'
 import { DEFAULT_LAYOUT, loadLayout, persistLayout } from './layout'
 import HotkeyOptions, {
   WorkspaceCommandsProvider,
@@ -23,15 +24,8 @@ import {
   type WorkspaceState,
 } from './workspace'
 
-type Section = 'work' | 'projects' | 'options'
+type Section = 'home' | 'work' | 'projects' | 'options'
 type ProjectPrompt = { kind: 'create' } | { kind: 'rename'; project: Project }
-
-function openedDate(timestamp: number) {
-  return new Intl.DateTimeFormat(undefined, {
-    month: 'short',
-    day: 'numeric',
-  }).format(timestamp)
-}
 
 export default function App() {
   return (
@@ -44,9 +38,11 @@ export default function App() {
 function WorkspaceApp() {
   useCanvasDraftProtection()
   const [workspace, setWorkspace] = useState(loadWorkspace)
-  const [section, setSection] = useState<Section>(() =>
-    workspace.lastProjectId ? 'work' : 'projects',
-  )
+  const [section, setSection] = useState<Section>('home')
+  const [workspaceStarted, setWorkspaceStarted] = useState(false)
+  const [homeProjectId, setHomeProjectId] = useState(workspace.lastProjectId)
+  const [openRequest, setOpenRequest] = useState<WorkspaceOpenRequest>()
+  const requestSequence = useRef(0)
   const [prompt, setPrompt] = useState<ProjectPrompt | null>(null)
   const [search, setSearch] = useState('')
   const [storageError, setStorageError] = useState(false)
@@ -79,8 +75,14 @@ function WorkspaceApp() {
     return () => query.removeEventListener('change', update)
   }, [])
 
-  function enterProject(id: string) {
+  function enterProject(
+    id: string,
+    request?: Omit<WorkspaceOpenRequest, 'sequence'>,
+  ) {
     updateWorkspace(openProject(workspace, id))
+    setWorkspaceStarted(true)
+    setHomeProjectId(id)
+    setOpenRequest({ ...request, sequence: ++requestSequence.current })
     setSection('work')
     updateLayout({
       ...layout,
@@ -94,9 +96,9 @@ function WorkspaceApp() {
     setWorkspace(next)
   }
   function navigate(next: Section) {
-    if (next === 'work' && workspace.lastProjectId)
-      enterProject(workspace.lastProjectId)
-    else setSection(next)
+    if (next === 'work' && (homeProjectId ?? workspace.lastProjectId))
+      enterProject((homeProjectId ?? workspace.lastProjectId)!)
+    else setSection(next === 'work' ? 'home' : next)
     setSearch('')
   }
   function submitProject(name: string) {
@@ -106,7 +108,12 @@ function WorkspaceApp() {
           ? renameProject(workspace, prompt.project.id, name)
           : createProject(workspace, name)
       updateWorkspace(updated)
-      setSection('work')
+      if (prompt?.kind !== 'rename') {
+        setHomeProjectId(updated.lastProjectId)
+        setOpenRequest(undefined)
+        setWorkspaceStarted(false)
+        setSection('home')
+      }
       setPrompt(null)
       return null
     } catch (error) {
@@ -127,10 +134,20 @@ function WorkspaceApp() {
       navigate('projects')
       return
     }
-    setSection('work')
+    if (!workspaceStarted) {
+      enterProject(activeProject.id)
+    } else setSection('work')
     updateLayout({ ...layout, filesOpen: true, leftPanel })
   }
   useRegisterCommands([
+    {
+      id: 'app.home',
+      label: 'Return to Home',
+      category: 'Workspace',
+      execute: () => navigate('home'),
+      enabled: !canvasFocused,
+      allowWhileTyping: true,
+    },
     {
       id: 'app.options',
       label: 'Open Options',
@@ -143,7 +160,8 @@ function WorkspaceApp() {
       id: 'app.projects',
       label: 'Open Projects',
       category: 'Workspace',
-      execute: () => openLeft('projects'),
+      execute: () =>
+        section === 'work' ? openLeft('projects') : navigate('home'),
       enabled: !canvasFocused,
       allowWhileTyping: true,
     },
@@ -160,7 +178,7 @@ function WorkspaceApp() {
       label: 'Toggle left panel',
       category: 'Panels',
       execute: () => updateLayout({ ...layout, filesOpen: !layout.filesOpen }),
-      enabled: !canvasFocused,
+      enabled: !canvasFocused && section === 'work',
       allowWhileTyping: true,
     },
     {
@@ -188,100 +206,152 @@ function WorkspaceApp() {
       data-focused={canvasFocused}
       data-sidebar-open={layout.filesOpen}
       data-section={section}
+      data-outer={section !== 'work'}
       style={colors}
     >
       <a className="skip-link" href="#main-content">
         Skip to content
       </a>
-      <aside
-        className="sidebar workspace-ribbon"
-        aria-label="Workspace sidebar"
-        inert={canvasFocused}
-        aria-hidden={canvasFocused}
-      >
-        <a
-          className="brand"
-          href="/"
-          aria-label="Canvas Live home"
-          title="Canvas Live"
-          onClick={(event) => {
-            event.preventDefault()
-            navigate('work')
-          }}
+      {section === 'work' && (
+        <aside
+          className="sidebar workspace-ribbon"
+          aria-label="Workspace sidebar"
+          inert={canvasFocused}
+          aria-hidden={canvasFocused}
         >
-          <span className="brand-mark">
-            <img src="/canvas-live-logo.png" alt="" />
-          </span>
-        </a>
-        <nav className="section-nav" aria-label="Main navigation">
-          <button
-            className="nav-item"
-            aria-label="Work"
-            title="Work"
-            aria-current={section === 'work' ? 'page' : undefined}
-            onClick={() => navigate('work')}
+          <a
+            className="brand"
+            href="/"
+            aria-label="Canvas Live home"
+            title="Canvas Live"
+            onClick={(event) => {
+              event.preventDefault()
+              navigate('home')
+            }}
           >
-            <Icon name="work" />
-          </button>
-          {(['files', 'projects'] as const).map((panel) => (
+            <span className="brand-mark">
+              <img src="/canvas-live-logo.png" alt="" />
+            </span>
+          </a>
+          <nav className="section-nav" aria-label="Main navigation">
             <button
-              key={panel}
               className="nav-item"
-              data-dock-trigger="left"
-              aria-label={panel === 'files' ? 'Files' : 'Projects'}
-              title={
-                panel === 'files'
-                  ? 'Files · double-click to pin'
-                  : 'Projects · double-click to pin'
-              }
-              aria-expanded={
-                section === 'work' &&
-                layout.filesOpen &&
-                layout.leftPanel === panel
-              }
-              aria-controls="project-files"
-              onPointerEnter={(event) => {
-                if (event.pointerType === 'mouse' && activeProject)
-                  openLeft(panel)
-              }}
-              onClick={() => openLeft(panel)}
-              onDoubleClick={() => {
-                if (activeProject)
-                  updateLayout({
-                    ...layout,
-                    filesOpen: true,
-                    leftPanel: panel,
-                    leftPinned: !layout.leftPinned,
-                  })
-              }}
+              aria-label="Work"
+              title="Work"
+              aria-current={section === 'work' ? 'page' : undefined}
+              onClick={() => navigate('work')}
             >
-              <Icon name={panel === 'files' ? 'files' : 'folder'} />
+              <Icon name="work" />
             </button>
-          ))}
+            {(['files', 'projects'] as const).map((panel) => (
+              <button
+                key={panel}
+                className="nav-item"
+                data-dock-trigger="left"
+                aria-label={panel === 'files' ? 'Files' : 'Projects'}
+                title={
+                  panel === 'files'
+                    ? 'Files · double-click to pin'
+                    : 'Projects · double-click to pin'
+                }
+                aria-expanded={
+                  section === 'work' &&
+                  layout.filesOpen &&
+                  layout.leftPanel === panel
+                }
+                aria-controls="project-files"
+                onPointerEnter={(event) => {
+                  if (event.pointerType === 'mouse' && activeProject)
+                    openLeft(panel)
+                }}
+                onClick={() => openLeft(panel)}
+                onDoubleClick={() => {
+                  if (activeProject)
+                    updateLayout({
+                      ...layout,
+                      filesOpen: true,
+                      leftPanel: panel,
+                      leftPinned: !layout.leftPinned,
+                    })
+                }}
+              >
+                <Icon name={panel === 'files' ? 'files' : 'folder'} />
+              </button>
+            ))}
+            <button
+              className="nav-item"
+              aria-label="Create a new project"
+              title="New project"
+              onClick={() => setPrompt({ kind: 'create' })}
+            >
+              <Icon name="plus" />
+            </button>
+          </nav>
+          <WorkspaceLauncher />
           <button
-            className="nav-item"
-            aria-label="Create a new project"
-            title="New project"
-            onClick={() => setPrompt({ kind: 'create' })}
+            className="icon-button ribbon-options"
+            aria-label="Options"
+            title="Options"
+            onClick={() => navigate('options')}
           >
-            <Icon name="plus" />
+            <Icon name="options" />
           </button>
-        </nav>
-        <WorkspaceLauncher />
-        <button
-          className="icon-button ribbon-options"
-          aria-label="Options"
-          title="Options"
-          aria-current={section === 'options' ? 'page' : undefined}
-          onClick={() => navigate('options')}
-        >
-          <Icon name="options" />
-        </button>
-      </aside>
+        </aside>
+      )}
       <div className="main-shell">
         {section !== 'work' && (
-          <header className="topbar">
-            <strong>{section === 'projects' ? 'Projects' : 'Options'}</strong>
+          <header className="outer-header">
+            <a
+              className="brand"
+              href="/"
+              aria-label="Canvas Live home"
+              title="Home"
+              onClick={(event) => {
+                event.preventDefault()
+                navigate('home')
+              }}
+            >
+              <span className="brand-mark">
+                <img src="/canvas-live-logo.png" alt="" />
+              </span>
+              <span>
+                Canvas <strong>Live</strong>
+              </span>
+            </a>
+            <nav aria-label="Main navigation">
+              <button
+                className="nav-item"
+                aria-label="Home"
+                aria-current={
+                  section === 'home' || section === 'projects'
+                    ? 'page'
+                    : undefined
+                }
+                onClick={() => navigate('home')}
+              >
+                Home
+              </button>
+              {activeProject && (
+                <button
+                  className="nav-item"
+                  aria-label="Work"
+                  title="Resume workspace"
+                  onClick={() => navigate('work')}
+                >
+                  Work
+                </button>
+              )}
+              <button
+                className="nav-item"
+                aria-label="Options"
+                title="Options"
+                aria-current={section === 'options' ? 'page' : undefined}
+                onClick={() => navigate('options')}
+              >
+                Options
+              </button>
+            </nav>
+            <WorkspaceLauncher />
           </header>
         )}
         <main id="main-content" tabIndex={-1}>
@@ -316,168 +386,95 @@ function WorkspaceApp() {
               <HotkeyOptions />
             </>
           )}
-          {section === 'projects' && (
-            <section
-              className="page projects-page"
-              aria-labelledby="projects-title"
-            >
-              <div className="page-heading">
-                <div>
-                  <h1 id="projects-title">Projects</h1>
-                </div>
-                <button
-                  className="button primary"
-                  onClick={() => setPrompt({ kind: 'create' })}
-                >
-                  <Icon name="plus" />
-                  Create project
-                </button>
-              </div>
-              <div className="project-tools">
-                <h2>
-                  Recently opened{' '}
-                  <span className="count-pill">{projects.length}</span>
-                </h2>
-                <label className="search-field">
-                  <Icon name="search" />
-                  <input
-                    type="search"
-                    aria-label="Search projects"
-                    placeholder="Find a project…"
-                    value={search}
-                    onChange={(event) => setSearch(event.target.value)}
-                  />
-                </label>
-              </div>
-              {projects.length === 0 ? (
-                <div className="empty-projects">
-                  <div className="empty-art" aria-hidden="true">
-                    <span className="art-card back">
-                      <Icon name="canvas" />
-                    </span>
-                    <span className="art-card front">
-                      <Icon name="plus" />
-                    </span>
-                  </div>
-                  <h2>No projects yet</h2>
-                  <button
-                    className="button primary"
-                    onClick={() => setPrompt({ kind: 'create' })}
-                  >
-                    Create your first project
-                    <Icon name="arrow" />
-                  </button>
-                </div>
-              ) : filteredProjects.length === 0 ? (
-                <div className="search-empty">
-                  <Icon name="search" />
-                  <h2>No projects found</h2>
-                  <p>Try a different name.</p>
-                  <button
-                    className="button secondary"
-                    onClick={() => setSearch('')}
-                  >
-                    Clear search
-                  </button>
-                </div>
-              ) : (
-                <div className="project-grid">
-                  {filteredProjects.map((project, index) => (
-                    <button
-                      className="project-card"
-                      key={project.id}
-                      onClick={() => enterProject(project.id)}
-                      aria-label={`Open project ${project.name}`}
-                    >
-                      <div
-                        className={`project-card-preview motif-${index % 3}`}
-                      >
-                        <span className="preview-outline">
-                          <Icon name="canvas" />
-                        </span>
-                        <span className="open-project-arrow">
-                          <Icon name="arrow" />
-                        </span>
-                      </div>
-                      <div className="project-card-details">
-                        <h3>{project.name}</h3>
-                        <p>
-                          <Icon name="clock" />
-                          Opened {openedDate(project.lastOpenedAt)}
-                          {project.id === projects[0]?.id && (
-                            <span>Most recent</span>
-                          )}
-                        </p>
-                      </div>
-                    </button>
-                  ))}
-                </div>
-              )}
-            </section>
+          {(section === 'home' || section === 'projects') && (
+            <HomePage
+              projects={projects}
+              selectedProjectId={homeProjectId}
+              onSelectProject={setHomeProjectId}
+              onNewProject={() => setPrompt({ kind: 'create' })}
+              onRenameProject={(project) =>
+                setPrompt({ kind: 'rename', project })
+              }
+              onOpenFile={(id, fileId) => enterProject(id, { fileId })}
+              onNewCanvas={(id) => enterProject(id, { action: 'create' })}
+              onImport={(id, imports) => enterProject(id, { imports })}
+              onLocalImport={(id, localImports) =>
+                enterProject(id, { localImports })
+              }
+            />
           )}
-          {section === 'work' &&
+          {workspaceStarted &&
             (activeProject ? (
-              <FileWorkspace
-                key={activeProject.id}
-                project={activeProject}
-                preferences={workspace.preferences}
-                layout={layout}
-                onLayoutChange={updateLayout}
-                showFileToggle={false}
-                projectPanel={
-                  <div className="project-explorer">
-                    <div className="file-panel-actions">
-                      <button
-                        className="icon-button"
-                        aria-label="New project"
-                        title="New project"
-                        onClick={() => setPrompt({ kind: 'create' })}
-                      >
-                        <Icon name="plus" />
-                      </button>
-                      <button
-                        className="icon-button"
-                        aria-label="Manage projects"
-                        title="Manage projects"
-                        onClick={() => navigate('projects')}
-                      >
-                        <Icon name="folder" />
-                      </button>
-                    </div>
-                    <label className="file-search">
-                      <Icon name="search" />
-                      <input
-                        type="search"
-                        aria-label="Search projects"
-                        placeholder="Search"
-                        value={search}
-                        onChange={(event) => setSearch(event.target.value)}
-                      />
-                    </label>
-                    <div className="recent-list">
-                      {filteredProjects.map((project) => (
+              <div
+                className="workspace-holder"
+                hidden={section !== 'work'}
+                inert={section !== 'work'}
+                aria-hidden={section !== 'work'}
+              >
+                <FileWorkspace
+                  key={activeProject.id}
+                  project={activeProject}
+                  preferences={workspace.preferences}
+                  layout={layout}
+                  onLayoutChange={updateLayout}
+                  showFileToggle={false}
+                  workspaceActive={section === 'work'}
+                  openRequest={openRequest}
+                  projectPanel={
+                    <div className="project-explorer">
+                      <div className="file-panel-actions">
                         <button
-                          key={project.id}
-                          className={`recent-project ${activeProject.id === project.id ? 'is-active' : ''}`}
-                          aria-label={`Open ${project.name}`}
-                          title={project.name}
-                          onClick={() => enterProject(project.id)}
+                          className="icon-button"
+                          aria-label="New project"
+                          title="New project"
+                          onClick={() => setPrompt({ kind: 'create' })}
+                        >
+                          <Icon name="plus" />
+                        </button>
+                        <button
+                          className="icon-button"
+                          aria-label="Manage projects"
+                          title="Manage projects"
+                          onClick={() => navigate('projects')}
                         >
                           <Icon name="folder" />
-                          <span className="recent-name">{project.name}</span>
                         </button>
-                      ))}
-                      {!filteredProjects.length && (
-                        <p className="file-list-empty">No projects found</p>
-                      )}
+                      </div>
+                      <label className="file-search">
+                        <Icon name="search" />
+                        <input
+                          type="search"
+                          aria-label="Search projects"
+                          placeholder="Search"
+                          value={search}
+                          onChange={(event) => setSearch(event.target.value)}
+                        />
+                      </label>
+                      <div className="recent-list">
+                        {filteredProjects.map((project) => (
+                          <button
+                            key={project.id}
+                            className={`recent-project ${activeProject.id === project.id ? 'is-active' : ''}`}
+                            aria-label={`Open ${project.name}`}
+                            title={project.name}
+                            onClick={() => enterProject(project.id)}
+                          >
+                            <Icon name="folder" />
+                            <span className="recent-name">{project.name}</span>
+                          </button>
+                        ))}
+                        {!filteredProjects.length && (
+                          <p className="file-list-empty">No projects found</p>
+                        )}
+                      </div>
                     </div>
-                  </div>
-                }
-                onFocusChange={setCanvasFocused}
-                onRenameProject={() =>
-                  setPrompt({ kind: 'rename', project: activeProject })
-                }
-              />
+                  }
+                  onFocusChange={setCanvasFocused}
+                  onRenameProject={() =>
+                    setPrompt({ kind: 'rename', project: activeProject })
+                  }
+                />
+              </div>
             ) : (
               <section className="page work-page" aria-labelledby="work-title">
                 <div className="empty-projects work-empty">

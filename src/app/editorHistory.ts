@@ -91,3 +91,30 @@ export function redoEditorHistory(history: EditorHistory): EditorHistory {
     future,
   }
 }
+
+/** Camera navigation is persisted without consuming or clearing content history. */
+export function navigateEditorHistory(
+  history: EditorHistory,
+  viewport: CanvasDocument['viewport'],
+): EditorHistory {
+  return { ...history, present: { ...history.present, viewport } }
+}
+
+/** Undo/redo content at the camera the user is currently viewing. */
+export function undoEditorContentHistory(
+  history: EditorHistory,
+): EditorHistory {
+  const next = undoEditorHistory(history)
+  return next === history
+    ? history
+    : navigateEditorHistory(next, history.present.viewport)
+}
+
+export function redoEditorContentHistory(
+  history: EditorHistory,
+): EditorHistory {
+  const next = redoEditorHistory(history)
+  return next === history
+    ? history
+    : navigateEditorHistory(next, history.present.viewport)
+}

@@ -353,7 +353,7 @@ describe('manual LCANVAS editor', () => {
     expect(latest().elements[0]).toMatchObject({ width: 140, height: 100 })
   })
 
-  it('uses world coordinates after zooming and combines content and view undo', () => {
+  it('uses world coordinates after zooming and keeps camera movement outside content undo', () => {
     const { stage, object, latest } = mount(shape())
     fireEvent.click(screen.getByRole('button', { name: 'Zoom in' }))
     expect(latest().viewport.zoom).toBe(1.2)
@@ -364,8 +364,9 @@ describe('manual LCANVAS editor', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Undo' }))
     expect(latest().elements[0]).toMatchObject({ x: 10, y: 20 })
     expect(latest().viewport.zoom).toBe(1.2)
+    expect(screen.getByRole('button', { name: 'Undo' })).toBeDisabled()
     fireEvent.click(screen.getByRole('button', { name: 'Undo' }))
-    expect(latest().viewport.zoom).toBe(1)
+    expect(latest().viewport.zoom).toBe(1.2)
   })
 
   it('pans using its explicit tool and preserves view controls beside closed panels', () => {

@@ -5,11 +5,38 @@ import {
   commitEditorHistory,
   createEditorHistory,
   EDITOR_HISTORY_LIMIT,
+  navigateEditorHistory,
+  redoEditorContentHistory,
   redoEditorHistory,
   undoEditorHistory,
+  undoEditorContentHistory,
 } from './editorHistory'
 
 describe('document transaction history', () => {
+  it('keeps content undo and redo independent from persisted camera movement', () => {
+    const initial = createCanvasDocument('Plan')
+    const shape = createElement(initial, {
+      type: 'rectangle',
+      id: 'shape',
+      x: 0,
+      y: 0,
+      width: 100,
+      height: 50,
+    })
+    let history = commitEditorHistory(createEditorHistory(initial), shape)
+    const view = { x: -120, y: 80, zoom: 1.7 }
+    history = navigateEditorHistory(history, view)
+    expect(history.past).toHaveLength(1)
+    history = undoEditorContentHistory(history)
+    expect(history.present.elements).toHaveLength(0)
+    expect(history.present.viewport).toEqual(view)
+    const moved = { x: 300, y: 200, zoom: 0.8 }
+    history = navigateEditorHistory(history, moved)
+    expect(history.future).toHaveLength(1)
+    history = redoEditorContentHistory(history)
+    expect(history.present.elements).toHaveLength(1)
+    expect(history.present.viewport).toEqual(moved)
+  })
   it('restores complete content and view snapshots, then branches after a new edit', () => {
     const initial = createCanvasDocument('Plan')
     const shape = createElement(initial, {

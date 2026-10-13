@@ -1,5 +1,7 @@
 # Roadmap
 
+The 2026-10-12 task adds a separate Home library, group/clipboard/direct editing, improved resize/camera interactions, content Undo preserving the camera, physical LCANVAS Save/Save as, and independent dirty recovery. See [HOME_AND_LOCAL_FILES.md](HOME_AND_LOCAL_FILES.md) and [current verification](HOME_AND_INTERACTIONS_VERIFICATION.md).
+
 The owner authorized initiation of the Milestone 0–1 plan on 2026-10-09. Work stays incremental under PROJECT_SPEC.md.
 
 | Milestone | Scope                                                                 | Status                                                             |
@@ -18,7 +20,7 @@ Milestone 1 should verify labelled shapes, arrows, stable-ID edits, round-trip r
 
 The requested adaptable UI milestone adds remembered resizable/collapsible panels, expanded contrast and color preferences, motion controls, a command palette, quick file switcher, customizable shortcuts and temporary Space pan. It builds on the existing editor and preserves document/MCP scope. See [ADAPTABLE_WORKSPACE.md](ADAPTABLE_WORKSPACE.md) for the supported controls and verified results. Future work remains MVP hardening, broader drawing features and multiplayer; it is not included in this UI update.
 
-The current workspace supports themes and remembered project names/recent openings, with Options, Projects and Work sections. Projects organize multiple LCANVAS documents in IndexedDB, with validated import/export, explicit saving, closable tabs and side panels. The requested editor now supports shapes, labels, text, resize, areas, layers, attached connections and combined edit/view undo. Fullscreen focuses on the current file. Broader manual MVP features such as freehand drawing, images and multi-selection remain outside this task. See [LCANVAS.md](LCANVAS.md) and [EDITOR.md](EDITOR.md).
+The current workspace supports themes and remembered project names/recent openings, with Options, Projects and Work sections. Projects organize multiple LCANVAS documents in IndexedDB, with validated import/export, explicit saving, closable tabs and side panels. The requested editor now supports shapes, labels, text, resize, areas, layers, attached connections and combined edit/view undo. Fullscreen focuses on the current file. Group selection, validated clipboard operations and inline text editing are now implemented. Freehand drawing and images remain outside this task. See [LCANVAS.md](LCANVAS.md) and [EDITOR.md](EDITOR.md).
 
 The owner also requested a Windows executable. The portable launcher opens the current production package from `release/Canvas Live/Canvas Live.exe`; see [WINDOWS_LAUNCHER.md](WINDOWS_LAUNCHER.md) for its verification and limits. It packages the original SVG editor without adopting Excalidraw or adding dependencies.
 
