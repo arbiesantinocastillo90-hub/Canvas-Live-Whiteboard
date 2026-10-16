@@ -1,13 +1,28 @@
-import { useEffect, useRef, useState, type RefObject } from 'react'
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type RefObject,
+} from 'react'
 
 export default function useCanvasFocus(
   root: RefObject<HTMLElement | null>,
   onFocusChange?: (focused: boolean) => void,
+  initialFocused = false,
 ) {
-  const [focused, setFocused] = useState(false)
-  const currentFocus = useRef(false)
+  // A copied view restores the in-app layout without a fullscreen permission
+  // request or a fit operation that would replace its captured camera.
+  const [focused, setFocused] = useState(initialFocused)
+  const currentFocus = useRef(initialFocused)
+  const onFocusChangeRef = useRef(onFocusChange)
   const usedNativeFullscreen = useRef(false)
   const previousFocus = useRef<HTMLElement | null>(null)
+
+  useLayoutEffect(() => {
+    currentFocus.current = focused
+    onFocusChangeRef.current = onFocusChange
+  })
 
   function fitCanvas() {
     requestAnimationFrame(() => {
@@ -67,6 +82,7 @@ export default function useCanvasFocus(
   }
 
   useEffect(() => {
+    if (currentFocus.current) onFocusChangeRef.current?.(true)
     const element = root.current
     function fullscreenChanged() {
       if (document.fullscreenElement === element) {
@@ -75,7 +91,7 @@ export default function useCanvasFocus(
         currentFocus.current = false
         usedNativeFullscreen.current = false
         setFocused(false)
-        onFocusChange?.(false)
+        onFocusChangeRef.current?.(false)
         previousFocus.current?.focus()
       }
     }
@@ -88,7 +104,7 @@ export default function useCanvasFocus(
         return
       currentFocus.current = false
       setFocused(false)
-      onFocusChange?.(false)
+      onFocusChangeRef.current?.(false)
       if (document.fullscreenElement === element && document.exitFullscreen) {
         void document.exitFullscreen().catch(() => undefined)
       }
@@ -100,13 +116,13 @@ export default function useCanvasFocus(
     return () => {
       document.removeEventListener('fullscreenchange', fullscreenChanged)
       window.removeEventListener('keydown', escape)
-      if (currentFocus.current) onFocusChange?.(false)
+      if (currentFocus.current) onFocusChangeRef.current?.(false)
       currentFocus.current = false
       if (document.fullscreenElement === element && document.exitFullscreen) {
         void document.exitFullscreen().catch(() => undefined)
       }
     }
-  }, [root, onFocusChange])
+  }, [root])
 
   return { focused, enter, exit, toggle: () => (focused ? exit() : enter()) }
 }

@@ -131,4 +131,52 @@ describe('appearance controls', () => {
     expect(swap).toHaveAttribute('aria-pressed', 'true')
     expect(delay).toHaveValue('640')
   })
+  it('adjusts every visible interface dimension and resets sizes independently of visibility and appearance', () => {
+    render(<Options />)
+    const dimensions = [
+      ['Files and projects width', '360', '260'],
+      ['Tools and AI width', '380', '300'],
+      ['Workspace rail width', '60', '44'],
+      ['Canvas controls width', '54', '42'],
+      ['Tab bar height', '56', '40'],
+      ['Status bar height', '32', '22'],
+    ]
+    for (const [name, value] of dimensions) {
+      const slider = screen.getByRole('slider', { name })
+      fireEvent.change(slider, { target: { value } })
+      expect(slider).toHaveValue(value)
+    }
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Auto-hide tab bar' }))
+    fireEvent.click(
+      screen.getByRole('checkbox', { name: 'Auto-hide status bar' }),
+    )
+    fireEvent.change(
+      screen.getByRole('slider', { name: 'Interface contrast' }),
+      {
+        target: { value: '80' },
+      },
+    )
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Reset interface dimensions' }),
+    )
+    for (const [name, , defaultValue] of dimensions) {
+      expect(screen.getByRole('slider', { name })).toHaveValue(defaultValue)
+    }
+    expect(
+      screen.getByRole('checkbox', { name: 'Auto-hide tab bar' }),
+    ).toBeChecked()
+    expect(
+      screen.getByRole('checkbox', { name: 'Auto-hide status bar' }),
+    ).toBeChecked()
+    expect(
+      screen.getByRole('slider', { name: 'Interface contrast' }),
+    ).toHaveValue('80')
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Auto-hide tab bar' }))
+    expect(
+      screen.getByRole('checkbox', { name: 'Auto-hide tab bar' }),
+    ).not.toBeChecked()
+    expect(
+      screen.getByRole('checkbox', { name: 'Auto-hide status bar' }),
+    ).toBeChecked()
+  })
 })

@@ -17,7 +17,11 @@ type IconName =
   | 'save'
   | 'pin'
   | 'workspaces'
+  | 'link'
 const paths: Record<IconName, ReactNode> = {
+  link: (
+    <path d="m10 14 4-4M8 16l-1 1a3.5 3.5 0 0 1-5-5l4-4a3.5 3.5 0 0 1 5 0m2 8a3.5 3.5 0 0 0 5 0l4-4a3.5 3.5 0 0 0-5-5l-1 1" />
+  ),
   pin: <path d="M8 3h8l-1 6 3 4H6l3-4-1-6ZM12 13v8" />,
   workspaces: (
     <>

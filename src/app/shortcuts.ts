@@ -17,6 +17,7 @@ export const shortcutActions = [
   ['file.save', 'Save current canvas', 'Files', 'Mod+S'],
   ['file.saveAs', 'Save canvas as local file', 'Files', 'Mod+Shift+S'],
   ['file.export', 'Export current canvas', 'Files', 'Mod+Shift+E'],
+  ['file.copyViewLink', 'Copy snapshot view link', 'Files', ''],
   ['file.next', 'Next canvas tab', 'Files', 'Mod+Alt+ArrowRight'],
   ['file.previous', 'Previous canvas tab', 'Files', 'Mod+Alt+ArrowLeft'],
   ['file.close', 'Close current canvas tab', 'Files', 'Mod+Shift+X'],

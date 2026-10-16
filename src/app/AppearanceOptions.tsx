@@ -1,6 +1,14 @@
 import { resolveAppearanceVariables, type AppearanceMode } from './appearance'
 import { DEFAULT_PREFERENCES, type Preferences } from './workspace'
-import { boundedAutoHideDelay, type WorkspaceLayout } from './layout'
+import {
+  boundedAutoHideDelay,
+  boundedChromeSize,
+  boundedPanelWidth,
+  CHROME_LIMITS,
+  DEFAULT_LAYOUT,
+  PANEL_LIMITS,
+  type WorkspaceLayout,
+} from './layout'
 
 const accents = [
   { name: 'Forest', color: '#297A5A' },
@@ -347,6 +355,32 @@ export default function AppearanceOptions({
               />
               <span>Auto-hide panels</span>
             </label>
+            <label className="toggle-control">
+              <input
+                type="checkbox"
+                checked={layout.autoHideTabs}
+                onChange={(event) =>
+                  onLayoutChange({
+                    ...layout,
+                    autoHideTabs: event.target.checked,
+                  })
+                }
+              />
+              <span>Auto-hide tab bar</span>
+            </label>
+            <label className="toggle-control">
+              <input
+                type="checkbox"
+                checked={layout.autoHideStatus}
+                onChange={(event) =>
+                  onLayoutChange({
+                    ...layout,
+                    autoHideStatus: event.target.checked,
+                  })
+                }
+              />
+              <span>Auto-hide status bar</span>
+            </label>
             <div className="range-control">
               <label htmlFor="panel-hide-delay">Panel hide delay</label>
               <output htmlFor="panel-hide-delay">
@@ -387,6 +421,95 @@ export default function AppearanceOptions({
               }
             >
               Swap panel sides
+            </button>
+          </fieldset>
+        )}
+
+        {layout && onLayoutChange && (
+          <fieldset className="option-card">
+            <legend className="option-title">Interface dimensions</legend>
+            {(
+              [
+                [
+                  'filesWidth',
+                  'Files and projects width',
+                  PANEL_LIMITS.files,
+                  'files',
+                ],
+                [
+                  'rightWidth',
+                  'Tools and AI width',
+                  PANEL_LIMITS.right,
+                  'right',
+                ],
+              ] as const
+            ).map(([key, label, limits, panel]) => (
+              <div className="range-control" key={key}>
+                <label htmlFor={`layout-${key}`}>{label}</label>
+                <output htmlFor={`layout-${key}`}>{layout[key]} px</output>
+                <input
+                  id={`layout-${key}`}
+                  type="range"
+                  min={limits.min}
+                  max={limits.max}
+                  step="1"
+                  value={layout[key]}
+                  onChange={(event) =>
+                    onLayoutChange({
+                      ...layout,
+                      [key]: boundedPanelWidth(
+                        Number(event.target.value),
+                        panel,
+                      ),
+                    })
+                  }
+                />
+              </div>
+            ))}
+            {(
+              [
+                ['ribbonWidth', 'Workspace rail width'],
+                ['controlsWidth', 'Canvas controls width'],
+                ['tabBarHeight', 'Tab bar height'],
+                ['statusBarHeight', 'Status bar height'],
+              ] as const
+            ).map(([key, label]) => (
+              <div className="range-control" key={key}>
+                <label htmlFor={`layout-${key}`}>{label}</label>
+                <output htmlFor={`layout-${key}`}>{layout[key]} px</output>
+                <input
+                  id={`layout-${key}`}
+                  type="range"
+                  min={CHROME_LIMITS[key].min}
+                  max={CHROME_LIMITS[key].max}
+                  step="1"
+                  value={layout[key]}
+                  onChange={(event) =>
+                    onLayoutChange({
+                      ...layout,
+                      [key]: boundedChromeSize(Number(event.target.value), key),
+                    })
+                  }
+                />
+              </div>
+            ))}
+            <button
+              className="button secondary"
+              type="button"
+              onClick={() =>
+                onLayoutChange({
+                  ...layout,
+                  sidebarWidth: DEFAULT_LAYOUT.sidebarWidth,
+                  filesWidth: DEFAULT_LAYOUT.filesWidth,
+                  rightWidth: DEFAULT_LAYOUT.rightWidth,
+                  ribbonWidth: DEFAULT_LAYOUT.ribbonWidth,
+                  controlsWidth: DEFAULT_LAYOUT.controlsWidth,
+                  tabBarHeight: DEFAULT_LAYOUT.tabBarHeight,
+                  statusBarHeight: DEFAULT_LAYOUT.statusBarHeight,
+                })
+              }
+            >
+              Reset interface dimensions
             </button>
           </fieldset>
         )}

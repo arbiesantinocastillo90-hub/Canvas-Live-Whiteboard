@@ -10,7 +10,11 @@ import {
   type KeyboardEvent,
   type ReactNode,
 } from 'react'
-import CanvasEditor, { type CanvasEditorController } from './CanvasEditor'
+import CanvasEditor, {
+  type CanvasEditorController,
+  type CanvasEditorStatus,
+  type EditorViewState,
+} from './CanvasEditor'
 import WorkspaceAI from './WorkspaceAI'
 import useMcpBridge from './useMcpBridge'
 import useCanvasFocus from './useCanvasFocus'
@@ -44,6 +48,7 @@ import {
 } from './canvasLocalFiles'
 import { recoveryFor, mergeRecoveredDrafts } from './canvasRecovery'
 import ProjectDialog from './ProjectDialog'
+import ViewLinkDialog from './ViewLinkDialog'
 import {
   canvasFileStore,
   createCanvasFileRecord,
@@ -72,6 +77,13 @@ export type WorkspaceOpenRequest = {
   action?: 'create'
   imports?: File[]
   localImports?: LocalCanvasImport[]
+}
+
+export type WorkspaceViewCapture = {
+  files: CanvasFileRecord[]
+  view: ProjectViewSession
+  activeView: EditorViewState & { focusMode: boolean }
+  layout: WorkspaceLayout
 }
 
 function message(error: unknown) {
@@ -112,6 +124,9 @@ export default function FileWorkspace({
   viewSession,
   onViewSessionChange,
   workspacesPanel,
+  onCopyViewLink,
+  initialViewState,
+  onInitialViewApplied,
 }: {
   project: Project
   preferences: Preferences
@@ -127,6 +142,9 @@ export default function FileWorkspace({
   viewSession?: ProjectViewSession
   onViewSessionChange?: (view: ProjectViewSession) => void
   workspacesPanel?: ReactNode
+  onCopyViewLink?: (capture: WorkspaceViewCapture) => Promise<string>
+  initialViewState?: EditorViewState & { focusMode: boolean }
+  onInitialViewApplied?: () => void
 }) {
   const [entries, setEntries] = useState<Entry[]>([])
   const [openIds, setOpenIds] = useState<string[]>([])
@@ -134,6 +152,7 @@ export default function FileWorkspace({
   const initialView = useRef(
     viewSession ? normalizeProjectView(viewSession) : null,
   )
+  const [initialEditorView, setInitialEditorView] = useState(initialViewState)
   const [viewMeta, setViewMeta] = useState(() =>
     normalizeProjectView(viewSession),
   )
@@ -157,6 +176,16 @@ export default function FileWorkspace({
     if (!loading) publishView()
   }, [openIds, activeId, viewMeta, loading])
   const [busy, setBusy] = useState(false)
+  const [copyingView, setCopyingView] = useState(false)
+  const [viewLink, setViewLink] = useState<string | null>(null)
+  const [editorStatus, setEditorStatus] = useState<CanvasEditorStatus | null>(
+    null,
+  )
+  const rememberStatus = useCallback((status: CanvasEditorStatus) => {
+    setEditorStatus((current) =>
+      JSON.stringify(current) === JSON.stringify(status) ? current : status,
+    )
+  }, [])
   const [localBindings, setLocalBindings] = useState(
     new Map<string, LocalCanvasBinding>(),
   )
@@ -172,9 +201,12 @@ export default function FileWorkspace({
   const [localLayout, setLocalLayout] = useState(loadLayout)
   const layout = controlledLayout ?? localLayout
   const filesOpen = layout.filesOpen
-  const [focusRightPanel, setFocusRightPanel] =
-    useState<WorkspaceLayout['rightPanel']>('none')
-  const [focusRightPinned, setFocusRightPinned] = useState(false)
+  const [focusRightPanel, setFocusRightPanel] = useState<
+    WorkspaceLayout['rightPanel']
+  >(initialViewState?.focusMode ? layout.rightPanel : 'none')
+  const [focusRightPinned, setFocusRightPinned] = useState(
+    initialViewState?.focusMode ? layout.rightPinned : false,
+  )
   function changeLayout(next: WorkspaceLayout) {
     if (onLayoutChange) onLayoutChange(next)
     else {
@@ -206,7 +238,11 @@ export default function FileWorkspace({
   const focusRoot = useRef<HTMLElement>(null)
   const [rightHost, setRightHost] = useState<HTMLDivElement | null>(null)
   const [rightInset, setRightInset] = useState(0)
-  const { focused, toggle } = useCanvasFocus(focusRoot, onFocusChange)
+  const { focused, toggle } = useCanvasFocus(
+    focusRoot,
+    onFocusChange,
+    initialViewState?.focusMode ?? false,
+  )
   const rightPanel = focused ? focusRightPanel : layout.rightPanel
   const rightPinned = focused ? focusRightPinned : layout.rightPinned
   const aiOpen = rightPanel === 'ai'
@@ -231,12 +267,16 @@ export default function FileWorkspace({
   } | null>(null)
   const registerController = useCallback(
     (controller: CanvasEditorController | null) => {
-      if (controller && activeId)
+      if (controller && activeId) {
         editorController.current = { fileId: activeId, controller }
-      else if (editorController.current?.fileId === activeId)
+        if (activeId === initialView.current?.activeId && initialEditorView) {
+          setInitialEditorView(undefined)
+          onInitialViewApplied?.()
+        }
+      } else if (editorController.current?.fileId === activeId)
         editorController.current = null
     },
-    [activeId],
+    [activeId, initialEditorView, onInitialViewApplied],
   )
   const getController = useCallback(
     () =>
@@ -302,6 +342,64 @@ export default function FileWorkspace({
     const entry = entries.find((item) => item.record.id === id)
     if (entry) openFile(entry)
   }
+  async function copyViewLink() {
+    const current = editorController.current
+    if (!current || !activeId || !onCopyViewLink || copyingView) return
+    setCopyingView(true)
+    setError(null)
+    try {
+      current.controller.flushDraft?.()
+      // Capture synchronously before compression/clipboard work, including drafts.
+      const state = current.controller.getViewState()
+      const files = openIds
+        .map((id) => currentSnapshot(id))
+        .filter((file): file is CanvasFileRecord => !!file)
+      const capture: WorkspaceViewCapture = structuredClone({
+        files,
+        view: normalizeProjectView({
+          ...viewMeta,
+          openIds,
+          activeId,
+          editorSession: state,
+        }),
+        activeView: { ...state, focusMode: focused },
+        layout: { ...layout, rightPanel, rightPinned },
+      })
+      const pendingLink = onCopyViewLink(capture)
+      // Promise-backed ClipboardItem keeps the initiating click's permission.
+      if (navigator.clipboard?.write && typeof ClipboardItem !== 'undefined') {
+        const content = pendingLink.then(
+          (url) => new Blob([url], { type: 'text/plain' }),
+        )
+        // Some embedded browsers reject a promise-backed item synchronously.
+        void content.catch(() => undefined)
+        try {
+          await navigator.clipboard.write([
+            new ClipboardItem({
+              'text/plain': content,
+            }),
+          ])
+          if (alive.current) setNotice('Snapshot link copied.')
+          return
+        } catch {
+          // The selectable link below also works in embedded browsers.
+        }
+      }
+      const url = await pendingLink
+      try {
+        if (!navigator.clipboard?.writeText)
+          throw new Error('Clipboard unavailable')
+        await navigator.clipboard.writeText(url)
+        if (alive.current) setNotice('Snapshot link copied.')
+      } catch {
+        if (alive.current) setViewLink(url)
+      }
+    } catch (failure) {
+      if (alive.current) setError(message(failure))
+    } finally {
+      if (alive.current) setCopyingView(false)
+    }
+  }
   function navigateTab(event: KeyboardEvent<HTMLButtonElement>, id: string) {
     if (event.altKey || event.ctrlKey || event.metaKey) return
     const index = openIds.indexOf(id)
@@ -366,6 +464,16 @@ export default function FileWorkspace({
             category: 'Files',
             execute: exportFile,
             enabled: Boolean(active),
+            allowWhileTyping: true,
+          },
+          {
+            id: 'file.copyViewLink',
+            label: 'Copy snapshot view link',
+            category: 'Files',
+            execute: () => {
+              void copyViewLink()
+            },
+            enabled: Boolean(active && onCopyViewLink) && !copyingView,
             allowWhileTyping: true,
           },
           {
@@ -1271,10 +1379,16 @@ export default function FileWorkspace({
       ref={focusRoot}
       className="file-workspace"
       data-focus={focused}
+      data-autohide-tabs={layout.autoHideTabs}
+      data-autohide-status={layout.autoHideStatus}
       style={
         {
           '--file-panel-width': `${layout.filesWidth}px`,
           '--right-panel-width': `${layout.rightWidth}px`,
+          '--ribbon-width': `${layout.ribbonWidth}px`,
+          '--controls-width': `${layout.controlsWidth}px`,
+          '--tab-bar-height': `${layout.tabBarHeight}px`,
+          '--status-bar-height': `${layout.statusBarHeight}px`,
         } as CSSProperties
       }
       aria-label={
@@ -1574,6 +1688,19 @@ export default function FileWorkspace({
                   <Icon name="clock" />
                 </button>
               )}
+              {onCopyViewLink && (
+                <button
+                  className="icon-button"
+                  disabled={!active || copyingView}
+                  onClick={() => {
+                    void copyViewLink()
+                  }}
+                  aria-label="Copy view link"
+                  title="Copy snapshot link · includes open canvases, camera and layout"
+                >
+                  <Icon name="link" />
+                </button>
+              )}
               <button
                 className="icon-button"
                 disabled={!active}
@@ -1634,6 +1761,13 @@ export default function FileWorkspace({
                 onControllerReady={registerController}
                 initialSession={viewMeta.editorSession ?? undefined}
                 onSessionChange={rememberEditorSession}
+                initialViewState={
+                  active.record.id === initialView.current?.activeId
+                    ? initialEditorView
+                    : undefined
+                }
+                statusInFooter
+                onStatusChange={rememberStatus}
               />
             ) : (
               <div className="viewer-empty" data-grid={preferences.grid}>
@@ -1662,7 +1796,13 @@ export default function FileWorkspace({
               </div>
             )}
           </div>
-          <div className="file-statusbar">
+          <div
+            className="file-statusbar"
+            role="group"
+            aria-label="Canvas status"
+            tabIndex={0}
+            title={editorStatus?.instructions}
+          >
             <span
               className={`save-dot ${active?.dirty || localDirty ? 'unsaved' : ''}`}
             />
@@ -1704,9 +1844,35 @@ export default function FileWorkspace({
             )}
             <span>
               {active
-                ? `${active.record.document.elements.length} objects`
+                ? `${editorStatus?.visibleCount ?? active.record.document.elements.length} objects`
                 : `${entries.length} canvas files`}
             </span>
+            {active && editorStatus?.selection && (
+              <span className="canvas-selection-status">
+                {editorStatus.selection}
+              </span>
+            )}
+            {active && (
+              <output aria-label="Canvas zoom" aria-live="polite">
+                {Math.round(
+                  (editorStatus?.zoom ?? active.record.document.viewport.zoom) *
+                    100,
+                )}
+                %
+              </output>
+            )}
+            {active && (
+              <button
+                className="status-help"
+                aria-label="Canvas controls help"
+                title={
+                  editorStatus?.instructions ??
+                  'Drag to move · Corner to resize · Double-click to edit · Scroll to zoom'
+                }
+              >
+                ?
+              </button>
+            )}
           </div>
         </div>
         <DockPanel
@@ -1781,6 +1947,9 @@ export default function FileWorkspace({
           onClose={() => setPrompt(null)}
           onSubmit={submitFile}
         />
+      )}
+      {viewLink && (
+        <ViewLinkDialog url={viewLink} onClose={() => setViewLink(null)} />
       )}
     </section>
   )

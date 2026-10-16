@@ -1,7 +1,18 @@
-import { useEffect, useRef, useState, type CSSProperties } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+} from 'react'
 import AppearanceOptions from './AppearanceOptions'
 import { resolveAppearanceVariables } from './appearance'
-import FileWorkspace, { type WorkspaceOpenRequest } from './FileWorkspace'
+import FileWorkspace, {
+  type WorkspaceOpenRequest,
+  type WorkspaceViewCapture,
+} from './FileWorkspace'
+import { decodeViewLink, encodeViewLink } from './viewLinks'
+import { restoreViewLink, type RestoredViewLink } from './viewLinkRestore'
 import HomePage from './HomePage'
 import { DEFAULT_LAYOUT, loadLayout, persistLayout } from './layout'
 import HotkeyOptions, {
@@ -44,17 +55,101 @@ type ProjectPrompt =
   | { kind: 'create'; parentId?: string | null }
   | { kind: 'rename'; project: Project }
 
+function snapshotIdentity() {
+  return { id: crypto.randomUUID(), createdAt: Date.now() }
+}
+
 export default function App() {
+  const [viewHash, setViewHash] = useState(() =>
+    window.location.hash.startsWith('#view=') ? window.location.hash : '',
+  )
+  const hasViewLink = !!viewHash
+  const [launch, setLaunch] = useState<{
+    restored?: RestoredViewLink
+    error?: string
+  } | null>(() => (hasViewLink ? null : {}))
+  const pendingLaunch = useRef<{
+    hash: string
+    promise: Promise<RestoredViewLink | null>
+  } | null>(null)
+  useEffect(() => {
+    const changed = () => {
+      const hash = window.location.hash
+      if (hash.startsWith('#view=') && hash !== viewHash) {
+        setLaunch(null)
+        setViewHash(hash)
+      }
+    }
+    window.addEventListener('hashchange', changed)
+    return () => window.removeEventListener('hashchange', changed)
+  }, [viewHash])
+  useEffect(() => {
+    if (!hasViewLink) return
+    let active = true
+    if (pendingLaunch.current?.hash !== viewHash)
+      pendingLaunch.current = {
+        hash: viewHash,
+        promise: decodeViewLink(viewHash).then((snapshot) =>
+          snapshot ? restoreViewLink(snapshot) : null,
+        ),
+      }
+    void pendingLaunch.current.promise
+      .then((restored) => {
+        if (active) setLaunch(restored ? { restored } : {})
+      })
+      .catch((failure: unknown) => {
+        if (active)
+          setLaunch({
+            error:
+              failure instanceof Error
+                ? failure.message
+                : 'This snapshot link could not be opened.',
+          })
+      })
+    return () => {
+      active = false
+    }
+  }, [hasViewLink, viewHash])
+  if (!launch)
+    return (
+      <main className="snapshot-opening" role="status">
+        Opening snapshot…
+      </main>
+    )
   return (
     <WorkspaceCommandsProvider>
-      <WorkspaceApp />
+      <WorkspaceApp
+        key={viewHash}
+        restored={launch.restored}
+        linkError={launch.error}
+      />
     </WorkspaceCommandsProvider>
   )
 }
 
-function WorkspaceApp() {
-  useCanvasDraftProtection()
+function WorkspaceApp({
+  restored,
+  linkError,
+}: {
+  restored?: RestoredViewLink
+  linkError?: string
+}) {
+  useCanvasDraftProtection(restored?.store)
+  // A portable link owns an isolated editing session. Its settings and file
+  // copies must not replace the main app's library or grant native file access.
+  const saveMetadata = (value: WorkspaceState) =>
+    restored ? true : persistWorkspace(value)
+  const saveSessions = (value: WorkspaceSessions) =>
+    restored ? true : persistWorkspaceSessions(value)
+  const saveLayout = (value: typeof DEFAULT_LAYOUT) =>
+    restored ? true : persistLayout(value)
   const [startup] = useState(() => {
+    if (restored)
+      return {
+        workspace: restored.workspace,
+        layout: restored.snapshot.workspace.layout,
+        sessions: restored.sessions,
+      }
     const metadata = loadWorkspace()
     const saved = loadWorkspaceSessions(
       metadata.preferences,
@@ -78,18 +173,30 @@ function WorkspaceApp() {
     }
   })
   const [workspace, setWorkspace] = useState(startup.workspace)
-  const [section, setSection] = useState<Section>('home')
-  const [workspaceStarted, setWorkspaceStarted] = useState(false)
+  const [section, setSection] = useState<Section>(restored ? 'work' : 'home')
+  const [workspaceStarted, setWorkspaceStarted] = useState(!!restored)
   const [homeProjectId, setHomeProjectId] = useState(workspace.lastProjectId)
   const [openRequest, setOpenRequest] = useState<WorkspaceOpenRequest>()
   const requestSequence = useRef(0)
   const [prompt, setPrompt] = useState<ProjectPrompt | null>(null)
   const [search, setSearch] = useState('')
-  const [storageError, setStorageError] = useState(false)
-  const [canvasFocused, setCanvasFocused] = useState(false)
+  const [visibleLinkError, setVisibleLinkError] = useState(linkError)
+  const [storageError, setStorageError] = useState(
+    restored?.storageError ?? false,
+  )
+  const [canvasFocused, setCanvasFocused] = useState(
+    restored?.snapshot.activeView.focusMode ?? false,
+  )
   const [layout, setLayout] = useState(startup.layout)
   const [sessions, setSessions] = useState(startup.sessions)
   const [sessionStorageError, setSessionStorageError] = useState(false)
+  const [initialLinkView, setInitialLinkView] = useState(
+    restored?.snapshot.activeView,
+  )
+  const acknowledgeInitialView = useCallback(
+    () => setInitialLinkView(undefined),
+    [],
+  )
   const savedWorkspace = sessions.items.find(
     (item) => item.id === sessions.activeId,
   )!
@@ -119,6 +226,7 @@ function WorkspaceApp() {
     id: string,
     request?: Omit<WorkspaceOpenRequest, 'sequence'>,
   ) {
+    setVisibleLinkError(undefined)
     updateWorkspace(openProject(workspace, id))
     setWorkspaceStarted(true)
     setHomeProjectId(id)
@@ -132,7 +240,7 @@ function WorkspaceApp() {
   }
 
   function updateWorkspace(next: WorkspaceState) {
-    setStorageError(!persistWorkspace(next))
+    setStorageError(!saveMetadata(next))
     setWorkspace(next)
     updateSessions((current) =>
       updateSavedWorkspace(current, current.activeId, {
@@ -147,7 +255,7 @@ function WorkspaceApp() {
     setSessions((current) => {
       const next = change(current)
       if (JSON.stringify(next) === JSON.stringify(current)) return current
-      setSessionStorageError(!persistWorkspaceSessions(next))
+      setSessionStorageError(!saveSessions(next))
       return next
     })
   }
@@ -155,7 +263,7 @@ function WorkspaceApp() {
     const saved = state.items.find((item) => item.id === id)
     if (!saved) return
     const next = { ...state, activeId: id }
-    setSessionStorageError(!persistWorkspaceSessions(next))
+    setSessionStorageError(!saveSessions(next))
     setSessions(next)
     const projectId = workspace.projects.some(
       (project) => project.id === saved.projectId,
@@ -167,7 +275,7 @@ function WorkspaceApp() {
       preferences: saved.preferences,
       lastProjectId: projectId,
     }
-    setStorageError(!persistWorkspace(updated) || !persistLayout(saved.layout))
+    setStorageError(!saveMetadata(updated) || !saveLayout(saved.layout))
     setWorkspace(updated)
     setLayout(saved.layout)
     setHomeProjectId(projectId)
@@ -198,6 +306,28 @@ function WorkspaceApp() {
         : current
     })
   }
+  function copyViewLink(capture: WorkspaceViewCapture) {
+    if (!activeProject)
+      throw new Error('Open a canvas before copying a view link.')
+    return encodeViewLink(
+      {
+        format: 'CanvasLiveView',
+        version: 1,
+        ...snapshotIdentity(),
+        workspace: structuredClone({
+          ...savedWorkspace,
+          preferences: workspace.preferences,
+          layout: capture.layout,
+          projectId: activeProject.id,
+          views: { [activeProject.id]: capture.view },
+        }),
+        project: structuredClone(activeProject),
+        files: capture.files,
+        activeView: capture.activeView,
+      },
+      window.location.href,
+    )
+  }
   const workspacesPanel = (
     <WorkspacesPanel
       state={sessions}
@@ -218,6 +348,7 @@ function WorkspaceApp() {
     />
   )
   function navigate(next: Section) {
+    setVisibleLinkError(undefined)
     if (next === 'work' && (homeProjectId ?? workspace.lastProjectId))
       enterProject((homeProjectId ?? workspace.lastProjectId)!)
     else setSection(next === 'work' ? 'home' : next)
@@ -249,7 +380,7 @@ function WorkspaceApp() {
     }
   }
   function updateLayout(next: typeof layout) {
-    setStorageError(!persistLayout(next))
+    setStorageError(!saveLayout(next))
     setLayout(next)
     updateSessions((current) =>
       updateSavedWorkspace(current, current.activeId, { layout: next }),
@@ -323,6 +454,10 @@ function WorkspaceApp() {
     '--sidebar-width': `${layout.sidebarWidth}px`,
     '--file-panel-width': `${layout.filesWidth}px`,
     '--right-panel-width': `${layout.rightWidth}px`,
+    '--ribbon-width': `${layout.ribbonWidth}px`,
+    '--controls-width': `${layout.controlsWidth}px`,
+    '--tab-bar-height': `${layout.tabBarHeight}px`,
+    '--status-bar-height': `${layout.statusBarHeight}px`,
   } as CSSProperties
 
   return (
@@ -336,6 +471,9 @@ function WorkspaceApp() {
       data-sidebar-open={layout.filesOpen}
       data-section={section}
       data-outer={section !== 'work'}
+      data-separate-rails={workspace.preferences.railButtonBackground}
+      data-autohide-tabs={layout.autoHideTabs}
+      data-autohide-status={layout.autoHideStatus}
       style={colors}
     >
       <a className="skip-link" href="#main-content">
@@ -509,6 +647,11 @@ function WorkspaceApp() {
           </header>
         )}
         <main id="main-content" tabIndex={-1}>
+          {visibleLinkError && (
+            <div className="storage-alert" role="alert">
+              {visibleLinkError} Your existing projects are available below.
+            </div>
+          )}
           {(storageError || sessionStorageError) && (
             <div className="storage-alert" role="alert">
               Your browser couldn’t remember these changes. They’ll remain
@@ -547,6 +690,7 @@ function WorkspaceApp() {
           )}
           {(section === 'home' || section === 'projects') && (
             <HomePage
+              store={restored?.store}
               projects={projects}
               selectedProjectId={homeProjectId}
               onSelectProject={setHomeProjectId}
@@ -586,6 +730,7 @@ function WorkspaceApp() {
                 aria-hidden={section !== 'work'}
               >
                 <FileWorkspace
+                  store={restored?.store}
                   key={`${savedWorkspace.id}:${activeProject.id}`}
                   project={activeProject}
                   preferences={workspace.preferences}
@@ -595,6 +740,14 @@ function WorkspaceApp() {
                   workspaceActive={section === 'work'}
                   openRequest={openRequest}
                   viewSession={savedWorkspace.views[activeProject.id]}
+                  onCopyViewLink={copyViewLink}
+                  initialViewState={
+                    savedWorkspace.id === restored?.snapshot.workspace.id &&
+                    activeProject.id === restored.snapshot.project.id
+                      ? initialLinkView
+                      : undefined
+                  }
+                  onInitialViewApplied={acknowledgeInitialView}
                   onViewSessionChange={(view) =>
                     rememberView(activeProject.id, view)
                   }

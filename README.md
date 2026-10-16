@@ -10,7 +10,9 @@ Canvas Live starts on a separate Home page for projects and LCANVAS files. Selec
 
 The optional MCP companion provides 15 bounded tools for the file explicitly shared through Workspace AI, including shared Undo/Redo. Ordinary AI edits tolerate completed camera navigation while preserving content conflict checks. The owner's ChatGPT plugin is installed and has read the shared canvas; confirming a live write through that account remains an acceptance step.
 
-The revised workspace centers file tabs and the canvas between a narrow icon ribbon and a fixed view rail. Left Files/Projects and right Tools/Properties/AI panels auto-close; double-click a panel tab or use its pin button to keep it open. Pinned panels sit beside the editor on wide screens. Controls show names on hover. Panel widths, contrast, interface colors, motion, commands and shortcuts remain customizable. Customize shortcuts in Options; Ctrl+P opens commands, Ctrl+O opens files and Space temporarily pans the canvas. See [Adaptable workspace](docs/ADAPTABLE_WORKSPACE.md) for controls and release activation.
+The revised workspace centers file tabs and the canvas between an icon ribbon and view controls. Separate rail buttons float over the canvas and reveal individually on hover or keyboard focus; the logo stays visible. Left Files/Projects and right Tools/Properties/AI panels auto-close; double-click a panel tab or use its pin button to keep it open. Options includes independent tab/status auto-hide settings and panel, rail and bar dimensions. One bottom bar shows save status, object and selection details, zoom, and control help. Panel widths, contrast, interface colors, motion, commands and shortcuts remain customizable. Customize shortcuts in Options; Ctrl+P opens commands, Ctrl+O opens files and Space temporarily pans the canvas. See [Adaptable workspace](docs/ADAPTABLE_WORKSPACE.md) for controls and release activation.
+
+Use **Copy view link** to capture open canvases, camera, tabs, project, workspace and UI layout in a portable URL for an Obsidian Canvas URL card. Opening it starts an isolated editable snapshot. Save or Export edits before closing or reloading. See [Portable snapshot links and interface settings](VIEW_LINKS.md).
 
 - [Project specification](PROJECT_SPEC.md)
 - [Agent instructions](AGENTS.md)
@@ -26,6 +28,8 @@ The revised workspace centers file tabs and the canvas between a narrow icon rib
 - [Current home and interaction verification](docs/HOME_AND_INTERACTIONS_VERIFICATION.md)
 - [Bugs, Errors & Revision scope and controls](docs/BUGS_ERRORS_REVISION.md)
 - [Scoped bug and visual verification](docs/BUGS_ERRORS_REVISION_VERIFICATION.md)
+- [Portable snapshot links and interface settings](VIEW_LINKS.md)
+- [Snapshot links and interface verification](docs/VIEW_CHROME_VERIFICATION.md)
 - [LCANVAS files and viewer](docs/LCANVAS.md)
 - [Canvas editing and controls](docs/EDITOR.md)
 - [Editor verification](docs/EDITOR_VERIFICATION.md)

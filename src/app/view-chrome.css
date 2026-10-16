@@ -1,0 +1,309 @@
+/* All dimensions belong to the workspace view, never to a canvas document. */
+.app-shell[data-section='work'],
+.app-shell[data-section='work'][data-sidebar-open='false'] {
+  grid-template-columns: var(--ribbon-width, 44px) minmax(0, 1fr);
+}
+.app-shell[data-section='work'][data-focused='true'] {
+  grid-template-columns: minmax(0, 1fr);
+}
+.app-shell .workspace-ribbon .nav-item,
+.app-shell .workspace-ribbon .icon-button {
+  width: calc(var(--ribbon-width, 44px) - 10px);
+  height: calc(var(--ribbon-width, 44px) - 10px);
+  min-height: calc(var(--ribbon-width, 44px) - 10px);
+  max-height: 56px;
+}
+.app-shell .workspace-ribbon .brand-mark {
+  width: min(40px, calc(var(--ribbon-width, 44px) - 12px));
+  height: min(40px, calc(var(--ribbon-width, 44px) - 12px));
+}
+.app-shell .workspace-tab-bar {
+  height: var(--tab-bar-height, 40px);
+  min-height: var(--tab-bar-height, 40px);
+}
+.app-shell .canvas-tabs,
+.app-shell .file-workspace[data-focus='true'] .canvas-tabs {
+  min-height: 0;
+}
+.app-shell .workspace-tab-actions {
+  min-width: 0;
+  max-width: 68%;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+.app-shell .workspace-tab-actions > button {
+  flex: 0 0 auto;
+}
+.app-shell .canvas-editor[data-dock-mode='true'] {
+  position: relative;
+  grid-template-columns: minmax(0, 1fr) var(--controls-width, 42px);
+}
+.app-shell .canvas-editor[data-dock-mode='true'] .canvas-view-rail {
+  width: var(--controls-width, 42px);
+}
+.app-shell .canvas-editor[data-dock-mode='true'] .canvas-view-rail button {
+  width: calc(var(--controls-width, 42px) - 10px);
+  height: calc(var(--controls-width, 42px) - 10px);
+  min-height: calc(var(--controls-width, 42px) - 10px);
+  max-height: 56px;
+}
+.app-shell .dock-panel {
+  max-width: min(420px, calc(100% - var(--controls-width, 42px)));
+}
+.app-shell .dock-panel[data-dock-side='right']:not([data-pinned='true']) {
+  right: var(--controls-width, 42px);
+}
+.app-shell .dock-panel[data-pinned='false'] {
+  top: var(--tab-bar-height, 40px);
+}
+.app-shell .workspace-deck:has(.dock-panel[data-arranging='true'])::after {
+  inset-block-start: var(--tab-bar-height, 40px);
+}
+.app-shell .workspace-deck:has(.dock-panel[data-drop-side='right'])::after {
+  right: var(--controls-width, 42px);
+}
+.app-shell .canvas-column {
+  position: relative;
+}
+.app-shell .file-statusbar,
+.app-shell .file-workspace[data-focus='true'] .file-statusbar {
+  height: var(--status-bar-height, 22px);
+  min-height: var(--status-bar-height, 22px);
+  flex-wrap: nowrap;
+  padding-block: 0;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.app-shell .file-statusbar > span:not(.save-dot) {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.app-shell .file-statusbar > span:not(.save-dot):not(.canvas-selection-status) {
+  flex-shrink: 0;
+}
+.app-shell .file-statusbar > span:nth-of-type(2) {
+  flex-shrink: 1;
+}
+.app-shell .file-statusbar > span:nth-of-type(3) {
+  margin-left: auto;
+}
+.app-shell .file-statusbar .canvas-selection-status {
+  flex: 0 1 auto;
+}
+.app-shell .file-statusbar output {
+  flex-shrink: 0;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+.app-shell .status-help {
+  display: grid;
+  place-items: center;
+  flex: 0 0 22px;
+  width: 22px;
+  height: 22px;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 11px;
+}
+.app-shell .status-help:hover,
+.app-shell .status-help:focus-visible {
+  background: var(--tint);
+  color: var(--ink);
+}
+
+/* Invisible strips must not reserve space or block canvas gestures. Buttons
+   remain in the keyboard order; their own hover or focus reveals them. */
+.app-shell[data-section='work'][data-separate-rails='true'] {
+  position: relative;
+  grid-template-columns: minmax(0, 1fr);
+}
+.app-shell[data-section='work'][data-separate-rails='true'] .main-shell {
+  grid-column: 1;
+}
+.app-shell[data-separate-rails='true'] .workspace-ribbon.sidebar {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: var(--ribbon-width, 44px);
+  height: 100%;
+  z-index: 24;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  pointer-events: none;
+}
+.app-shell[data-separate-rails='true'] .workspace-ribbon .workspace-launcher {
+  border: 0;
+}
+.app-shell[data-separate-rails='true'] .workspace-ribbon .brand {
+  pointer-events: auto;
+}
+.app-shell[data-separate-rails='true'] .workspace-tab-bar,
+.app-shell[data-separate-rails='true'] .file-statusbar {
+  padding-left: calc(var(--ribbon-width, 44px) + 4px);
+}
+.app-shell[data-separate-rails='true'][data-focused='true'] .workspace-tab-bar,
+.app-shell[data-separate-rails='true'][data-focused='true'] .file-statusbar {
+  padding-left: 4px;
+}
+.app-shell[data-separate-rails='true'] .canvas-editor[data-dock-mode='true'] {
+  grid-template-columns: minmax(0, 1fr);
+}
+.app-shell[data-separate-rails='true']
+  .canvas-editor[data-dock-mode='true']
+  .canvas-view-rail {
+  position: absolute;
+  inset: 0 0 0 auto;
+  grid-column: auto;
+  grid-row: auto;
+  z-index: 10;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  pointer-events: none;
+}
+.app-shell[data-separate-rails='true'] .canvas-rail-divider {
+  background: transparent;
+}
+.app-shell[data-separate-rails='true'] .workspace-ribbon button,
+.app-shell[data-separate-rails='true'] .canvas-view-rail button {
+  pointer-events: auto;
+  opacity: 0;
+  transition:
+    opacity var(--motion-fast) var(--motion-easing),
+    background-color var(--motion-fast) var(--motion-easing),
+    border-color var(--motion-fast) var(--motion-easing);
+}
+.app-shell[data-separate-rails='true'] .workspace-ribbon button:hover,
+.app-shell[data-separate-rails='true'] .workspace-ribbon button:focus-visible,
+.app-shell[data-separate-rails='true'] .canvas-view-rail button:hover,
+.app-shell[data-separate-rails='true'] .canvas-view-rail button:focus-visible {
+  opacity: 1;
+}
+.app-shell[data-separate-rails='true'] .canvas-view-rail button:disabled:hover {
+  opacity: 0.4;
+}
+.app-shell[data-separate-rails='true']
+  .dock-panel[data-dock-side='left'][data-pinned='false'] {
+  left: var(--ribbon-width, 44px);
+}
+
+/* A five-pixel edge remains available to reveal each optional bar. The bars
+   overlay the canvas, so entering or leaving never changes the camera size. */
+.app-shell [data-autohide-tabs='true'] .workspace-tab-bar {
+  position: absolute;
+  inset: 0 0 auto;
+  z-index: 20;
+  top: calc(5px - var(--tab-bar-height, 40px));
+  transition: top var(--motion-duration) var(--motion-easing);
+}
+.app-shell [data-autohide-tabs='true'] .workspace-tab-bar > *,
+.app-shell [data-autohide-status='true'] .file-statusbar > * {
+  opacity: 0;
+  transition: opacity var(--motion-fast) var(--motion-easing);
+}
+.app-shell [data-autohide-tabs='true'] .workspace-tab-bar:hover,
+.app-shell [data-autohide-tabs='true'] .workspace-tab-bar:focus-within,
+.app-shell
+  [data-autohide-tabs='true']
+  .workspace-tab-bar:has(.tab-context-menu) {
+  top: 0;
+}
+.app-shell [data-autohide-tabs='true'] .workspace-tab-bar:hover > *,
+.app-shell [data-autohide-tabs='true'] .workspace-tab-bar:focus-within > *,
+.app-shell
+  [data-autohide-tabs='true']
+  .workspace-tab-bar:has(.tab-context-menu)
+  > *,
+.app-shell [data-autohide-status='true'] .file-statusbar:hover > *,
+.app-shell [data-autohide-status='true'] .file-statusbar:focus-within > * {
+  opacity: 1;
+}
+.app-shell [data-autohide-status='true'] .file-statusbar {
+  position: absolute;
+  inset: auto 0 0;
+  z-index: 20;
+  bottom: calc(5px - var(--status-bar-height, 22px));
+  transition: bottom var(--motion-duration) var(--motion-easing);
+}
+.app-shell [data-autohide-status='true'] .file-statusbar:hover,
+.app-shell [data-autohide-status='true'] .file-statusbar:focus-within {
+  bottom: 0;
+}
+.view-link-dialog {
+  max-width: min(620px, calc(100vw - 24px));
+}
+.view-link-dialog textarea {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  min-height: 90px;
+  max-height: 45dvh;
+  margin: 10px 0 16px;
+  padding: 10px;
+  resize: vertical;
+  overflow-wrap: anywhere;
+  color: var(--ink);
+  background: var(--well);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  font: inherit;
+  font-size: 11px;
+}
+@media (max-width: 900px) {
+  .app-shell .dock-panel[data-pinned='true'] {
+    top: var(--tab-bar-height, 40px);
+    max-width: calc(100% - var(--controls-width, 42px));
+  }
+  .app-shell .dock-panel[data-pinned='true'][data-dock-side='right'] {
+    right: var(--controls-width, 42px);
+  }
+  .app-shell[data-separate-rails='true']
+    .dock-panel[data-pinned='true'][data-dock-side='left'] {
+    left: var(--ribbon-width, 44px);
+    max-width: calc(100% - var(--ribbon-width, 44px));
+  }
+}
+@media (min-width: 901px) {
+  .app-shell[data-separate-rails='true']
+    .workspace-deck
+    > .dock-panel[data-pinned='true'][data-dock-side='left'] {
+    margin-left: var(--ribbon-width, 44px);
+  }
+  .app-shell[data-separate-rails='true']
+    .workspace-deck:has(
+      > .dock-panel[data-pinned='true'][data-dock-side='left']
+    )
+    .workspace-tab-bar,
+  .app-shell[data-separate-rails='true']
+    .workspace-deck:has(
+      > .dock-panel[data-pinned='true'][data-dock-side='left']
+    )
+    .file-statusbar {
+    padding-left: 4px;
+  }
+}
+@media (hover: none), (pointer: coarse) {
+  .app-shell[data-separate-rails='true'] .workspace-ribbon button,
+  .app-shell[data-separate-rails='true'] .canvas-view-rail button {
+    opacity: 1;
+  }
+  .app-shell[data-separate-rails='true'] .canvas-view-rail button:disabled {
+    opacity: 0.35;
+  }
+  .app-shell [data-autohide-tabs='true'] .workspace-tab-bar,
+  .app-shell [data-autohide-status='true'] .file-statusbar {
+    position: relative;
+    inset: auto;
+    transform: none;
+  }
+  .app-shell [data-autohide-tabs='true'] .workspace-tab-bar > *,
+  .app-shell [data-autohide-status='true'] .file-statusbar > * {
+    opacity: 1;
+  }
+}

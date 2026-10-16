@@ -89,12 +89,32 @@ export type CanvasEditorProps = {
   dockSide?: 'left' | 'right'
   initialSession?: EditorSession
   onSessionChange?: (session: EditorSession) => void
+  initialViewState?: EditorViewState
+  onStatusChange?: (status: CanvasEditorStatus) => void
+  statusInFooter?: boolean
 }
 
 export type EditorSession = { tool: string; activeLayerId: string | null }
+export type EditorViewState = EditorSession & {
+  viewport: CanvasViewport
+  selectedIds: string[]
+  connection?: {
+    arrowStyle: 'end' | 'none' | 'both' | 'start'
+    style: 'straight' | 'elbow'
+    sourceSide: ConnectionSide | 'fixed'
+    targetSide: ConnectionSide | 'fixed'
+  }
+}
+export type CanvasEditorStatus = {
+  instructions: string
+  selection: string | null
+  visibleCount: number
+  zoom: number
+}
 
 export type CanvasEditorController = {
   getDocument: () => CanvasDocument
+  getViewState: () => EditorViewState
   execute: (command: BridgeCommand) => CanvasCommandResult
   flushDraft?: () => void
 }
@@ -427,10 +447,19 @@ export default function CanvasEditor({
   onToolsOpenChange,
   initialSession,
   onSessionChange,
+  initialViewState,
+  onStatusChange,
+  statusInFooter = false,
   dockSide = 'right',
 }: CanvasEditorProps) {
   const dockMode = dockHost !== undefined
-  const [history, setHistory] = useState(() => createEditorHistory(document))
+  const [history, setHistory] = useState(() =>
+    createEditorHistory(
+      initialViewState
+        ? { ...document, viewport: { ...initialViewState.viewport } }
+        : document,
+    ),
+  )
   const activeRef = useRef(active)
   const currentHistory = useRef(history)
   const notified = useRef(document)
@@ -442,18 +471,24 @@ export default function CanvasEditor({
   const pendingWheel = useRef<CanvasViewport | null>(null)
   const [dragging, setDragging] = useState(false)
   const [gestureKind, setGestureKind] = useState<Gesture['kind'] | ''>('')
-  const [selectedIds, setSelectedIds] = useState<string[]>([])
+  const [selectedIds, setSelectedIds] = useState<string[]>(() => {
+    const visibleIds = new Set(
+      orderedVisibleElements(document).map((element) => element.id),
+    )
+    return [...new Set(initialViewState?.selectedIds ?? [])].filter((id) =>
+      visibleIds.has(id),
+    )
+  })
   const selectedId = selectedIds.at(-1) ?? null
   const [marquee, setMarquee] = useState<Box | null>(null)
   const [inlineEdit, setInlineEdit] = useState<InlineEdit | null>(null)
   const inlineEditRef = useRef<InlineEdit | null>(null)
   const textInput = useRef<HTMLTextAreaElement>(null)
   const lastPointer = useRef<Point | null>(null)
-  const [mode, setMode] = useState<Mode>(() =>
-    initialSession?.tool === 'pan' || initialSession?.tool === 'connect'
-      ? initialSession.tool
-      : 'select',
-  )
+  const [mode, setMode] = useState<Mode>(() => {
+    const tool = initialViewState?.tool ?? initialSession?.tool
+    return tool === 'pan' || tool === 'connect' ? tool : 'select'
+  })
   const [spaceHeld, setSpaceHeld] = useState(false)
   const temporaryPan = useRef(false)
   const [localInspectorOpen, setLocalInspectorOpen] = useState(false)
@@ -467,7 +502,10 @@ export default function CanvasEditor({
     () =>
       document.layers.find(
         (layer) =>
-          layer.id === initialSession?.activeLayerId &&
+          layer.id ===
+            (initialViewState
+              ? initialViewState.activeLayerId
+              : initialSession?.activeLayerId) &&
           layer.visible &&
           !layer.locked,
       )?.id ?? document.layers[0].id,
@@ -476,15 +514,15 @@ export default function CanvasEditor({
   const [connectionSource, setConnectionSource] = useState<string | null>(null)
   const [arrowStyle, setArrowStyle] = useState<
     'end' | 'none' | 'both' | 'start'
-  >('end')
+  >(initialViewState?.connection?.arrowStyle ?? 'end')
   const [connectionStyle, setConnectionStyle] = useState<'straight' | 'elbow'>(
-    'straight',
+    initialViewState?.connection?.style ?? 'straight',
   )
   const [sourceSide, setSourceSide] = useState<ConnectionSide | 'fixed'>(
-    'fixed',
+    initialViewState?.connection?.sourceSide ?? 'fixed',
   )
   const [targetSide, setTargetSide] = useState<ConnectionSide | 'fixed'>(
-    'fixed',
+    initialViewState?.connection?.targetSide ?? 'fixed',
   )
   const [error, setError] = useState('')
   const prefix = useId().replace(/[^\w-]/gu, '')
@@ -518,6 +556,41 @@ export default function CanvasEditor({
   useEffect(() => {
     onSessionChange?.({ tool: mode, activeLayerId })
   }, [mode, activeLayerId, onSessionChange])
+  const instructions = `${
+    mode === 'pan'
+      ? 'Drag to pan'
+      : mode === 'connect'
+        ? 'Choose two shapes to connect'
+        : 'Drag to move · Corner to resize · Double-click to edit'
+  } · Scroll to zoom`
+  const selectionDescription = selected
+    ? `${selected.type} · ${board.layers.find((layer) => layer.id === selected.layerId)?.name ?? 'Layer'}`
+    : null
+  useEffect(() => {
+    onStatusChange?.({
+      instructions,
+      selection: selectionDescription,
+      visibleCount: visible.length,
+      zoom: view.zoom,
+    })
+  }, [
+    instructions,
+    selectionDescription,
+    visible.length,
+    view.zoom,
+    onStatusChange,
+  ])
+  const currentViewState = useRef<Omit<EditorViewState, 'viewport'>>({
+    selectedIds,
+    tool: mode,
+    activeLayerId,
+    connection: {
+      arrowStyle,
+      style: connectionStyle,
+      sourceSide,
+      targetSide,
+    },
+  })
   const executeCommand = useRef<
     (command: BridgeCommand) => CanvasCommandResult
   >(() => {
@@ -537,6 +610,24 @@ export default function CanvasEditor({
       return present.name === currentName.current
         ? present
         : { ...present, name: currentName.current }
+    },
+    getViewState: (): EditorViewState => {
+      const present: CanvasDocument = controller.current.getDocument()
+      const state = currentViewState.current
+      const visibleIds = new Set(
+        orderedVisibleElements(present).map((element) => element.id),
+      )
+      return {
+        viewport: { ...present.viewport },
+        selectedIds: state.selectedIds.filter((id) => visibleIds.has(id)),
+        tool: state.tool,
+        activeLayerId: present.layers.some(
+          (layer) => layer.id === state.activeLayerId,
+        )
+          ? state.activeLayerId
+          : present.layers[0].id,
+        connection: state.connection ? { ...state.connection } : undefined,
+      }
     },
     execute: (command) => executeCommand.current(command),
     flushDraft: () => flushCurrentDraft.current(),
@@ -646,6 +737,17 @@ export default function CanvasEditor({
 
   useLayoutEffect(() => {
     activeRef.current = active
+    currentViewState.current = {
+      selectedIds,
+      tool: mode,
+      activeLayerId,
+      connection: {
+        arrowStyle,
+        style: connectionStyle,
+        sourceSide,
+        targetSide,
+      },
+    }
     currentName.current = document.name
     executeCommand.current = executeBridgeCommand
     flushCurrentDraft.current = flushEditorDraft
@@ -2351,24 +2453,19 @@ export default function CanvasEditor({
           </button>
         )}
       </div>
-      <div className="canvas-view-status">
-        <p id={`${prefix}-instructions`}>
-          {mode === 'pan'
-            ? 'Drag to pan'
-            : mode === 'connect'
-              ? 'Choose two shapes to connect'
-              : 'Drag to move · Corner to resize · Double-click to edit'}{' '}
-          · Scroll to zoom
+      {statusInFooter ? (
+        <p id={`${prefix}-instructions`} hidden>
+          {instructions}
         </p>
-        <span>
-          {selected
-            ? `${selected.type} · ${board.layers.find((layer) => layer.id === selected.layerId)?.name ?? 'Layer'}`
-            : `${visible.length} objects`}
-        </span>
-        <output aria-label="Canvas zoom" aria-live="polite">
-          {Math.round(view.zoom * 100)}%
-        </output>
-      </div>
+      ) : (
+        <div className="canvas-view-status">
+          <p id={`${prefix}-instructions`}>{instructions}</p>
+          <span>{selectionDescription ?? `${visible.length} objects`}</span>
+          <output aria-label="Canvas zoom" aria-live="polite">
+            {Math.round(view.zoom * 100)}%
+          </output>
+        </div>
+      )}
     </section>
   )
 }

@@ -11,6 +11,12 @@ export type WorkspaceLayout = {
   panelsSwapped: boolean
   autoHidePanels: boolean
   autoHideDelay: number
+  autoHideTabs: boolean
+  autoHideStatus: boolean
+  ribbonWidth: number
+  controlsWidth: number
+  tabBarHeight: number
+  statusBarHeight: number
 }
 
 export const LAYOUT_STORAGE_KEY = 'canvas-live.layout.v2'
@@ -18,6 +24,12 @@ export const PANEL_LIMITS = {
   sidebar: { min: 180, max: 360, default: 246 },
   files: { min: 160, max: 420, default: 260 },
   right: { min: 220, max: 420, default: 300 },
+} as const
+export const CHROME_LIMITS = {
+  ribbonWidth: { min: 36, max: 76, default: 44 },
+  controlsWidth: { min: 34, max: 70, default: 42 },
+  tabBarHeight: { min: 32, max: 68, default: 40 },
+  statusBarHeight: { min: 22, max: 48, default: 22 },
 } as const
 export const DEFAULT_LAYOUT: WorkspaceLayout = {
   sidebarOpen: true,
@@ -32,6 +44,22 @@ export const DEFAULT_LAYOUT: WorkspaceLayout = {
   panelsSwapped: false,
   autoHidePanels: true,
   autoHideDelay: 280,
+  autoHideTabs: false,
+  autoHideStatus: false,
+  ribbonWidth: CHROME_LIMITS.ribbonWidth.default,
+  controlsWidth: CHROME_LIMITS.controlsWidth.default,
+  tabBarHeight: CHROME_LIMITS.tabBarHeight.default,
+  statusBarHeight: CHROME_LIMITS.statusBarHeight.default,
+}
+
+export function boundedChromeSize(
+  value: number,
+  dimension: keyof typeof CHROME_LIMITS,
+) {
+  const limits = CHROME_LIMITS[dimension]
+  return Number.isFinite(value)
+    ? Math.round(Math.max(limits.min, Math.min(limits.max, value)))
+    : limits.default
 }
 
 export function boundedAutoHideDelay(value: number) {
@@ -100,6 +128,24 @@ export function parseLayout(raw: string | null): WorkspaceLayout {
         typeof candidate.autoHideDelay === 'number'
           ? boundedAutoHideDelay(candidate.autoHideDelay)
           : DEFAULT_LAYOUT.autoHideDelay,
+      autoHideTabs: candidate.autoHideTabs === true,
+      autoHideStatus: candidate.autoHideStatus === true,
+      ribbonWidth:
+        typeof candidate.ribbonWidth === 'number'
+          ? boundedChromeSize(candidate.ribbonWidth, 'ribbonWidth')
+          : DEFAULT_LAYOUT.ribbonWidth,
+      controlsWidth:
+        typeof candidate.controlsWidth === 'number'
+          ? boundedChromeSize(candidate.controlsWidth, 'controlsWidth')
+          : DEFAULT_LAYOUT.controlsWidth,
+      tabBarHeight:
+        typeof candidate.tabBarHeight === 'number'
+          ? boundedChromeSize(candidate.tabBarHeight, 'tabBarHeight')
+          : DEFAULT_LAYOUT.tabBarHeight,
+      statusBarHeight:
+        typeof candidate.statusBarHeight === 'number'
+          ? boundedChromeSize(candidate.statusBarHeight, 'statusBarHeight')
+          : DEFAULT_LAYOUT.statusBarHeight,
     }
   } catch {
     return { ...DEFAULT_LAYOUT }
