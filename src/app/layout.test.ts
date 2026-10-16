@@ -99,4 +99,36 @@ describe('independent workspace layout', () => {
       ),
     ).toEqual(DEFAULT_LAYOUT)
   })
+  it('migrates old layouts safely and remembers arrangement, workspaces and auto-hide settings', () => {
+    const legacy = JSON.stringify({ filesWidth: 310, leftPinned: true })
+    expect(parseLayout(legacy)).toEqual({
+      ...DEFAULT_LAYOUT,
+      filesWidth: 310,
+      leftPinned: true,
+    })
+    const customized = {
+      ...DEFAULT_LAYOUT,
+      panelsSwapped: true,
+      autoHidePanels: false,
+      autoHideDelay: 640,
+      leftPanel: 'workspaces' as const,
+    }
+    expect(persistLayout(customized)).toBe(true)
+    expect(loadLayout()).toEqual(customized)
+    expect(
+      parseLayout(
+        JSON.stringify({
+          panelsSwapped: 'true',
+          autoHidePanels: 'false',
+          autoHideDelay: 'slow',
+        }),
+      ),
+    ).toEqual(DEFAULT_LAYOUT)
+    expect(
+      parseLayout(JSON.stringify({ autoHideDelay: 9000 })).autoHideDelay,
+    ).toBe(2000)
+    expect(
+      parseLayout(JSON.stringify({ autoHideDelay: -30 })).autoHideDelay,
+    ).toBe(0)
+  })
 })

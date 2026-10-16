@@ -14,11 +14,12 @@ import {
 } from 'react'
 import { createPortal } from 'react-dom'
 import {
-  connectionEndpoints,
+  connectionPath,
   elementBounds,
   type CanvasDocument,
   type CanvasElement,
   type CanvasViewport,
+  type ConnectionSide,
 } from './lcanvas'
 import {
   connectElements,
@@ -85,7 +86,12 @@ export type CanvasEditorProps = {
   dockHost?: HTMLElement | null
   toolsOpen?: boolean
   onToolsOpenChange?: (open: boolean) => void
+  dockSide?: 'left' | 'right'
+  initialSession?: EditorSession
+  onSessionChange?: (session: EditorSession) => void
 }
+
+export type EditorSession = { tool: string; activeLayerId: string | null }
 
 export type CanvasEditorController = {
   getDocument: () => CanvasDocument
@@ -348,11 +354,7 @@ export function EditorObject({
         />
       )
     case 'connection': {
-      const { x1, y1, x2, y2 } = connectionEndpoints(document, element)
-      const path =
-        element.style === 'elbow'
-          ? `M ${x1} ${y1} H ${(x1 + x2) / 2} V ${y2} H ${x2}`
-          : `M ${x1} ${y1} L ${x2} ${y2}`
+      const path = connectionPath(document, element)
       const start = `${prefix}-start`
       const end = `${prefix}-end`
       return (
@@ -423,6 +425,9 @@ export default function CanvasEditor({
   dockHost,
   toolsOpen = false,
   onToolsOpenChange,
+  initialSession,
+  onSessionChange,
+  dockSide = 'right',
 }: CanvasEditorProps) {
   const dockMode = dockHost !== undefined
   const [history, setHistory] = useState(() => createEditorHistory(document))
@@ -444,7 +449,11 @@ export default function CanvasEditor({
   const inlineEditRef = useRef<InlineEdit | null>(null)
   const textInput = useRef<HTMLTextAreaElement>(null)
   const lastPointer = useRef<Point | null>(null)
-  const [mode, setMode] = useState<Mode>('select')
+  const [mode, setMode] = useState<Mode>(() =>
+    initialSession?.tool === 'pan' || initialSession?.tool === 'connect'
+      ? initialSession.tool
+      : 'select',
+  )
   const [spaceHeld, setSpaceHeld] = useState(false)
   const temporaryPan = useRef(false)
   const [localInspectorOpen, setLocalInspectorOpen] = useState(false)
@@ -454,13 +463,28 @@ export default function CanvasEditor({
     if (onPropertiesOpenChange) onPropertiesOpenChange(open)
     else setLocalInspectorOpen(open)
   }
-  const [layerId, setLayerId] = useState(document.layers[0].id)
+  const [layerId, setLayerId] = useState(
+    () =>
+      document.layers.find(
+        (layer) =>
+          layer.id === initialSession?.activeLayerId &&
+          layer.visible &&
+          !layer.locked,
+      )?.id ?? document.layers[0].id,
+  )
+  const propertyFlusher = useRef<(() => boolean) | null>(null)
   const [connectionSource, setConnectionSource] = useState<string | null>(null)
   const [arrowStyle, setArrowStyle] = useState<
     'end' | 'none' | 'both' | 'start'
   >('end')
   const [connectionStyle, setConnectionStyle] = useState<'straight' | 'elbow'>(
     'straight',
+  )
+  const [sourceSide, setSourceSide] = useState<ConnectionSide | 'fixed'>(
+    'fixed',
+  )
+  const [targetSide, setTargetSide] = useState<ConnectionSide | 'fixed'>(
+    'fixed',
   )
   const [error, setError] = useState('')
   const prefix = useId().replace(/[^\w-]/gu, '')
@@ -488,8 +512,12 @@ export default function CanvasEditor({
           element.type !== 'line' && isElementEditable(board, element.id),
       )
   function setSelectedId(id: string | null) {
+    propertyFlusher.current?.()
     setSelectedIds(id ? [id] : [])
   }
+  useEffect(() => {
+    onSessionChange?.({ tool: mode, activeLayerId })
+  }, [mode, activeLayerId, onSessionChange])
   const executeCommand = useRef<
     (command: BridgeCommand) => CanvasCommandResult
   >(() => {
@@ -612,6 +640,8 @@ export default function CanvasEditor({
     finishTextEdit()
     if (inlineEditRef.current)
       throw new Error('Correct or cancel the current text draft before saving.')
+    if (propertyFlusher.current?.() === false)
+      throw new Error('Correct the current object properties before saving.')
   }
 
   useLayoutEffect(() => {
@@ -704,6 +734,7 @@ export default function CanvasEditor({
   }
 
   function add(type: SizedType) {
+    if (propertyFlusher.current?.() === false) return
     flushWheel()
     safely(() => {
       const document = currentHistory.current.present
@@ -741,6 +772,7 @@ export default function CanvasEditor({
     if (!active || gesture.current || !stage.current) return
     if (inlineEditRef.current) finishTextEdit()
     if (inlineEditRef.current) return
+    propertyFlusher.current?.()
     flushWheel()
     event.preventDefault()
     gesture.current = {
@@ -783,6 +815,7 @@ export default function CanvasEditor({
   }
 
   function chooseObject(id: string, additive = false) {
+    propertyFlusher.current?.()
     if (mode !== 'connect') {
       if (additive)
         setSelectedIds((ids) =>
@@ -808,6 +841,8 @@ export default function CanvasEditor({
         style: connectionStyle,
         startArrow: arrowStyle === 'both' || arrowStyle === 'start',
         endArrow: arrowStyle === 'both' || arrowStyle === 'end',
+        ...(sourceSide === 'fixed' ? {} : { fromSide: sourceSide }),
+        ...(targetSide === 'fixed' ? {} : { toSide: targetSide }),
       })
       commit(next)
       setSelectedId(next.elements.at(-1)?.id ?? null)
@@ -1223,6 +1258,7 @@ export default function CanvasEditor({
   function runCanvas(action: () => void) {
     if (!active || gesture.current || inlineEditRef.current) return
     flushWheel()
+    if (propertyFlusher.current?.() === false) return
     safely(action)
     stage.current?.focus()
   }
@@ -1234,6 +1270,11 @@ export default function CanvasEditor({
       !isElementEditable(currentHistory.current.present, element.id)
     )
       return
+    if (propertyFlusher.current?.() === false) return
+    element =
+      currentHistory.current.present.elements.find(
+        (item) => item.id === element.id,
+      ) ?? element
     if (element.type === 'connection' || element.type === 'line') {
       setSelectedId(element.id)
       openInspector()
@@ -1656,8 +1697,20 @@ export default function CanvasEditor({
       activeLayerId={activeLayerId}
       onSelect={setSelectedId}
       onActiveLayerChange={setLayerId}
-      onDocumentChange={(next) => safely(() => commit(next))}
+      onDocumentChange={(next) =>
+        safely(() =>
+          commit({
+            ...next,
+            name: currentName.current,
+            viewport:
+              pendingWheel.current ?? currentHistory.current.present.viewport,
+          }),
+        )
+      }
       onError={setError}
+      onDraftFlusherChange={(flush) => {
+        propertyFlusher.current = flush
+      }}
     />
   )
   const editedElement = inlineEdit
@@ -1699,6 +1752,28 @@ export default function CanvasEditor({
           <option value="elbow">Elbow</option>
         </select>
       </label>
+      {(['source', 'target'] as const).map((endpoint) => (
+        <label key={endpoint}>
+          {endpoint === 'source' ? 'Source side' : 'Target side'}
+          <select
+            aria-label={`New connection ${endpoint} side`}
+            value={endpoint === 'source' ? sourceSide : targetSide}
+            onChange={(event) =>
+              (endpoint === 'source' ? setSourceSide : setTargetSide)(
+                event.target.value as ConnectionSide | 'fixed',
+              )
+            }
+          >
+            <option value="fixed">Automatic fixed side</option>
+            <option value="auto">Auto (follow direction)</option>
+            {(['top', 'right', 'bottom', 'left'] as const).map((side) => (
+              <option key={side} value={side}>
+                {side[0].toUpperCase() + side.slice(1)}
+              </option>
+            ))}
+          </select>
+        </label>
+      ))}
     </div>
   )
   const drawingTools = (
@@ -2145,6 +2220,24 @@ export default function CanvasEditor({
         role="toolbar"
         aria-label="Canvas controls"
       >
+        {dockMode && (
+          <button
+            type="button"
+            aria-label="Open right panel"
+            aria-expanded={toolsOpen || inspectorOpen || aiOpen}
+            title="Tools, properties and AI"
+            data-dock-trigger={dockSide}
+            onPointerEnter={(event) => {
+              if (event.pointerType === 'mouse') onToolsOpenChange?.(true)
+            }}
+            onClick={() => onToolsOpenChange?.(true)}
+          >
+            <ToolIcon>
+              <rect x="3" y="4" width="18" height="16" rx="2" />
+              <path d="M15 4v16" />
+            </ToolIcon>
+          </button>
+        )}
         <button
           type="button"
           aria-label="Undo"
@@ -2235,65 +2328,28 @@ export default function CanvasEditor({
           </>
         )}
         <span className="canvas-rail-spacer" />
-        {dockMode && (
-          <>
-            <button
-              type="button"
-              aria-label="Open canvas tools"
-              aria-expanded={toolsOpen}
-              title="Canvas tools and shapes"
-              data-dock-trigger="right"
-              onPointerEnter={(event) => {
-                if (event.pointerType === 'mouse') onToolsOpenChange?.(true)
-              }}
-              onClick={() => onToolsOpenChange?.(true)}
-            >
-              <ToolIcon>
-                <rect x="3" y="3" width="7" height="7" rx="1" />
-                <circle cx="17" cy="6.5" r="3.5" />
-                <path d="m6.5 14 4 4-4 4-4-4Z" />
-                <path d="M14 18h7" />
-              </ToolIcon>
-            </button>
-            <button
-              type="button"
-              aria-label="Open object properties"
-              aria-expanded={inspectorOpen}
-              title="Object properties and layers"
-              data-dock-trigger="right"
-              onPointerEnter={(event) => {
-                if (event.pointerType === 'mouse') openInspector()
-              }}
-              onClick={openInspector}
-            >
-              <ToolIcon>
-                <path d="M4 7h16M4 17h16" />
-                <circle cx="9" cy="7" r="3" />
-                <circle cx="15" cy="17" r="3" />
-              </ToolIcon>
-            </button>
-          </>
+        {!dockMode && (
+          <button
+            type="button"
+            className={aiOpen ? 'canvas-ai-toggle active' : 'canvas-ai-toggle'}
+            aria-label={
+              aiOpen ? 'Close AI workspace panel' : 'Open AI workspace panel'
+            }
+            aria-expanded={aiOpen}
+            aria-controls="workspace-ai-panel"
+            data-dock-trigger={dockMode ? dockSide : undefined}
+            title="Workspace AI / MCP"
+            onClick={() => {
+              setInspectorOpen(false)
+              onToggleAI()
+            }}
+          >
+            <ToolIcon>
+              <rect x="4" y="7" width="16" height="13" rx="4" />
+              <path d="M12 7V3m-2 0h4M8 12h.01M16 12h.01M9 16h6" />
+            </ToolIcon>
+          </button>
         )}
-        <button
-          type="button"
-          className={aiOpen ? 'canvas-ai-toggle active' : 'canvas-ai-toggle'}
-          aria-label={
-            aiOpen ? 'Close AI workspace panel' : 'Open AI workspace panel'
-          }
-          aria-expanded={aiOpen}
-          aria-controls="workspace-ai-panel"
-          data-dock-trigger={dockMode ? 'right' : undefined}
-          title="Workspace AI / MCP"
-          onClick={() => {
-            setInspectorOpen(false)
-            onToggleAI()
-          }}
-        >
-          <ToolIcon>
-            <rect x="4" y="7" width="16" height="13" rx="4" />
-            <path d="M12 7V3m-2 0h4M8 12h.01M16 12h.01M9 16h6" />
-          </ToolIcon>
-        </button>
       </div>
       <div className="canvas-view-status">
         <p id={`${prefix}-instructions`}>

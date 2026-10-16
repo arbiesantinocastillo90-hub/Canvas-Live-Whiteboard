@@ -1,0 +1,168 @@
+.saved-workspaces {
+  padding: 12px;
+  display: grid;
+  gap: 16px;
+  align-content: start;
+  align-self: flex-start;
+  width: 100%;
+  min-width: 0;
+}
+.saved-workspace-list {
+  display: grid;
+  gap: 4px;
+  align-content: start;
+}
+.saved-workspace-list .canvas-file {
+  min-height: 34px;
+}
+.saved-workspace-list .canvas-file[aria-pressed='true'] {
+  background: var(--tint);
+  color: var(--accent-text);
+}
+.saved-workspaces form {
+  min-width: 0;
+}
+.saved-workspaces input:not([type='file']),
+.tab-context-menu input {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--well);
+  color: var(--ink);
+  padding: 7px 9px;
+  font: inherit;
+}
+.saved-workspaces input:not([type='file']):focus-visible,
+.tab-context-menu input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.saved-workspaces label {
+  display: block;
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 5px;
+}
+.workspace-name-row {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+.workspace-name-row input {
+  width: 100%;
+  min-width: 0;
+}
+.canvas-tabs-content,
+.tab-unit {
+  display: flex;
+  align-items: stretch;
+  min-height: 0;
+}
+.canvas-tabs-content {
+  width: max-content;
+}
+.canvas-tab[data-selected='true'] {
+  outline: 1px solid var(--accent);
+  outline-offset: -2px;
+}
+.canvas-tab[data-compact='true'] {
+  min-width: 42px;
+  max-width: 66px;
+}
+.canvas-tab[data-compact='true'] .tab-name {
+  display: none;
+}
+.canvas-tab[data-pinned='true'] {
+  box-shadow: inset 0 2px var(--accent);
+}
+.canvas-tab[data-compact='true'] .tab-close {
+  display: none;
+}
+.canvas-tab[data-compact='true']:hover .tab-close,
+.canvas-tab[data-compact='true']:focus-within .tab-close {
+  display: flex;
+}
+.tab-group-toggle {
+  padding: 0 8px;
+  max-width: 120px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  background: var(--tint);
+  border: 0;
+  color: var(--accent-text);
+  font-size: 11px;
+}
+.tab-context-menu {
+  position: fixed;
+  z-index: 150;
+  width: 220px;
+  max-height: min(390px, 90dvh);
+  overflow: auto;
+  padding: 6px;
+  background: var(--panel);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  box-shadow: 0 12px 32px #0003;
+  border-radius: 8px;
+  display: grid;
+  gap: 3px;
+}
+.tab-context-menu button {
+  text-align: left;
+  padding: 7px 10px;
+  color: inherit;
+  background: transparent;
+  border: 0;
+  border-radius: 4px;
+}
+.tab-context-menu button:hover {
+  background: var(--tint);
+}
+.tab-context-menu form {
+  display: grid;
+  gap: 4px;
+  border-block: 1px solid var(--line);
+  padding: 7px 0;
+}
+.tab-context-menu input {
+  width: 100%;
+}
+.file-shortcut-row {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+.file-shortcut-row > .canvas-file {
+  flex: 1;
+  min-width: 0;
+}
+.file-shortcut-actions {
+  display: flex;
+  visibility: hidden;
+}
+.file-shortcut-row:hover .file-shortcut-actions,
+.file-shortcut-row:focus-within .file-shortcut-actions {
+  visibility: visible;
+}
+.file-shortcut-actions .icon-button {
+  width: 26px;
+  height: 26px;
+  padding: 5px;
+}
+.file-list-section summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 11px;
+  padding: 7px 4px;
+}
+.file-list-section {
+  margin-top: 6px;
+}
+.outer-workspaces {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  max-width: 600px;
+  width: 100%;
+  margin: 0 auto;
+}

@@ -130,6 +130,80 @@ describe('shared appearance palette', () => {
 })
 
 describe('interface motion preferences', () => {
+  it('maps the draggable speed percentage to bounded durations while preserving the legacy preset', () => {
+    const slow = resolveAppearanceVariables(
+      { ...DEFAULT_PREFERENCES, motionScale: 25 },
+      'light',
+    )
+    const fast = resolveAppearanceVariables(
+      { ...DEFAULT_PREFERENCES, motionScale: 200 },
+      'light',
+    )
+    expect(slow['--motion-duration']).toBe('720ms')
+    expect(fast['--motion-duration']).toBe('90ms')
+    expect(
+      resolveAppearanceVariables(
+        { ...DEFAULT_PREFERENCES, motionSpeed: 'fast', motionScale: 100 },
+        'light',
+      )['--motion-duration'],
+    ).toBe('110ms')
+  })
+
+  it('separates animation type from easing and applies it to shared hover and enter variables', () => {
+    const pop = resolveAppearanceVariables(
+      {
+        ...DEFAULT_PREFERENCES,
+        motionEffect: 'pop',
+        motionEasing: 'ease-in-out',
+      },
+      'dark',
+    )
+    expect(pop).toMatchObject({
+      '--motion-easing': 'ease-in-out',
+      '--motion-enter-scale': '0.96',
+      '--motion-hover-scale': '1.04',
+      '--motion-distance': '0px',
+      '--motion-lift': '0px',
+    })
+    const fade = resolveAppearanceVariables(
+      { ...DEFAULT_PREFERENCES, motionEffect: 'fade', motionEasing: 'linear' },
+      'light',
+    )
+    expect(fade).toMatchObject({
+      '--motion-easing': 'linear',
+      '--motion-enter-scale': '1',
+      '--motion-hover-scale': '1',
+      '--motion-distance': '0px',
+      '--motion-lift': '0px',
+    })
+    const flow = resolveAppearanceVariables(
+      { ...DEFAULT_PREFERENCES, motionEffect: 'flow', motionStyle: 'smooth' },
+      'light',
+    )
+    expect(flow).toMatchObject({
+      '--motion-distance': '8px',
+      '--motion-lift': '-2px',
+      '--motion-hover-scale': '1',
+    })
+  })
+
+  it('keeps rail button separation independent of the canvas and motion preferences', () => {
+    expect(
+      resolveAppearanceVariables(DEFAULT_PREFERENCES, 'light'),
+    ).toMatchObject({
+      '--rail-button-bg': 'var(--panel)',
+      '--rail-button-line': 'var(--line)',
+    })
+    expect(
+      resolveAppearanceVariables(
+        { ...DEFAULT_PREFERENCES, railButtonBackground: false },
+        'dark',
+      ),
+    ).toMatchObject({
+      '--rail-button-bg': 'transparent',
+      '--rail-button-line': 'transparent',
+    })
+  })
   it('adjusts speed independently of the motion style', () => {
     const slow = resolveAppearanceVariables(
       { ...DEFAULT_PREFERENCES, motionSpeed: 'slow' },
@@ -154,6 +228,8 @@ describe('interface motion preferences', () => {
         reduceMotion: true,
         motionStyle: 'smooth',
         motionSpeed: 'slow',
+        motionEffect: 'pop',
+        motionScale: 200,
       },
       'light',
     )
@@ -162,6 +238,8 @@ describe('interface motion preferences', () => {
       '--motion-fast': '0ms',
       '--motion-distance': '0px',
       '--motion-lift': '0px',
+      '--motion-enter-scale': '1',
+      '--motion-hover-scale': '1',
     })
   })
 })

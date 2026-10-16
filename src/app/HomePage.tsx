@@ -17,7 +17,8 @@ import {
   useRegisterFiles,
 } from './workspaceCommandsContext'
 import Icon from './Icon'
-import type { Project } from './workspace'
+import ProjectExplorer from './ProjectExplorer'
+import { projectDescendants, type Project } from './workspace'
 import './home-page.css'
 
 type HomeFile = { record: CanvasFileRecord; dirty: boolean; project: Project }
@@ -28,6 +29,10 @@ export default function HomePage({
   onSelectProject,
   onNewProject,
   onRenameProject,
+  onPinProject,
+  onHideRecentProject,
+  projectRecentsCollapsed,
+  onProjectRecentsCollapsedChange,
   onOpenFile,
   onNewCanvas,
   onImport,
@@ -37,8 +42,12 @@ export default function HomePage({
   projects: Project[]
   selectedProjectId: string | null
   onSelectProject: (id: string | null) => void
-  onNewProject: () => void
+  onNewProject: (parentId?: string | null) => void
   onRenameProject: (project: Project) => void
+  onPinProject?: (id: string, pinned: boolean) => void
+  onHideRecentProject?: (id: string) => void
+  projectRecentsCollapsed?: boolean
+  onProjectRecentsCollapsedChange?: (collapsed: boolean) => void
   onOpenFile: (projectId: string, fileId: string) => void
   onNewCanvas: (projectId: string) => void
   onImport: (projectId: string, files: File[]) => void
@@ -130,9 +139,12 @@ export default function HomePage({
       cancelled = true
     }
   }, [projectSignature, store])
+  const selectedIds = selected
+    ? projectDescendants(projects, selected.id)
+    : null
   const visible = files.filter(
     (file) =>
-      (!selected || file.project.id === selected.id) &&
+      (!selectedIds || selectedIds.has(file.project.id)) &&
       `${file.record.document.name} ${file.project.name}`
         .toLocaleLowerCase()
         .includes(search.trim().toLocaleLowerCase()),
@@ -192,7 +204,7 @@ export default function HomePage({
             className="icon-button"
             aria-label="Create a new project"
             title="New project"
-            onClick={onNewProject}
+            onClick={() => onNewProject()}
           >
             <Icon name="plus" />
           </button>
@@ -206,31 +218,21 @@ export default function HomePage({
           <span>Recent files</span>
           <small>{files.length}</small>
         </button>
-        {projects.map((project) => (
-          <div className="home-project-row" key={project.id}>
-            <button
-              className="home-project"
-              aria-label={`Open project ${project.name}`}
-              aria-pressed={selected?.id === project.id}
-              title={project.name}
-              onClick={() => onSelectProject(project.id)}
-            >
-              <Icon name="folder" />
-              <span>{project.name}</span>
-              <small>
-                {files.filter((file) => file.project.id === project.id).length}
-              </small>
-            </button>
-            <button
-              className="icon-button home-project-rename"
-              aria-label={`Rename project ${project.name}`}
-              title="Rename project"
-              onClick={() => onRenameProject(project)}
-            >
-              <Icon name="edit" />
-            </button>
-          </div>
-        ))}
+        <ProjectExplorer
+          projects={projects}
+          selectedId={selected?.id}
+          onOpen={onSelectProject}
+          onNewChild={onNewProject}
+          onRename={onRenameProject}
+          onPin={onPinProject}
+          onHideRecent={onHideRecentProject}
+          recentsCollapsed={projectRecentsCollapsed}
+          onRecentsCollapsedChange={onProjectRecentsCollapsedChange}
+          count={(id) => {
+            const ids = projectDescendants(projects, id)
+            return files.filter((file) => ids.has(file.project.id)).length
+          }}
+        />
       </aside>
       <div className="home-library">
         <div className="home-library-heading">
@@ -300,7 +302,7 @@ export default function HomePage({
               <Icon name="canvas" />
             </span>
             <h2>No projects yet</h2>
-            <button className="button primary" onClick={onNewProject}>
+            <button className="button primary" onClick={() => onNewProject()}>
               <Icon name="plus" />
               Create project
             </button>

@@ -86,7 +86,15 @@
 - Use separate IndexedDB databases for dirty recovery and file handles, preserving the existing document database/schema. Skip recovery based on a different saved document. Keep cancelled/failed saves and edits during a pending write recoverable.
 - No dependency, drawing engine, paid model API, public hosting or general filesystem MCP tool is introduced.
 
-## Remaining open decisions
+## 2026-10-14 — Scoped bugs and revisions
+
+- Use only the owner's Bugs, Errors & Revision group as the task source. Retain the already fixed camera-independent Undo/Redo behavior.
+- Evolve metadata and layout additively; invalid optional fields and failed primary reads must not erase intact project metadata. Keep named UI sessions separate from canvas content and sharing authority.
+- Projects are cycle-safe logical containers, including nested parents. Pin/remove actions affect shortcuts; no physical file is moved or deleted.
+- Valid Inspector fields commit automatically; synchronous selection/Save flushing, external-edit replacement and atomic validation protect drafts. Legacy connections acquire fixed cardinal sides in memory; explicit Auto remains available.
+- `.lworkspace` exports are bounded validated UI references/settings without document payloads, native file handles or credentials. Existing physical LCANVAS writes and recovery remain the content safety boundary.
+
+## Remaining open decisions (unchanged)
 
 - Whether SIL OFL 1.1 is acceptable specifically for engine fonts, or a supported replacement is needed.
 - Whether the owner's ChatGPT account can invoke custom write tools, and which secure transport is available with acceptable cost.

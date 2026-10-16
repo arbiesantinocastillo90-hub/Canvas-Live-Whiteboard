@@ -45,7 +45,17 @@ export type ConnectionElement = ElementBase & {
   style: 'straight' | 'elbow'
   startArrow: boolean
   endArrow: boolean
+  fromSide?: ConnectionSide
+  toSide?: ConnectionSide
 }
+export type ConnectionSide = 'auto' | 'top' | 'right' | 'bottom' | 'left'
+export const CONNECTION_SIDES: readonly ConnectionSide[] = [
+  'auto',
+  'top',
+  'right',
+  'bottom',
+  'left',
+]
 export type CanvasElement =
   ShapeElement | TextElement | AreaElement | LineElement | ConnectionElement
 export type CanvasDocument = {
@@ -192,13 +202,19 @@ function validateElement(
         'style',
         'startArrow',
         'endArrow',
+        ...(Object.hasOwn(item, 'fromSide') ? ['fromSide'] : []),
+        ...(Object.hasOwn(item, 'toSide') ? ['toSide'] : []),
       ]) ||
       !validCanvasId(item.fromId) ||
       !validCanvasId(item.toId) ||
       item.fromId === item.toId ||
       !['straight', 'elbow'].includes(item.style as string) ||
       typeof item.startArrow !== 'boolean' ||
-      typeof item.endArrow !== 'boolean'
+      typeof item.endArrow !== 'boolean' ||
+      (Object.hasOwn(item, 'fromSide') &&
+        !CONNECTION_SIDES.includes(item.fromSide as ConnectionSide)) ||
+      (Object.hasOwn(item, 'toSide') &&
+        !CONNECTION_SIDES.includes(item.toSide as ConnectionSide))
     )
       return fail(
         'A connection has invalid endpoints, style, arrows, or unsupported fields.',
@@ -211,6 +227,12 @@ function validateElement(
       style: item.style as 'straight' | 'elbow',
       startArrow: item.startArrow,
       endArrow: item.endArrow,
+      ...(Object.hasOwn(item, 'fromSide')
+        ? { fromSide: item.fromSide as ConnectionSide }
+        : {}),
+      ...(Object.hasOwn(item, 'toSide')
+        ? { toSide: item.toSide as ConnectionSide }
+        : {}),
     }
   }
   if (!finiteBounded(item.x) || !finiteBounded(item.y))
@@ -342,7 +364,12 @@ export function connectionEndpoints(
     shape: ShapeElement | TextElement | AreaElement,
     center: { x: number; y: number },
     other: { x: number; y: number },
+    side: ConnectionSide = 'auto',
   ) {
+    if (side === 'top') return { x: center.x, y: shape.y }
+    if (side === 'right') return { x: shape.x + shape.width, y: center.y }
+    if (side === 'bottom') return { x: center.x, y: shape.y + shape.height }
+    if (side === 'left') return { x: shape.x, y: center.y }
     const dx = other.x - center.x
     const dy = other.y - center.y
     if (dx === 0 && dy === 0) return center
@@ -356,9 +383,84 @@ export function connectionEndpoints(
           : 1 / Math.max(Math.abs(dx) / halfW, Math.abs(dy) / halfH)
     return { x: center.x + dx * ratio, y: center.y + dy * ratio }
   }
-  const start = boundary(from, a, b)
-  const end = boundary(to, b, a)
+  const start = boundary(from, a, b, connection.fromSide)
+  const end = boundary(to, b, a, connection.toSide)
   return { x1: start.x, y1: start.y, x2: end.x, y2: end.y }
+}
+
+/** Choose a side once when creating a link, so another node's movement cannot slide its origin. */
+export function defaultConnectionSides(
+  document: CanvasDocument,
+  fromId: string,
+  toId: string,
+): { fromSide: ConnectionSide; toSide: ConnectionSide } {
+  const from = document.elements.find((item) => item.id === fromId)
+  const to = document.elements.find((item) => item.id === toId)
+  if (!from || !to || !('width' in from) || !('width' in to))
+    return fail(
+      'A connection must reference two existing shapes, text items, or areas.',
+    )
+  const dx = to.x + to.width / 2 - from.x - from.width / 2
+  const dy = to.y + to.height / 2 - from.y - from.height / 2
+  function side(
+    width: number,
+    height: number,
+    x: number,
+    y: number,
+  ): ConnectionSide {
+    return Math.abs(x) / width >= Math.abs(y) / height
+      ? x >= 0
+        ? 'right'
+        : 'left'
+      : y >= 0
+        ? 'bottom'
+        : 'top'
+  }
+  return {
+    fromSide: side(from.width, from.height, dx, dy),
+    toSide: side(to.width, to.height, -dx, -dy),
+  }
+}
+
+/** Orthogonal paths leave and enter the selected sides in their outward direction. */
+export function connectionPath(
+  document: CanvasDocument,
+  connection: ConnectionElement,
+): string {
+  const { x1, y1, x2, y2 } = connectionEndpoints(document, connection)
+  if (connection.style === 'straight') return `M ${x1} ${y1} L ${x2} ${y2}`
+  const defaults = defaultConnectionSides(
+    document,
+    connection.fromId,
+    connection.toId,
+  )
+  const from =
+    connection.fromSide && connection.fromSide !== 'auto'
+      ? connection.fromSide
+      : defaults.fromSide
+  const to =
+    connection.toSide && connection.toSide !== 'auto'
+      ? connection.toSide
+      : defaults.toSide
+  function lead(x: number, y: number, side: ConnectionSide) {
+    return {
+      x: x + (side === 'right' ? 24 : side === 'left' ? -24 : 0),
+      y: y + (side === 'bottom' ? 24 : side === 'top' ? -24 : 0),
+    }
+  }
+  const a = lead(x1, y1, from)
+  const b = lead(x2, y2, to)
+  const fromHorizontal = from === 'left' || from === 'right'
+  const toHorizontal = to === 'left' || to === 'right'
+  const middle =
+    fromHorizontal === toHorizontal
+      ? fromHorizontal
+        ? `H ${(a.x + b.x) / 2} V ${b.y} H ${b.x}`
+        : `V ${(a.y + b.y) / 2} H ${b.x} V ${b.y}`
+      : fromHorizontal
+        ? `H ${b.x} V ${b.y}`
+        : `V ${b.y} H ${b.x}`
+  return `M ${x1} ${y1} L ${a.x} ${a.y} ${middle} L ${x2} ${y2}`
 }
 
 export function validateCanvasDocument(value: unknown): CanvasDocument {
@@ -434,10 +536,25 @@ export function validateCanvasDocument(value: unknown): CanvasDocument {
     layers,
     elements,
   }
+  // Earlier v2 files had no endpoint-side fields. Fix their sides from the
+  // loaded geometry before any edit can move an endpoint. Explicit auto keeps
+  // its dynamic behavior, and only these validated copies are normalized.
+  for (const element of elements) {
+    if (element.type !== 'connection') continue
+    connectionEndpoints(document, element)
+    if (element.fromSide === undefined || element.toSide === undefined) {
+      const sides = defaultConnectionSides(
+        document,
+        element.fromId,
+        element.toId,
+      )
+      element.fromSide ??= sides.fromSide
+      element.toSide ??= sides.toSide
+    }
+  }
   for (const element of elements) {
     if (!layers.some((layer) => layer.id === element.layerId))
       return fail('An element references an unknown layer.')
-    if (element.type === 'connection') connectionEndpoints(document, element)
     if (element.areaId !== null) {
       const area = elements.find((candidate) => candidate.id === element.areaId)
       if (

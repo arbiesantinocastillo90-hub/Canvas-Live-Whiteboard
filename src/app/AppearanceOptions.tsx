@@ -1,5 +1,6 @@
 import { resolveAppearanceVariables, type AppearanceMode } from './appearance'
 import { DEFAULT_PREFERENCES, type Preferences } from './workspace'
+import { boundedAutoHideDelay, type WorkspaceLayout } from './layout'
 
 const accents = [
   { name: 'Forest', color: '#297A5A' },
@@ -21,12 +22,16 @@ type AppearanceOptionsProps = {
   preferences: Preferences
   onChange: (preferences: Preferences) => void
   mode?: AppearanceMode
+  layout?: WorkspaceLayout
+  onLayoutChange?: (layout: WorkspaceLayout) => void
 }
 
 export default function AppearanceOptions({
   preferences,
   onChange,
   mode = preferences.mode === 'dark' ? 'dark' : 'light',
+  layout,
+  onLayoutChange,
 }: AppearanceOptionsProps) {
   function update<K extends keyof Preferences>(key: K, value: Preferences[K]) {
     onChange({ ...preferences, [key]: value })
@@ -202,6 +207,16 @@ export default function AppearanceOptions({
               </label>
             ))}
           </div>
+          <label className="toggle-control option-inline-toggle">
+            <input
+              type="checkbox"
+              checked={preferences.railButtonBackground}
+              onChange={(event) =>
+                update('railButtonBackground', event.target.checked)
+              }
+            />
+            <span>Separate rail buttons</span>
+          </label>
         </fieldset>
 
         <fieldset className="option-card">
@@ -230,7 +245,7 @@ export default function AppearanceOptions({
             ))}
           </div>
           <label className="select-control" htmlFor="motion-speed">
-            <span>Animation speed</span>
+            <span>Speed preset</span>
             <select
               id="motion-speed"
               value={preferences.motionSpeed}
@@ -247,10 +262,134 @@ export default function AppearanceOptions({
               <option value="fast">Fast</option>
             </select>
           </label>
+          <div className="range-control">
+            <label htmlFor="motion-scale">Animation speed</label>
+            <output htmlFor="motion-scale">{preferences.motionScale}%</output>
+            <input
+              id="motion-scale"
+              type="range"
+              min="25"
+              max="200"
+              step="5"
+              value={preferences.motionScale}
+              disabled={preferences.reduceMotion}
+              onChange={(event) =>
+                update('motionScale', Number(event.target.value))
+              }
+            />
+            <span>Slower</span>
+            <span>Faster</span>
+          </div>
+          <label className="select-control" htmlFor="motion-effect">
+            <span>Animation type</span>
+            <select
+              id="motion-effect"
+              value={preferences.motionEffect}
+              disabled={preferences.reduceMotion}
+              onChange={(event) =>
+                update(
+                  'motionEffect',
+                  event.target.value as Preferences['motionEffect'],
+                )
+              }
+            >
+              <option value="flow">Flow</option>
+              <option value="fade">Fade</option>
+              <option value="pop">Pop</option>
+            </select>
+          </label>
+          <label className="select-control" htmlFor="motion-easing">
+            <span>Animation easing</span>
+            <select
+              id="motion-easing"
+              value={preferences.motionEasing}
+              disabled={preferences.reduceMotion}
+              onChange={(event) =>
+                update(
+                  'motionEasing',
+                  event.target.value as Preferences['motionEasing'],
+                )
+              }
+            >
+              <option value="standard">Standard</option>
+              <option value="linear">Linear</option>
+              <option value="ease-in">Ease in</option>
+              <option value="ease-out">Ease out</option>
+              <option value="ease-in-out">Ease in and out</option>
+            </select>
+          </label>
+          <button
+            className="button secondary motion-preview"
+            type="button"
+            title="Hover to preview your animation"
+            disabled={preferences.reduceMotion}
+          >
+            Preview
+          </button>
           <p className="option-description">
             Your device’s reduced motion setting is always respected.
           </p>
         </fieldset>
+
+        {layout && onLayoutChange && (
+          <fieldset className="option-card">
+            <legend className="option-title">Panels</legend>
+            <label className="toggle-control">
+              <input
+                type="checkbox"
+                checked={layout.autoHidePanels}
+                onChange={(event) =>
+                  onLayoutChange({
+                    ...layout,
+                    autoHidePanels: event.target.checked,
+                  })
+                }
+              />
+              <span>Auto-hide panels</span>
+            </label>
+            <div className="range-control">
+              <label htmlFor="panel-hide-delay">Panel hide delay</label>
+              <output htmlFor="panel-hide-delay">
+                {layout.autoHideDelay} ms
+              </output>
+              <input
+                id="panel-hide-delay"
+                type="range"
+                min="0"
+                max="2000"
+                step="20"
+                value={layout.autoHideDelay}
+                disabled={!layout.autoHidePanels}
+                onChange={(event) =>
+                  onLayoutChange({
+                    ...layout,
+                    autoHideDelay: boundedAutoHideDelay(
+                      Number(event.target.value),
+                    ),
+                  })
+                }
+              />
+            </div>
+            <button
+              className="button secondary"
+              type="button"
+              aria-pressed={layout.panelsSwapped}
+              title={
+                layout.panelsSwapped
+                  ? 'Files right, canvas panels left'
+                  : 'Files left, canvas panels right'
+              }
+              onClick={() =>
+                onLayoutChange({
+                  ...layout,
+                  panelsSwapped: !layout.panelsSwapped,
+                })
+              }
+            >
+              Swap panel sides
+            </button>
+          </fieldset>
+        )}
 
         <div className="option-card reset-card">
           <h2 className="option-title">A fresh look</h2>

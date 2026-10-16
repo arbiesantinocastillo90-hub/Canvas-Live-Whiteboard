@@ -75,7 +75,7 @@ async function mount(store: CanvasFileStore) {
     />,
   )
   await screen.findByRole('tab', { name: 'Roadmap' })
-  fireEvent.click(screen.getByRole('button', { name: 'Open canvas tools' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Open right panel' }))
   return view
 }
 
@@ -328,7 +328,7 @@ describe('smart physical file saving in the workspace', () => {
     fireEvent.click(
       screen.getByRole('button', { name: 'Auto-save local file' }),
     )
-    fireEvent.click(screen.getByRole('button', { name: 'Open canvas tools' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Open right panel' }))
     addRectangle()
     fireEvent.click(screen.getByRole('button', { name: 'Import' }))
     await screen.findByText(

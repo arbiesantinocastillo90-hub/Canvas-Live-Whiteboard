@@ -4,6 +4,8 @@ Version of Canvas OS that multiple users and AI's could interact and collaborate
 
 ## Development status
 
+The scoped Bugs, Errors & Revision update adds automatic valid property commits, fixed connection sides, nested project organizers, named UI workspaces, tab grouping/pinning/compaction and configurable dock motion/auto-hide. See [Scoped revisions and controls](docs/BUGS_ERRORS_REVISION.md).
+
 Canvas Live starts on a separate Home page for projects and LCANVAS files. Selecting a file opens the compact editor. It supports shapes, direct text editing, areas, layers, attached connections, group selection, eight resize handles, copy/cut/paste and duplication. Camera updates are batched to frames; Undo/Redo preserve the current view. Home and Options retain current tabs and history while pausing canvas commands and sharing. Save and Save as write physical local `.lcanvas` files in supported browsers; browser copies and draft recovery provide additional protection. Export makes a portable LCANVAS v2 backup; v1 files remain importable. See [Home, interaction and local file guide](docs/HOME_AND_LOCAL_FILES.md).
 
 The optional MCP companion provides 15 bounded tools for the file explicitly shared through Workspace AI, including shared Undo/Redo. Ordinary AI edits tolerate completed camera navigation while preserving content conflict checks. The owner's ChatGPT plugin is installed and has read the shared canvas; confirming a live write through that account remains an acceptance step.
@@ -22,6 +24,8 @@ The revised workspace centers file tabs and the canvas between a narrow icon rib
 - [Compact reference UI verification](docs/REFERENCE_UI_VERIFICATION.md)
 - [Home, canvas interactions and physical local files](docs/HOME_AND_LOCAL_FILES.md)
 - [Current home and interaction verification](docs/HOME_AND_INTERACTIONS_VERIFICATION.md)
+- [Bugs, Errors & Revision scope and controls](docs/BUGS_ERRORS_REVISION.md)
+- [Scoped bug and visual verification](docs/BUGS_ERRORS_REVISION_VERIFICATION.md)
 - [LCANVAS files and viewer](docs/LCANVAS.md)
 - [Canvas editing and controls](docs/EDITOR.md)
 - [Editor verification](docs/EDITOR_VERIFICATION.md)

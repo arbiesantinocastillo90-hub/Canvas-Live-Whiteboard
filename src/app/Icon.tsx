@@ -15,7 +15,16 @@ type IconName =
   | 'import'
   | 'export'
   | 'save'
+  | 'pin'
+  | 'workspaces'
 const paths: Record<IconName, ReactNode> = {
+  pin: <path d="M8 3h8l-1 6 3 4H6l3-4-1-6ZM12 13v8" />,
+  workspaces: (
+    <>
+      <rect x="3" y="3" width="12" height="12" rx="2" />
+      <path d="M18 8h3v13H8v-3M8 3v12M3 8h12" />
+    </>
+  ),
   canvas: (
     <>
       <rect x="4" y="4" width="16" height="16" rx="3" />

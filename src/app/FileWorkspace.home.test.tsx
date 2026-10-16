@@ -107,6 +107,16 @@ function orphan(): CanvasDraft {
   }
 }
 
+function openPanel(name: 'AI' | 'Properties') {
+  const launcher = screen.queryByRole('button', { name: 'Open right panel' })
+  if (launcher) fireEvent.click(launcher)
+  else
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Open AI workspace panel' }),
+    )
+  fireEvent.click(screen.getByRole('tab', { name }))
+}
+
 describe('Home to canvas workspace requests', () => {
   beforeEach(() => {
     vi.restoreAllMocks()
@@ -273,9 +283,7 @@ describe('Home to canvas workspace requests', () => {
     const initial = props(store)
     const view = render(tree(initial))
     await screen.findByRole('tab', { name: 'Shared canvas' })
-    fireEvent.click(
-      screen.getByRole('button', { name: 'Open AI workspace panel' }),
-    )
+    openPanel('AI')
     fireEvent.change(screen.getByLabelText('Browser pairing code'), {
       target: { value: 'home-test-pairing-code-only' },
     })

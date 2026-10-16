@@ -1,5 +1,6 @@
 import {
   containsBounds,
+  defaultConnectionSides,
   elementBounds,
   LCanvasError,
   requireCanvasName,
@@ -7,6 +8,7 @@ import {
   type CanvasDocument,
   type CanvasElement,
   type CanvasLayer,
+  type ConnectionSide,
 } from './lcanvas'
 
 type CreationBase = {
@@ -44,6 +46,8 @@ export type NewCanvasElement =
       style?: 'straight' | 'elbow'
       startArrow?: boolean
       endArrow?: boolean
+      fromSide?: ConnectionSide
+      toSide?: ConnectionSide
     })
 export type ElementPatch = {
   x?: number
@@ -62,11 +66,15 @@ export type ElementPatch = {
   style?: 'straight' | 'elbow'
   startArrow?: boolean
   endArrow?: boolean
+  fromSide?: ConnectionSide
+  toSide?: ConnectionSide
 }
 export type ConnectionOptions = CreationBase & {
   style?: 'straight' | 'elbow'
   startArrow?: boolean
   endArrow?: boolean
+  fromSide?: ConnectionSide
+  toSide?: ConnectionSide
 }
 
 function fail(message: string): never {
@@ -201,6 +209,10 @@ export function createElement(
     layerId,
     areaId: null,
   }
+  if (input.type === 'connection') {
+    requireEditable(current, input.fromId)
+    requireEditable(current, input.toId)
+  }
   const defaults =
     input.type === 'rectangle' ||
     input.type === 'ellipse' ||
@@ -211,13 +223,14 @@ export function createElement(
         : input.type === 'area'
           ? { name: 'Area', fill: null }
           : input.type === 'connection'
-            ? { style: 'straight', startArrow: false, endArrow: true }
+            ? {
+                style: 'straight',
+                startArrow: false,
+                endArrow: true,
+                ...defaultConnectionSides(current, input.fromId, input.toId),
+              }
             : {}
   const element = { ...base, ...defaults, ...input }
-  if (element.type === 'connection') {
-    requireEditable(current, element.fromId)
-    requireEditable(current, element.toId)
-  }
   if (element.areaId !== null) {
     const area = requireEditable(current, element.areaId)
     if (area.type !== 'area')
@@ -238,7 +251,7 @@ export function updateElement(
   const element = requireEditable(current, id)
   const typeKeys =
     element.type === 'connection'
-      ? ['style', 'startArrow', 'endArrow']
+      ? ['style', 'startArrow', 'endArrow', 'fromSide', 'toSide']
       : element.type === 'line'
         ? ['x', 'y', 'x2', 'y2']
         : [

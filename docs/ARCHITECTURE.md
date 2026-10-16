@@ -2,6 +2,10 @@
 
 ## Implemented foundation
 
+The scoped revision adds `workspaceSessions.ts` for bounded named UI snapshots and last-good session recovery, `WorkspacesPanel.tsx` for naming/import/export, `CanvasTabs.tsx` for tab presentation and selection, and `ProjectExplorer.tsx` for logical nested projects. Snapshots reference projects/files and retain appearance, dock arrangement and tool/layer choices; they contain no canvas payloads, native file handles or MCP credentials. Project IDs and physical file ownership stay unchanged. Optional metadata failures default individual fields or recover a valid backup rather than resetting intact projects.
+
+Inspector drafts auto-commit on blur/a short pause; the editor synchronously flushes valid drafts before selection and saving and preserves the latest viewport. Invalid or superseded drafts cannot overwrite current content. Connection endpoints accept `fromSide`/`toSide`; missing legacy sides are resolved once from loaded geometry, while explicit Auto remains dynamic. Shared validated operations support manual and MCP side updates. See [BUGS_ERRORS_REVISION.md](BUGS_ERRORS_REVISION.md).
+
 `src/main.tsx` mounts a React app under StrictMode. `src/app/App.tsx` starts on Home and controls Options and Work. `HomePage.tsx` lists real project files. Explicit file/create/import requests enter the editor; Home/Options keep it hidden and inert, disable its commands and revoke sharing while retaining current tabs/history. `AppearanceOptions.tsx` controls the theme preferences, `ProjectDialog.tsx` handles project names, and `workspace.ts` validates and persists bounded project metadata/preferences in browser localStorage. CSS uses shared light/dark tokens, system fonts and original inline SVG controls. The owner-provided logo is a local unchanged PNG.
 
 Vite serves the app on loopback. Vitest uses the same React plugin with a jsdom test environment. TypeScript checks application and configuration code; Oxlint and Prettier provide code/format checks. `scripts/check-licenses.mjs` generates an inventory from the resolved dependency lockfile and flags unknown/unaccepted license metadata.

@@ -89,6 +89,13 @@ function mountDock(document = createCanvasDocument('Plan')) {
         <div ref={setHost} data-testid="right-dock" data-canvas-root>
           <button
             type="button"
+            aria-label="Show properties"
+            onClick={() => setPanel('properties')}
+          >
+            Properties
+          </button>
+          <button
+            type="button"
             aria-label="Close right dock"
             onClick={() => setPanel('none')}
           >
@@ -145,15 +152,20 @@ describe('shared right canvas dock', () => {
       within(host).getByRole('toolbar', { name: 'Canvas tools' }),
     ).toBeVisible()
     const toolsLauncher = screen.getByRole('button', {
-      name: 'Open canvas tools',
+      name: 'Open right panel',
     })
     expect(toolsLauncher).toHaveAttribute('data-dock-trigger', 'right')
     expect(
-      screen.getByRole('button', { name: 'Open object properties' }),
-    ).toHaveAttribute('data-dock-trigger', 'right')
+      screen.queryByRole('button', { name: 'Open object properties' }),
+    ).toBeNull()
     expect(
-      screen.getByRole('button', { name: 'Open AI workspace panel' }),
-    ).toHaveAttribute('data-dock-trigger', 'right')
+      screen.queryByRole('button', { name: 'Open AI workspace panel' }),
+    ).toBeNull()
+    expect(
+      within(screen.getByRole('toolbar', { name: 'Canvas controls' }))
+        .getAllByRole('button')
+        .filter((button) => button.hasAttribute('data-dock-trigger')),
+    ).toHaveLength(1)
     fireEvent.click(toolsLauncher)
     fireEvent.click(toolsLauncher)
     expect(toolsLauncher).toHaveAttribute('aria-expanded', 'true')
@@ -184,7 +196,7 @@ describe('shared right canvas dock', () => {
     expect(onDocumentChange).toHaveBeenCalledTimes(4)
     fireEvent.click(screen.getByRole('button', { name: 'Undo' }))
     expect(latest().elements).toHaveLength(3)
-    fireEvent.click(screen.getByRole('button', { name: 'Open canvas tools' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Open right panel' }))
     fireEvent.click(screen.getByRole('button', { name: 'Redo' }))
     expect(latest().elements).toHaveLength(4)
     expect(
@@ -201,9 +213,7 @@ describe('shared right canvas dock', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Close right dock' }))
     expect(screen.queryByRole('textbox', { name: 'Text' })).toBeNull()
     expect(onDocumentChange).toHaveBeenCalledOnce()
-    fireEvent.click(
-      screen.getByRole('button', { name: 'Open object properties' }),
-    )
+    fireEvent.click(screen.getByRole('button', { name: 'Show properties' }))
     expect(within(host).getByRole('textbox', { name: 'Text' })).toHaveValue(
       'Retain my draft',
     )
@@ -244,7 +254,7 @@ describe('shared right canvas dock', () => {
       endArrow: true,
       style: 'elbow',
     })
-    fireEvent.click(screen.getByRole('button', { name: 'Open canvas tools' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Open right panel' }))
     expect(
       within(host).getByRole('button', { name: 'Select objects' }),
     ).toHaveAttribute('aria-pressed', 'true')
@@ -274,6 +284,46 @@ describe('shared right canvas dock', () => {
 })
 
 describe('manual LCANVAS editor', () => {
+  it('initializes a restored tool once and keeps a subsequent user tool choice', () => {
+    const document = createCanvasDocument('Plan')
+    const onSessionChange = vi.fn()
+    const props = {
+      document,
+      grid: 'dots' as const,
+      aiOpen: false,
+      onToggleAI: vi.fn(),
+      onDocumentChange: vi.fn(),
+      onSessionChange,
+    }
+    const test = render(
+      <CanvasEditor
+        {...props}
+        initialSession={{ tool: 'pan', activeLayerId: document.layers[0].id }}
+      />,
+    )
+    expect(screen.getByRole('button', { name: 'Pan canvas' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Select objects' }))
+    test.rerender(
+      <CanvasEditor
+        {...props}
+        initialSession={{
+          tool: 'connect',
+          activeLayerId: document.layers[0].id,
+        }}
+      />,
+    )
+    expect(
+      screen.getByRole('button', { name: 'Select objects' }),
+    ).toHaveAttribute('aria-pressed', 'true')
+    expect(onSessionChange).toHaveBeenLastCalledWith({
+      tool: 'select',
+      activeLayerId: document.layers[0].id,
+    })
+  })
+
   beforeEach(() => {
     vi.restoreAllMocks()
     vi.stubGlobal('PointerEvent', MouseEvent)

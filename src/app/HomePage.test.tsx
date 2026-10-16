@@ -44,6 +44,67 @@ function setup() {
   return { props, records, store }
 }
 describe('home project and file library', () => {
+  it('includes descendant files when browsing a parent organizer while preserving each file project', async () => {
+    const { props, store } = setup()
+    const nestedProjects: Project[] = [
+      { ...projects[0], name: 'Finance' },
+      { ...projects[1], name: 'Savings', parentId: 'alpha' },
+    ]
+    render(
+      <HomePage
+        {...props}
+        projects={nestedProjects}
+        selectedProjectId="alpha"
+      />,
+    )
+    const childFile = await screen.findByRole('button', {
+      name: 'Open canvas Ideas in Savings',
+    })
+    expect(
+      screen.getByRole('button', { name: 'Open canvas Roadmap in Finance' }),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('heading', { level: 1, name: 'Finance' }),
+    ).toBeInTheDocument()
+    fireEvent.click(childFile)
+    expect(props.onOpenFile).toHaveBeenCalledWith('beta', 'ideas')
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Create project inside Finance' }),
+    )
+    expect(props.onNewProject).toHaveBeenCalledWith('alpha')
+    fireEvent.click(screen.getByRole('button', { name: 'New canvas' }))
+    expect(props.onNewCanvas).toHaveBeenCalledWith('alpha')
+    expect(store.save).not.toHaveBeenCalled()
+  })
+
+  it('forwards project shortcut actions without opening or deleting the associated files', async () => {
+    const { props, store } = setup()
+    const onPinProject = vi.fn(),
+      onHideRecentProject = vi.fn(),
+      onProjectRecentsCollapsedChange = vi.fn()
+    render(
+      <HomePage
+        {...props}
+        onPinProject={onPinProject}
+        onHideRecentProject={onHideRecentProject}
+        onProjectRecentsCollapsedChange={onProjectRecentsCollapsedChange}
+      />,
+    )
+    await screen.findByRole('button', { name: 'Open canvas Roadmap in Alpha' })
+    fireEvent.click(screen.getByRole('button', { name: 'Pin project Alpha' }))
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: 'Remove project Alpha from recent list',
+      }),
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Recent' }))
+    expect(onPinProject).toHaveBeenCalledWith('alpha', true)
+    expect(onHideRecentProject).toHaveBeenCalledWith('alpha')
+    expect(onProjectRecentsCollapsedChange).toHaveBeenCalledWith(true)
+    expect(props.onOpenFile).not.toHaveBeenCalled()
+    expect(props.onSelectProject).not.toHaveBeenCalled()
+    expect(store.save).not.toHaveBeenCalled()
+  })
   it('shows the physical save baseline when the older browser copy could not be updated', async () => {
     const { props, records, store } = setup()
     await localFilesFor(store).set('alpha', records[0].id, {

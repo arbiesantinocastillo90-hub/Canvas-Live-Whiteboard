@@ -13,19 +13,36 @@ import { useRegisterCommands } from './workspaceCommandsContext'
 import { useCanvasDraftProtection } from './canvasDrafts'
 import Icon from './Icon'
 import ProjectDialog from './ProjectDialog'
+import ProjectExplorer from './ProjectExplorer'
+import WorkspacesPanel from './WorkspacesPanel'
+import {
+  addSavedWorkspace,
+  createSavedWorkspace,
+  loadWorkspaceSessions,
+  persistWorkspaceSessions,
+  updateSavedWorkspace,
+  type ProjectViewSession,
+  type SavedWorkspace,
+  type WorkspaceSessions,
+} from './workspaceSessions'
 import {
   createProject,
   loadWorkspace,
   openProject,
   persistWorkspace,
-  recentProjects,
+  moveProject,
+  pinProject,
+  hideRecentProject,
+  projectDescendants,
   renameProject,
   type Project,
   type WorkspaceState,
 } from './workspace'
 
-type Section = 'home' | 'work' | 'projects' | 'options'
-type ProjectPrompt = { kind: 'create' } | { kind: 'rename'; project: Project }
+type Section = 'home' | 'work' | 'projects' | 'options' | 'workspaces'
+type ProjectPrompt =
+  | { kind: 'create'; parentId?: string | null }
+  | { kind: 'rename'; project: Project }
 
 export default function App() {
   return (
@@ -37,7 +54,30 @@ export default function App() {
 
 function WorkspaceApp() {
   useCanvasDraftProtection()
-  const [workspace, setWorkspace] = useState(loadWorkspace)
+  const [startup] = useState(() => {
+    const metadata = loadWorkspace()
+    const saved = loadWorkspaceSessions(
+      metadata.preferences,
+      loadLayout(),
+      metadata.lastProjectId,
+    )
+    const active = saved.items.find((item) => item.id === saved.activeId)!
+    const projectId = metadata.projects.some(
+      (project) => project.id === active.projectId,
+    )
+      ? active.projectId
+      : metadata.lastProjectId
+    return {
+      workspace: {
+        ...metadata,
+        preferences: active.preferences,
+        lastProjectId: projectId,
+      },
+      layout: active.layout,
+      sessions: saved,
+    }
+  })
+  const [workspace, setWorkspace] = useState(startup.workspace)
   const [section, setSection] = useState<Section>('home')
   const [workspaceStarted, setWorkspaceStarted] = useState(false)
   const [homeProjectId, setHomeProjectId] = useState(workspace.lastProjectId)
@@ -47,18 +87,18 @@ function WorkspaceApp() {
   const [search, setSearch] = useState('')
   const [storageError, setStorageError] = useState(false)
   const [canvasFocused, setCanvasFocused] = useState(false)
-  const [layout, setLayout] = useState(loadLayout)
+  const [layout, setLayout] = useState(startup.layout)
+  const [sessions, setSessions] = useState(startup.sessions)
+  const [sessionStorageError, setSessionStorageError] = useState(false)
+  const savedWorkspace = sessions.items.find(
+    (item) => item.id === sessions.activeId,
+  )!
   const [systemDark, setSystemDark] = useState(
     () => window.matchMedia?.('(prefers-color-scheme: dark)').matches ?? false,
   )
-  const projects = recentProjects(workspace)
+  const projects = workspace.projects
   const activeProject = workspace.projects.find(
     (project) => project.id === workspace.lastProjectId,
-  )
-  const filteredProjects = projects.filter((project) =>
-    project.name
-      .toLocaleLowerCase()
-      .includes(search.trim().toLocaleLowerCase()),
   )
   const theme =
     workspace.preferences.mode === 'system'
@@ -94,19 +134,105 @@ function WorkspaceApp() {
   function updateWorkspace(next: WorkspaceState) {
     setStorageError(!persistWorkspace(next))
     setWorkspace(next)
+    updateSessions((current) =>
+      updateSavedWorkspace(current, current.activeId, {
+        preferences: next.preferences,
+        projectId: next.lastProjectId,
+      }),
+    )
   }
+  function updateSessions(
+    change: (state: WorkspaceSessions) => WorkspaceSessions,
+  ) {
+    setSessions((current) => {
+      const next = change(current)
+      if (JSON.stringify(next) === JSON.stringify(current)) return current
+      setSessionStorageError(!persistWorkspaceSessions(next))
+      return next
+    })
+  }
+  function selectSavedWorkspace(id: string, state = sessions) {
+    const saved = state.items.find((item) => item.id === id)
+    if (!saved) return
+    const next = { ...state, activeId: id }
+    setSessionStorageError(!persistWorkspaceSessions(next))
+    setSessions(next)
+    const projectId = workspace.projects.some(
+      (project) => project.id === saved.projectId,
+    )
+      ? saved.projectId
+      : null
+    const updated = {
+      ...workspace,
+      preferences: saved.preferences,
+      lastProjectId: projectId,
+    }
+    setStorageError(!persistWorkspace(updated) || !persistLayout(saved.layout))
+    setWorkspace(updated)
+    setLayout(saved.layout)
+    setHomeProjectId(projectId)
+    setOpenRequest(undefined)
+    setWorkspaceStarted(!!projectId)
+    setSection(projectId ? 'work' : 'home')
+  }
+  function createNamedWorkspace(name: string) {
+    const created = {
+      ...createSavedWorkspace(
+        workspace.preferences,
+        layout,
+        workspace.lastProjectId,
+        name,
+      ),
+      views: structuredClone(savedWorkspace.views),
+    }
+    selectSavedWorkspace(created.id, addSavedWorkspace(sessions, created))
+  }
+  function rememberView(projectId: string, view: ProjectViewSession) {
+    const workspaceId = savedWorkspace.id
+    updateSessions((current) => {
+      const saved = current.items.find((item) => item.id === workspaceId)
+      return saved
+        ? updateSavedWorkspace(current, workspaceId, {
+            views: { ...saved.views, [projectId]: view },
+          })
+        : current
+    })
+  }
+  const workspacesPanel = (
+    <WorkspacesPanel
+      state={sessions}
+      onSelect={selectSavedWorkspace}
+      onCreate={createNamedWorkspace}
+      onRename={(name) => {
+        if (!name.trim() || name.trim().length > 80)
+          throw new Error('Enter a workspace name between 1 and 80 characters.')
+        updateSessions((current) =>
+          updateSavedWorkspace(current, current.activeId, {
+            name: name.trim(),
+          }),
+        )
+      }}
+      onImport={(imported: SavedWorkspace) =>
+        selectSavedWorkspace(imported.id, addSavedWorkspace(sessions, imported))
+      }
+    />
+  )
   function navigate(next: Section) {
     if (next === 'work' && (homeProjectId ?? workspace.lastProjectId))
       enterProject((homeProjectId ?? workspace.lastProjectId)!)
     else setSection(next === 'work' ? 'home' : next)
     setSearch('')
   }
-  function submitProject(name: string) {
+  function submitProject(name: string, parentId?: string | null) {
     try {
       const updated =
         prompt?.kind === 'rename'
-          ? renameProject(workspace, prompt.project.id, name)
-          : createProject(workspace, name)
+          ? moveProject(
+              renameProject(workspace, prompt.project.id, name),
+              prompt.project.id,
+              parentId ?? null,
+            )
+          : createProject(workspace, name, undefined, undefined, parentId)
       updateWorkspace(updated)
       if (prompt?.kind !== 'rename') {
         setHomeProjectId(updated.lastProjectId)
@@ -123,15 +249,18 @@ function WorkspaceApp() {
     }
   }
   function updateLayout(next: typeof layout) {
-    persistLayout(next)
+    setStorageError(!persistLayout(next))
     setLayout(next)
+    updateSessions((current) =>
+      updateSavedWorkspace(current, current.activeId, { layout: next }),
+    )
   }
   function resetLayout() {
     updateLayout({ ...DEFAULT_LAYOUT })
   }
-  function openLeft(leftPanel: 'files' | 'projects') {
+  function openLeft(leftPanel: 'files' | 'projects' | 'workspaces') {
     if (!activeProject) {
-      navigate('projects')
+      navigate(leftPanel === 'workspaces' ? 'workspaces' : 'projects')
       return
     }
     if (!workspaceStarted) {
@@ -243,16 +372,24 @@ function WorkspaceApp() {
             >
               <Icon name="work" />
             </button>
-            {(['files', 'projects'] as const).map((panel) => (
+            {(['files', 'projects', 'workspaces'] as const).map((panel) => (
               <button
                 key={panel}
                 className="nav-item"
-                data-dock-trigger="left"
-                aria-label={panel === 'files' ? 'Files' : 'Projects'}
+                data-dock-trigger={layout.panelsSwapped ? 'right' : 'left'}
+                aria-label={
+                  panel === 'files'
+                    ? 'Files'
+                    : panel === 'projects'
+                      ? 'Projects'
+                      : 'Workspaces'
+                }
                 title={
                   panel === 'files'
                     ? 'Files · double-click to pin'
-                    : 'Projects · double-click to pin'
+                    : panel === 'projects'
+                      ? 'Projects · double-click to pin'
+                      : 'Workspaces · double-click to pin'
                 }
                 aria-expanded={
                   section === 'work' &&
@@ -275,7 +412,15 @@ function WorkspaceApp() {
                     })
                 }}
               >
-                <Icon name={panel === 'files' ? 'files' : 'folder'} />
+                <Icon
+                  name={
+                    panel === 'files'
+                      ? 'files'
+                      : panel === 'projects'
+                        ? 'folder'
+                        : 'workspaces'
+                  }
+                />
               </button>
             ))}
             <button
@@ -343,6 +488,15 @@ function WorkspaceApp() {
               )}
               <button
                 className="nav-item"
+                aria-label="Workspaces"
+                title="Workspaces"
+                aria-current={section === 'workspaces' ? 'page' : undefined}
+                onClick={() => navigate('workspaces')}
+              >
+                <Icon name="workspaces" />
+              </button>
+              <button
+                className="nav-item"
                 aria-label="Options"
                 title="Options"
                 aria-current={section === 'options' ? 'page' : undefined}
@@ -355,7 +509,7 @@ function WorkspaceApp() {
           </header>
         )}
         <main id="main-content" tabIndex={-1}>
-          {storageError && (
+          {(storageError || sessionStorageError) && (
             <div className="storage-alert" role="alert">
               Your browser couldn’t remember these changes. They’ll remain
               available in this tab for this session.
@@ -366,6 +520,8 @@ function WorkspaceApp() {
               <AppearanceOptions
                 preferences={workspace.preferences}
                 mode={theme}
+                layout={layout}
+                onLayoutChange={updateLayout}
                 onChange={(preferences) =>
                   updateWorkspace({ ...workspace, preferences })
                 }
@@ -386,14 +542,32 @@ function WorkspaceApp() {
               <HotkeyOptions />
             </>
           )}
+          {section === 'workspaces' && (
+            <div className="outer-workspaces">{workspacesPanel}</div>
+          )}
           {(section === 'home' || section === 'projects') && (
             <HomePage
               projects={projects}
               selectedProjectId={homeProjectId}
               onSelectProject={setHomeProjectId}
-              onNewProject={() => setPrompt({ kind: 'create' })}
+              onNewProject={(parentId) =>
+                setPrompt({ kind: 'create', parentId })
+              }
               onRenameProject={(project) =>
                 setPrompt({ kind: 'rename', project })
+              }
+              onPinProject={(id, pinned) =>
+                updateWorkspace(pinProject(workspace, id, pinned))
+              }
+              onHideRecentProject={(id) =>
+                updateWorkspace(hideRecentProject(workspace, id))
+              }
+              projectRecentsCollapsed={workspace.projectRecentsCollapsed}
+              onProjectRecentsCollapsedChange={(collapsed) =>
+                updateWorkspace({
+                  ...workspace,
+                  projectRecentsCollapsed: collapsed,
+                })
               }
               onOpenFile={(id, fileId) => enterProject(id, { fileId })}
               onNewCanvas={(id) => enterProject(id, { action: 'create' })}
@@ -412,7 +586,7 @@ function WorkspaceApp() {
                 aria-hidden={section !== 'work'}
               >
                 <FileWorkspace
-                  key={activeProject.id}
+                  key={`${savedWorkspace.id}:${activeProject.id}`}
                   project={activeProject}
                   preferences={workspace.preferences}
                   layout={layout}
@@ -420,6 +594,13 @@ function WorkspaceApp() {
                   showFileToggle={false}
                   workspaceActive={section === 'work'}
                   openRequest={openRequest}
+                  viewSession={savedWorkspace.views[activeProject.id]}
+                  onViewSessionChange={(view) =>
+                    rememberView(activeProject.id, view)
+                  }
+                  workspacesPanel={
+                    section === 'workspaces' ? null : workspacesPanel
+                  }
                   projectPanel={
                     <div className="project-explorer">
                       <div className="file-panel-actions">
@@ -450,23 +631,32 @@ function WorkspaceApp() {
                           onChange={(event) => setSearch(event.target.value)}
                         />
                       </label>
-                      <div className="recent-list">
-                        {filteredProjects.map((project) => (
-                          <button
-                            key={project.id}
-                            className={`recent-project ${activeProject.id === project.id ? 'is-active' : ''}`}
-                            aria-label={`Open ${project.name}`}
-                            title={project.name}
-                            onClick={() => enterProject(project.id)}
-                          >
-                            <Icon name="folder" />
-                            <span className="recent-name">{project.name}</span>
-                          </button>
-                        ))}
-                        {!filteredProjects.length && (
-                          <p className="file-list-empty">No projects found</p>
-                        )}
-                      </div>
+                      <ProjectExplorer
+                        projects={projects}
+                        selectedId={activeProject.id}
+                        onOpen={enterProject}
+                        onNewChild={(parentId) =>
+                          setPrompt({ kind: 'create', parentId })
+                        }
+                        onRename={(project) =>
+                          setPrompt({ kind: 'rename', project })
+                        }
+                        onPin={(id, pinned) =>
+                          updateWorkspace(pinProject(workspace, id, pinned))
+                        }
+                        onHideRecent={(id) =>
+                          updateWorkspace(hideRecentProject(workspace, id))
+                        }
+                        recentsCollapsed={workspace.projectRecentsCollapsed}
+                        onRecentsCollapsedChange={(collapsed) =>
+                          updateWorkspace({
+                            ...workspace,
+                            projectRecentsCollapsed: collapsed,
+                          })
+                        }
+                        search={search}
+                        variant="work"
+                      />
                     </div>
                   }
                   onFocusChange={setCanvasFocused}
@@ -499,6 +689,21 @@ function WorkspaceApp() {
         <ProjectDialog
           kind={prompt.kind}
           initialName={prompt.kind === 'rename' ? prompt.project.name : ''}
+          initialParentId={
+            prompt.kind === 'rename'
+              ? (prompt.project.parentId ?? null)
+              : (prompt.parentId ?? null)
+          }
+          projectParents={
+            prompt.kind === 'rename'
+              ? projects.filter(
+                  (project) =>
+                    !projectDescendants(projects, prompt.project.id).has(
+                      project.id,
+                    ),
+                )
+              : projects
+          }
           onClose={() => setPrompt(null)}
           onSubmit={submitProject}
         />

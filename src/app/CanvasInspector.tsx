@@ -1,5 +1,19 @@
-import { useId, useState, type FormEvent, type ReactNode } from 'react'
-import type { CanvasDocument, CanvasElement, CanvasLayer } from './lcanvas'
+import {
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type FormEvent,
+  type ReactNode,
+} from 'react'
+import {
+  CONNECTION_SIDES,
+  type CanvasDocument,
+  type CanvasElement,
+  type CanvasLayer,
+  type ConnectionSide,
+} from './lcanvas'
 import {
   addLayer,
   isElementEditable,
@@ -18,6 +32,7 @@ export type CanvasInspectorProps = {
   onActiveLayerChange: (id: string) => void
   onDocumentChange: (document: CanvasDocument) => void
   onError?: (message: string) => void
+  onDraftFlusherChange?: (flush: (() => boolean) | null) => void
 }
 
 function objectName(element: CanvasElement): string {
@@ -29,6 +44,47 @@ function objectName(element: CanvasElement): string {
 }
 
 type Commit = (operation: () => CanvasDocument) => boolean
+
+function propertyDraft(element: CanvasElement) {
+  return {
+    x: 'x' in element ? String(element.x) : '',
+    y: 'y' in element ? String(element.y) : '',
+    width: 'width' in element ? String(element.width) : '',
+    height: 'height' in element ? String(element.height) : '',
+    x2: element.type === 'line' ? String(element.x2) : '',
+    y2: element.type === 'line' ? String(element.y2) : '',
+    text: 'text' in element ? element.text : '',
+    fontSize: 'fontSize' in element ? String(element.fontSize) : '',
+    name: element.type === 'area' ? element.name : '',
+    color: element.color,
+    fill: 'fill' in element ? (element.fill ?? '#ffffff') : '#ffffff',
+    transparent: 'fill' in element ? element.fill === null : true,
+    layerId: element.layerId,
+    areaId: element.areaId ?? '',
+    style:
+      element.type === 'connection'
+        ? element.style
+        : ('straight' as 'straight' | 'elbow'),
+    fromSide:
+      element.type === 'connection'
+        ? (element.fromSide ?? 'auto')
+        : ('auto' as ConnectionSide),
+    toSide:
+      element.type === 'connection'
+        ? (element.toSide ?? 'auto')
+        : ('auto' as ConnectionSide),
+    arrows:
+      element.type === 'connection'
+        ? element.startArrow
+          ? element.endArrow
+            ? 'both'
+            : 'start'
+          : element.endArrow
+            ? 'end'
+            : 'none'
+        : 'none',
+  }
+}
 
 function LayerIcon({ children }: { children: ReactNode }) {
   return (
@@ -178,60 +234,92 @@ function numeric(value: string, name: string): number {
   return number
 }
 
+function NumberField({
+  label,
+  value,
+  onChange,
+  min,
+}: {
+  label: string
+  value: string
+  onChange: (value: string) => void
+  min?: number
+}) {
+  return (
+    <label className="inspector-field">
+      <span>{label}</span>
+      <input
+        type="number"
+        step="any"
+        min={min}
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+      />
+    </label>
+  )
+}
+
 function ElementProperties({
   element,
   document,
   commit,
   onSelect,
+  onDraftFlusherChange,
 }: {
   element: CanvasElement
   document: CanvasDocument
   commit: Commit
   onSelect: (id: string | null) => void
+  onDraftFlusherChange: (flush: (() => boolean) | null) => void
 }) {
   const prefix = useId()
-  const [x, setX] = useState('x' in element ? String(element.x) : '')
-  const [y, setY] = useState('y' in element ? String(element.y) : '')
-  const [width, setWidth] = useState(
-    'width' in element ? String(element.width) : '',
-  )
-  const [height, setHeight] = useState(
-    'height' in element ? String(element.height) : '',
-  )
-  const [x2, setX2] = useState(
-    element.type === 'line' ? String(element.x2) : '',
-  )
-  const [y2, setY2] = useState(
-    element.type === 'line' ? String(element.y2) : '',
-  )
-  const [text, setText] = useState('text' in element ? element.text : '')
-  const [fontSize, setFontSize] = useState(
-    'fontSize' in element ? String(element.fontSize) : '',
-  )
-  const [name, setName] = useState(element.type === 'area' ? element.name : '')
-  const [color, setColor] = useState(element.color)
-  const [fill, setFill] = useState(
-    'fill' in element ? (element.fill ?? '#ffffff') : '#ffffff',
-  )
-  const [transparent, setTransparent] = useState(
-    'fill' in element ? element.fill === null : true,
-  )
-  const [layerId, setLayerId] = useState(element.layerId)
-  const [areaId, setAreaId] = useState(element.areaId ?? '')
-  const [style, setStyle] = useState<'straight' | 'elbow'>(
-    element.type === 'connection' ? element.style : 'straight',
-  )
-  const [arrows, setArrows] = useState(
-    element.type === 'connection'
-      ? element.startArrow
-        ? element.endArrow
-          ? 'both'
-          : 'start'
-        : element.endArrow
-          ? 'end'
-          : 'none'
-      : 'none',
-  )
+  const [draft, setDraft] = useState(() => propertyDraft(element))
+  const draftRef = useRef(draft)
+  const dirty = useRef(false)
+  const {
+    x,
+    y,
+    width,
+    height,
+    x2,
+    y2,
+    text,
+    fontSize,
+    name,
+    color,
+    fill,
+    transparent,
+    layerId,
+    areaId,
+    style,
+    arrows,
+    fromSide,
+    toSide,
+  } = draft
+  function change<K extends keyof typeof draft>(
+    key: K,
+    value: (typeof draft)[K],
+  ) {
+    draftRef.current = { ...draftRef.current, [key]: value }
+    dirty.current = true
+    setDraft(draftRef.current)
+  }
+  const setX = (value: string) => change('x', value)
+  const setY = (value: string) => change('y', value)
+  const setWidth = (value: string) => change('width', value)
+  const setHeight = (value: string) => change('height', value)
+  const setX2 = (value: string) => change('x2', value)
+  const setY2 = (value: string) => change('y2', value)
+  const setText = (value: string) => change('text', value)
+  const setFontSize = (value: string) => change('fontSize', value)
+  const setName = (value: string) => change('name', value)
+  const setColor = (value: string) => change('color', value)
+  const setFill = (value: string) => change('fill', value)
+  const setTransparent = (value: boolean) => change('transparent', value)
+  const setLayerId = (value: string) => change('layerId', value)
+  const setAreaId = (value: string) => change('areaId', value)
+  const setStyle = (value: 'straight' | 'elbow') => change('style', value)
+  const setArrows = (value: string) => change('arrows', value)
   const editable = isElementEditable(document, element.id)
   const layer = document.layers.find((item) => item.id === element.layerId)
   const area = document.elements.find(
@@ -242,72 +330,121 @@ function ElementProperties({
     (item) => item.areaId === element.id,
   ).length
 
-  function apply(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    commit(() => {
-      const base = { color, layerId, areaId: areaId || null }
-      if (element.type === 'connection') {
-        return updateElement(document, element.id, {
-          ...base,
-          style,
-          startArrow: arrows === 'start' || arrows === 'both',
-          endArrow: arrows === 'end' || arrows === 'both',
-        })
-      }
-      const position = { ...base, x: numeric(x, 'X'), y: numeric(y, 'Y') }
-      if (element.type === 'line') {
-        return updateElement(document, element.id, {
-          ...position,
-          x2: numeric(x2, 'End X'),
-          y2: numeric(y2, 'End Y'),
-        })
-      }
-      const dimensions = {
+  const fingerprint = JSON.stringify(element)
+  useLayoutEffect(() => {
+    // Undo, AI updates and locking replace pending fields with the latest valid object.
+    // Use object content so a camera-only document replacement retains its draft.
+    draftRef.current = propertyDraft(JSON.parse(fingerprint) as CanvasElement)
+    dirty.current = false
+    setDraft(draftRef.current)
+  }, [fingerprint, editable])
+
+  function nextDocument() {
+    const {
+      x,
+      y,
+      width,
+      height,
+      x2,
+      y2,
+      text,
+      fontSize,
+      name,
+      color,
+      fill,
+      transparent,
+      layerId,
+      areaId,
+      style,
+      arrows,
+      fromSide,
+      toSide,
+    } = draftRef.current
+    const base = { color, layerId, areaId: areaId || null }
+    if (element.type === 'connection') {
+      return updateElement(document, element.id, {
+        ...base,
+        style,
+        startArrow: arrows === 'start' || arrows === 'both',
+        endArrow: arrows === 'end' || arrows === 'both',
+        fromSide,
+        toSide,
+      })
+    }
+    const position = { ...base, x: numeric(x, 'X'), y: numeric(y, 'Y') }
+    if (element.type === 'line') {
+      return updateElement(document, element.id, {
         ...position,
-        width: numeric(width, 'Width'),
-        height: numeric(height, 'Height'),
-      }
-      if (element.type === 'area') {
-        return updateElement(document, element.id, {
-          ...dimensions,
-          areaId: null,
-          name,
-          fill: transparent ? null : fill,
-        })
-      }
-      const typography = {
+        x2: numeric(x2, 'End X'),
+        y2: numeric(y2, 'End Y'),
+      })
+    }
+    const dimensions = {
+      ...position,
+      width: numeric(width, 'Width'),
+      height: numeric(height, 'Height'),
+    }
+    if (element.type === 'area') {
+      return updateElement(document, element.id, {
         ...dimensions,
-        text,
-        fontSize: numeric(fontSize, 'Font size'),
-      }
-      return updateElement(
-        document,
-        element.id,
-        element.type === 'text'
-          ? typography
-          : { ...typography, fill: transparent ? null : fill },
-      )
-    })
+        areaId: null,
+        name,
+        fill: transparent ? null : fill,
+      })
+    }
+    const typography = {
+      ...dimensions,
+      text,
+      fontSize: numeric(fontSize, 'Font size'),
+    }
+    return updateElement(
+      document,
+      element.id,
+      element.type === 'text'
+        ? typography
+        : { ...typography, fill: transparent ? null : fill },
+    )
   }
 
-  function numberField(
-    label: string,
-    value: string,
-    change: (value: string) => void,
-    min?: number,
-  ) {
-    return (
-      <label className="inspector-field">
-        <span>{label}</span>
-        <input
-          type="number"
-          step="any"
-          min={min}
-          value={value}
-          onChange={(event) => change(event.target.value)}
-        />
-      </label>
-    )
+  function applyDraft(report = true): boolean {
+    if (!dirty.current) return true
+    if (!editable) return false
+    let next: CanvasDocument
+    try {
+      next = nextDocument()
+    } catch (cause) {
+      if (report)
+        commit(() => {
+          throw cause
+        })
+      return false
+    }
+    if (JSON.stringify(next.elements) === JSON.stringify(document.elements)) {
+      dirty.current = false
+      return true
+    }
+    const applied = commit(() => next)
+    if (applied) dirty.current = false
+    return applied
+  }
+
+  useLayoutEffect(() => {
+    onDraftFlusherChange(() => applyDraft())
+    return () => onDraftFlusherChange(null)
+  })
+  const autoApply = useRef(applyDraft)
+  useLayoutEffect(() => {
+    autoApply.current = applyDraft
+  })
+  useEffect(() => {
+    if (!dirty.current) return
+    const timer = setTimeout(() => autoApply.current(false), 300)
+    return () => clearTimeout(timer)
+  }, [draft])
+
+  function apply(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    applyDraft()
   }
 
   return (
@@ -339,7 +476,7 @@ function ElementProperties({
         )}
       </div>
       {!editable && <p className="inspector-notice">Layer hidden or locked.</p>}
-      <form onSubmit={apply}>
+      <form onSubmit={apply} onBlur={() => applyDraft()}>
         <fieldset className="inspector-property-fields" disabled={!editable}>
           <legend className="inspector-visually-hidden">
             Object properties
@@ -370,26 +507,63 @@ function ElementProperties({
           )}
           {element.type !== 'connection' && (
             <div className="inspector-field-pair">
-              {numberField('X', x, setX)}
-              {numberField('Y', y, setY)}
+              <NumberField label="X" value={x} onChange={setX} />
+              <NumberField label="Y" value={y} onChange={setY} />
             </div>
           )}
           {'width' in element && (
             <div className="inspector-field-pair">
-              {numberField('Width', width, setWidth, 0)}
-              {numberField('Height', height, setHeight, 0)}
+              <NumberField
+                label="Width"
+                value={width}
+                onChange={setWidth}
+                min={0}
+              />
+              <NumberField
+                label="Height"
+                value={height}
+                onChange={setHeight}
+                min={0}
+              />
             </div>
           )}
           {element.type === 'line' && (
             <div className="inspector-field-pair">
-              {numberField('End X', x2, setX2)}
-              {numberField('End Y', y2, setY2)}
+              <NumberField label="End X" value={x2} onChange={setX2} />
+              <NumberField label="End Y" value={y2} onChange={setY2} />
             </div>
           )}
-          {'fontSize' in element &&
-            numberField('Font size', fontSize, setFontSize, 8)}
+          {'fontSize' in element && (
+            <NumberField
+              label="Font size"
+              value={fontSize}
+              onChange={setFontSize}
+              min={8}
+            />
+          )}
           {element.type === 'connection' && (
             <>
+              <div className="inspector-field-pair">
+                {(['fromSide', 'toSide'] as const).map((key) => (
+                  <label className="inspector-field" key={key}>
+                    <span>
+                      {key === 'fromSide' ? 'Source side' : 'Target side'}
+                    </span>
+                    <select
+                      value={key === 'fromSide' ? fromSide : toSide}
+                      onChange={(event) =>
+                        change(key, event.target.value as ConnectionSide)
+                      }
+                    >
+                      {CONNECTION_SIDES.map((side) => (
+                        <option key={side} value={side}>
+                          {side[0].toUpperCase() + side.slice(1)}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                ))}
+              </div>
               <div className="inspector-field">
                 <label htmlFor={`${prefix}-connection-path`}>
                   Connection path
@@ -529,10 +703,20 @@ export function CanvasInspector({
   onActiveLayerChange,
   onDocumentChange,
   onError,
+  onDraftFlusherChange,
 }: CanvasInspectorProps) {
   const prefix = useId()
   const [error, setError] = useState('')
   const [layerName, setLayerName] = useState('')
+  const draftFlusher = useRef<(() => boolean) | null>(null)
+  function registerDraftFlusher(flush: (() => boolean) | null) {
+    draftFlusher.current = flush
+    onDraftFlusherChange?.(flush)
+  }
+  function select(id: string | null) {
+    draftFlusher.current?.()
+    onSelect(id)
+  }
   const selected = document.elements.find((item) => item.id === selectedId)
 
   function commit(operation: () => CanvasDocument): boolean {
@@ -567,11 +751,12 @@ export function CanvasInspector({
       )}
       {selected ? (
         <ElementProperties
-          key={`${selected.id}:${JSON.stringify(selected)}`}
+          key={selected.id}
           element={selected}
           document={document}
           commit={commit}
-          onSelect={onSelect}
+          onSelect={select}
+          onDraftFlusherChange={registerDraftFlusher}
         />
       ) : (
         <p className="inspector-empty">No selection</p>
@@ -645,7 +830,7 @@ export function CanvasInspector({
                       type="button"
                       aria-pressed={element.id === selectedId}
                       aria-label={`Select ${objectName(element)} on ${layer.name}`}
-                      onClick={() => onSelect(element.id)}
+                      onClick={() => select(element.id)}
                     >
                       <span>{objectName(element)}</span>
                       <small>

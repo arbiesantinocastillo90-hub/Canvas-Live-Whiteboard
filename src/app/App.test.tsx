@@ -35,9 +35,19 @@ async function createEditableCanvas() {
     target: { value: 'Editing canvas' },
   })
   fireEvent.click(screen.getByRole('button', { name: 'Create canvas' }))
-  await screen.findByRole('button', { name: 'Open canvas tools' })
-  fireEvent.click(screen.getByRole('button', { name: 'Open canvas tools' }))
+  await screen.findByRole('button', { name: 'Open right panel' })
+  fireEvent.click(screen.getByRole('button', { name: 'Open right panel' }))
   await screen.findByRole('button', { name: 'Add rectangle' })
+}
+
+function openPanel(name: 'AI' | 'Properties') {
+  const launcher = screen.queryByRole('button', { name: 'Open right panel' })
+  if (launcher) fireEvent.click(launcher)
+  else
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Open AI workspace panel' }),
+    )
+  fireEvent.click(screen.getByRole('tab', { name }))
 }
 
 describe('workspace navigation and appearance', () => {
@@ -110,7 +120,7 @@ describe('workspace navigation and appearance', () => {
     expect(
       screen.getByRole('button', { name: 'Exit full screen' }),
     ).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: 'Open canvas tools' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Open right panel' }))
     expect(
       screen.getByRole('button', { name: 'Add rectangle' }),
     ).toBeInTheDocument()
@@ -209,9 +219,7 @@ describe('workspace navigation and appearance', () => {
       { key: 'End' },
     )
     fireEvent.doubleClick(screen.getByRole('tab', { name: 'Files' }))
-    fireEvent.click(
-      screen.getByRole('button', { name: 'Open AI workspace panel' }),
-    )
+    openPanel('AI')
     fireEvent.click(screen.getByRole('button', { name: 'Pin right panel' }))
     fireEvent.keyDown(
       screen.getByRole('separator', { name: 'Resize right panel' }),
@@ -259,9 +267,7 @@ describe('workspace navigation and appearance', () => {
   it('temporarily hides right panels in fullscreen and restores the chosen panel on exit', async () => {
     render(<App />)
     await createEditableCanvas()
-    fireEvent.click(
-      screen.getByRole('button', { name: 'Open object properties' }),
-    )
+    openPanel('Properties')
     fireEvent.click(screen.getByRole('button', { name: 'Full screen canvas' }))
     expect(
       screen.queryByRole('complementary', {

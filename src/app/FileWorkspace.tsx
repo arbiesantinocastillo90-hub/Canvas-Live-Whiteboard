@@ -58,6 +58,11 @@ import {
 } from './lcanvas'
 import type { Preferences, Project } from './workspace'
 import './file-workspace.css'
+import CanvasTabs from './CanvasTabs'
+import {
+  normalizeProjectView,
+  type ProjectViewSession,
+} from './workspaceSessions'
 
 type Entry = CanvasDraft
 type FilePrompt = { kind: 'create' } | { kind: 'rename'; id: string }
@@ -104,6 +109,9 @@ export default function FileWorkspace({
   showFileToggle = true,
   workspaceActive = true,
   openRequest,
+  viewSession,
+  onViewSessionChange,
+  workspacesPanel,
 }: {
   project: Project
   preferences: Preferences
@@ -116,11 +124,38 @@ export default function FileWorkspace({
   showFileToggle?: boolean
   workspaceActive?: boolean
   openRequest?: WorkspaceOpenRequest
+  viewSession?: ProjectViewSession
+  onViewSessionChange?: (view: ProjectViewSession) => void
+  workspacesPanel?: ReactNode
 }) {
   const [entries, setEntries] = useState<Entry[]>([])
   const [openIds, setOpenIds] = useState<string[]>([])
   const [activeId, setActiveId] = useState<string | null>(null)
+  const initialView = useRef(
+    viewSession ? normalizeProjectView(viewSession) : null,
+  )
+  const [viewMeta, setViewMeta] = useState(() =>
+    normalizeProjectView(viewSession),
+  )
+  const rememberEditorSession = useCallback(
+    (session: { tool: string; activeLayerId: string | null }) => {
+      setViewMeta((current) =>
+        JSON.stringify(current.editorSession) === JSON.stringify(session)
+          ? current
+          : { ...current, editorSession: session },
+      )
+    },
+    [],
+  )
+  const publishView = useEffectEvent(() => {
+    onViewSessionChange?.(
+      normalizeProjectView({ ...viewMeta, openIds, activeId }),
+    )
+  })
   const [loading, setLoading] = useState(true)
+  useEffect(() => {
+    if (!loading) publishView()
+  }, [openIds, activeId, viewMeta, loading])
   const [busy, setBusy] = useState(false)
   const [localBindings, setLocalBindings] = useState(
     new Map<string, LocalCanvasBinding>(),
@@ -175,6 +210,8 @@ export default function FileWorkspace({
   const rightPanel = focused ? focusRightPanel : layout.rightPanel
   const rightPinned = focused ? focusRightPinned : layout.rightPinned
   const aiOpen = rightPanel === 'ai'
+  const filesSide = layout.panelsSwapped ? 'right' : 'left'
+  const toolsSide = layout.panelsSwapped ? 'left' : 'right'
   useCanvasDraftProtection(store)
   const active = entries.find((entry) => entry.record.id === activeId)
   const localBinding = activeId ? localBindings.get(activeId) : undefined
@@ -232,12 +269,12 @@ export default function FileWorkspace({
     if (rightPanel === 'none' || !rightHost) {
       return
     }
-    const panel = rightHost.closest<HTMLElement>('[data-dock-side="right"]')
+    const panel = rightHost.closest<HTMLElement>('[data-dock-side]')
     if (!panel) return
     // Pinned panels reserve their own width. Peek panels cover the stage.
     const measure = () =>
       setRightInset(
-        getComputedStyle(panel).position === 'absolute'
+        toolsSide === 'right' && getComputedStyle(panel).position === 'absolute'
           ? panel.getBoundingClientRect().width
           : 0,
       )
@@ -250,7 +287,14 @@ export default function FileWorkspace({
       observer?.disconnect()
       window.removeEventListener('resize', measure)
     }
-  }, [rightPanel, rightHost, rightPinned, layout.rightWidth, focused])
+  }, [
+    rightPanel,
+    rightHost,
+    rightPinned,
+    layout.rightWidth,
+    focused,
+    toolsSide,
+  ])
 
   function nextTab(direction: number) {
     const index = openIds.indexOf(activeId ?? '')
@@ -379,6 +423,29 @@ export default function FileWorkspace({
       : [],
   )
 
+  function restoreTabs(restored: Entry[]) {
+    const requested = initialOpenRequest.current
+    const retained = (initialView.current?.openIds ?? []).filter((id) =>
+      restored.some((entry) => entry.record.id === id),
+    )
+    const initial =
+      requested?.action || requested?.imports || requested?.localImports
+        ? null
+        : requested?.fileId
+          ? restored.find((entry) => entry.record.id === requested.fileId)
+          : initialView.current
+            ? restored.find(
+                (entry) => entry.record.id === initialView.current?.activeId,
+              )
+            : restored[0]
+    const ids =
+      initial && !retained.includes(initial.record.id)
+        ? [...retained, initial.record.id]
+        : retained
+    setOpenIds(ids)
+    setActiveId(initial?.record.id ?? ids[0] ?? null)
+  }
+
   useEffect(() => {
     alive.current = true
     let cancelled = false
@@ -457,15 +524,7 @@ export default function FileWorkspace({
         )
         setLocalBindings(rememberedBindings)
         setEntries(restored)
-        const requested = initialOpenRequest.current
-        const initial =
-          requested?.action || requested?.imports || requested?.localImports
-            ? null
-            : requested?.fileId
-              ? restored.find((entry) => entry.record.id === requested.fileId)
-              : restored[0]
-        setOpenIds(initial ? [initial.record.id] : [])
-        setActiveId(initial?.record.id ?? null)
+        restoreTabs(restored)
         if (result.error) setNotice(result.error)
         setLoading(false)
       })
@@ -477,15 +536,7 @@ export default function FileWorkspace({
         )
         if (cancelled) return
         setEntries(cached)
-        const requested = initialOpenRequest.current
-        const initial =
-          requested?.action || requested?.imports || requested?.localImports
-            ? null
-            : requested?.fileId
-              ? cached.find((entry) => entry.record.id === requested.fileId)
-              : cached[0]
-        setOpenIds(initial ? [initial.record.id] : [])
-        setActiveId(initial?.record.id ?? null)
+        restoreTabs(cached)
         setError(message(failure))
         setLoading(false)
       })
@@ -752,6 +803,12 @@ export default function FileWorkspace({
     const id = entry.record.id
     setOpenIds((current) => (current.includes(id) ? current : [...current, id]))
     setActiveId(id)
+    setViewMeta((current) => ({
+      ...current,
+      shortcuts: current.shortcuts.map((item) =>
+        item.id === id ? { ...item, hidden: false } : item,
+      ),
+    }))
     // Remember the open file without committing unsaved canvas changes.
     const openedAt = Math.max(
       openingTimestamp(entries),
@@ -816,12 +873,15 @@ export default function FileWorkspace({
   }, [workspaceActive, loading, openRequest])
 
   function closeTab(id: string) {
-    const next = openIds.filter((open) => open !== id)
-    setOpenIds(next)
-    if (activeId === id) {
-      const previousIndex = openIds.indexOf(id)
-      setActiveId(next[Math.min(previousIndex, next.length - 1)] ?? null)
-    }
+    setOpenIds((current) => {
+      const next = current.filter((open) => open !== id)
+      setActiveId((active) =>
+        active === id
+          ? (next[Math.min(current.indexOf(id), next.length - 1)] ?? null)
+          : active,
+      )
+      return next
+    })
     requestAnimationFrame(() => {
       const selected = fileTabs.current?.querySelector<HTMLButtonElement>(
         '[role="tab"][aria-selected="true"]',
@@ -1123,6 +1183,89 @@ export default function FileWorkspace({
     }
   }
 
+  function shortcut(id: string) {
+    return viewMeta.shortcuts.find((item) => item.id === id)
+  }
+  function updateShortcut(
+    id: string,
+    patch: { pinned?: boolean; hidden?: boolean },
+  ) {
+    setViewMeta((current) => {
+      const existing = current.shortcuts.find((item) => item.id === id) ?? {
+        id,
+        pinned: false,
+        hidden: false,
+      }
+      return {
+        ...current,
+        shortcuts: [
+          ...current.shortcuts.filter((item) => item.id !== id),
+          { ...existing, ...patch },
+        ],
+      }
+    })
+  }
+  function fileRow(entry: Entry, section: 'all' | 'recent' | 'pinned') {
+    const pinned = shortcut(entry.record.id)?.pinned ?? false
+    return (
+      <div key={entry.record.id} className="file-shortcut-row">
+        <button
+          className={`canvas-file ${entry.record.id === activeId ? 'is-active' : ''}`}
+          aria-label={`Open ${section === 'all' ? '' : section + ' '}canvas ${entry.record.document.name}`}
+          onClick={() => openFile(entry)}
+          title={`${entry.record.document.name}.lcanvas`}
+        >
+          <Icon name="canvas" />
+          <span>
+            {entry.record.document.name}
+            <small>.lcanvas</small>
+          </span>
+          {entry.dirty && (
+            <span className="file-dirty" aria-label="Unsaved changes" />
+          )}
+        </button>
+        <div className="file-shortcut-actions">
+          <button
+            className="icon-button"
+            aria-label={`${pinned ? 'Unpin' : 'Pin'} ${section} file ${entry.record.document.name}`}
+            title={pinned ? 'Unpin file' : 'Pin file'}
+            aria-pressed={pinned}
+            onClick={() =>
+              updateShortcut(entry.record.id, {
+                pinned: !pinned,
+                hidden: false,
+              })
+            }
+          >
+            <Icon name="pin" />
+          </button>
+          {section !== 'all' && (
+            <button
+              className="icon-button"
+              aria-label={`Remove ${section} file ${entry.record.document.name} from list`}
+              title="Remove shortcut; keep file"
+              onClick={() =>
+                updateShortcut(entry.record.id, { pinned: false, hidden: true })
+              }
+            >
+              <Icon name="close" />
+            </button>
+          )}
+        </div>
+      </div>
+    )
+  }
+  const pinnedFiles = visible.filter(
+    (entry) => shortcut(entry.record.id)?.pinned,
+  )
+  const recentFiles = visible
+    .filter(
+      (entry) =>
+        !shortcut(entry.record.id)?.pinned &&
+        !shortcut(entry.record.id)?.hidden,
+    )
+    .sort((a, b) => b.record.lastOpenedAt - a.record.lastOpenedAt)
+
   return (
     <section
       ref={focusRoot}
@@ -1159,11 +1302,19 @@ export default function FileWorkspace({
           {notice}
         </div>
       )}
-      <div className="workspace-deck">
+      <div
+        className="workspace-deck"
+        data-panels-swapped={layout.panelsSwapped}
+      >
         <DockPanel
           id="project-files"
           label="Project files"
-          side="left"
+          side={filesSide}
+          autoHide={layout.autoHidePanels}
+          autoHideDelay={layout.autoHideDelay}
+          onMove={(side) =>
+            changeLayout({ ...layout, panelsSwapped: side === 'right' })
+          }
           open={filesOpen && !focused}
           pinned={layout.leftPinned}
           width={layout.filesWidth}
@@ -1174,12 +1325,22 @@ export default function FileWorkspace({
           tabs={[
             { id: 'files', label: 'Files', icon: <Icon name="files" /> },
             { id: 'projects', label: 'Projects', icon: <Icon name="folder" /> },
+            {
+              id: 'workspaces',
+              label: 'Workspaces',
+              icon: <Icon name="work" />,
+            },
           ]}
           onSelect={(id) =>
             changeLayout({
               ...layout,
               filesOpen: true,
-              leftPanel: id === 'projects' ? 'projects' : 'files',
+              leftPanel:
+                id === 'projects'
+                  ? 'projects'
+                  : id === 'workspaces'
+                    ? 'workspaces'
+                    : 'files',
             })
           }
           onClose={() => {
@@ -1190,7 +1351,9 @@ export default function FileWorkspace({
             changeLayout({ ...layout, filesWidth })
           }
         >
-          {layout.leftPanel === 'projects' ? (
+          {layout.leftPanel === 'workspaces' ? (
+            workspacesPanel
+          ) : layout.leftPanel === 'projects' ? (
             (projectPanel ?? (
               <div className="workspace-project-summary">
                 <h2>{project.name}</h2>
@@ -1246,6 +1409,37 @@ export default function FileWorkspace({
                   onChange={(event) => setSearch(event.target.value)}
                 />
               </label>
+              {!!pinnedFiles.length && (
+                <section
+                  aria-label="Pinned files"
+                  className="file-list-section"
+                >
+                  <h3 className="project-section-title">Pinned</h3>
+                  {pinnedFiles.map((entry) => fileRow(entry, 'pinned'))}
+                </section>
+              )}
+              {!loading && (
+                <section
+                  aria-label="Recent files"
+                  className="file-list-section"
+                >
+                  <button
+                    className="project-section-toggle"
+                    aria-expanded={!viewMeta.recentsCollapsed}
+                    onClick={() =>
+                      setViewMeta((current) => ({
+                        ...current,
+                        recentsCollapsed: !current.recentsCollapsed,
+                      }))
+                    }
+                  >
+                    {viewMeta.recentsCollapsed ? '▸' : '▾'} Recent
+                  </button>
+                  <div hidden={viewMeta.recentsCollapsed}>
+                    {recentFiles.map((entry) => fileRow(entry, 'recent'))}
+                  </div>
+                </section>
+              )}
               <div className="file-list">
                 {loading ? (
                   <p className="file-list-empty">Opening your files…</p>
@@ -1254,27 +1448,10 @@ export default function FileWorkspace({
                 ) : !visible.length ? (
                   <p className="file-list-empty">No matching canvas files.</p>
                 ) : (
-                  visible.map((entry) => (
-                    <button
-                      key={entry.record.id}
-                      className={`canvas-file ${entry.record.id === activeId ? 'is-active' : ''}`}
-                      aria-label={`Open canvas ${entry.record.document.name}`}
-                      onClick={() => openFile(entry)}
-                      title={`${entry.record.document.name}.lcanvas`}
-                    >
-                      <Icon name="canvas" />
-                      <span>
-                        {entry.record.document.name}
-                        <small>.lcanvas</small>
-                      </span>
-                      {entry.dirty && (
-                        <span
-                          className="file-dirty"
-                          aria-label="Unsaved changes"
-                        />
-                      )}
-                    </button>
-                  ))
+                  <section aria-label="All files" className="file-list-section">
+                    <h3 className="project-section-title">All files</h3>
+                    {visible.map((entry) => fileRow(entry, 'all'))}
+                  </section>
                 )}
               </div>
             </div>
@@ -1286,7 +1463,7 @@ export default function FileWorkspace({
               <button
                 ref={fileToggle}
                 className="icon-button workspace-files-toggle"
-                data-dock-trigger="left"
+                data-dock-trigger={filesSide}
                 aria-label="Open file panel"
                 aria-expanded={filesOpen}
                 aria-controls="project-files"
@@ -1313,44 +1490,27 @@ export default function FileWorkspace({
               role="tablist"
               aria-label="Open canvas files"
             >
-              {openIds.map((id) => {
-                const entry = entries.find((item) => item.record.id === id)
-                if (!entry) return null
-                return (
-                  <div
-                    className="canvas-tab"
-                    key={id}
-                    data-active={id === activeId}
-                  >
-                    <button
-                      role="tab"
-                      aria-selected={id === activeId}
-                      aria-controls="canvas-file-pane"
-                      tabIndex={id === activeId ? 0 : -1}
-                      onKeyDown={(event) => navigateTab(event, id)}
-                      onClick={() => openFile(entry)}
-                    >
-                      <Icon name="canvas" />
-                      <span>{entry.record.document.name}</span>
-                      {entry.dirty && (
-                        <span aria-label="Unsaved changes">•</span>
-                      )}
-                    </button>
-                    <button
-                      className="tab-close"
-                      tabIndex={id === activeId ? 0 : -1}
-                      aria-label={`Close canvas ${entry.record.document.name}`}
-                      title="Close tab; keep file"
-                      onClick={() => closeTab(id)}
-                    >
-                      <Icon name="close" />
-                    </button>
-                  </div>
-                )
-              })}
-              {!openIds.length && (
-                <span className="no-open-tabs">LCANVAS workspace</span>
-              )}
+              <CanvasTabs
+                ids={openIds}
+                files={entries.map((entry) => ({
+                  id: entry.record.id,
+                  name: entry.record.document.name,
+                  dirty: entry.dirty,
+                }))}
+                activeId={activeId}
+                tabs={viewMeta.tabs}
+                groups={viewMeta.groups}
+                onOrder={setOpenIds}
+                onOpen={(id) => {
+                  const entry = entries.find((item) => item.record.id === id)
+                  if (entry) openFile(entry)
+                }}
+                onClose={closeTab}
+                onNavigate={navigateTab}
+                onPresentation={(tabs, groups) =>
+                  setViewMeta((current) => ({ ...current, tabs, groups }))
+                }
+              />
             </div>
             <div className="workspace-tab-actions">
               {!focused && (
@@ -1459,6 +1619,7 @@ export default function FileWorkspace({
                   setRightPanel(open ? 'tools' : 'none')
                 }
                 dockHost={rightHost}
+                dockSide={toolsSide}
                 propertiesOpen={rightPanel === 'properties'}
                 onPropertiesOpenChange={(open) =>
                   setRightPanel(open ? 'properties' : 'none')
@@ -1471,6 +1632,8 @@ export default function FileWorkspace({
                 focusMode={focused}
                 onToggleFocus={toggleFocus}
                 onControllerReady={registerController}
+                initialSession={viewMeta.editorSession ?? undefined}
+                onSessionChange={rememberEditorSession}
               />
             ) : (
               <div className="viewer-empty" data-grid={preferences.grid}>
@@ -1488,7 +1651,7 @@ export default function FileWorkspace({
                 </button>
                 <button
                   className="empty-ai-toggle button secondary"
-                  data-dock-trigger="right"
+                  data-dock-trigger={toolsSide}
                   aria-label="Open AI workspace panel"
                   aria-expanded={aiOpen}
                   aria-controls="workspace-ai-panel"
@@ -1549,7 +1712,12 @@ export default function FileWorkspace({
         <DockPanel
           id="workspace-right-panel"
           label="Canvas panels"
-          side="right"
+          side={toolsSide}
+          autoHide={layout.autoHidePanels}
+          autoHideDelay={layout.autoHideDelay}
+          onMove={(side) =>
+            changeLayout({ ...layout, panelsSwapped: side === 'left' })
+          }
           open={rightPanel !== 'none'}
           pinned={rightPinned}
           width={layout.rightWidth}

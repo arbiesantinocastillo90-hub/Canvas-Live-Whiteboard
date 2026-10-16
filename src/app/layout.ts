@@ -3,11 +3,14 @@ export type WorkspaceLayout = {
   sidebarWidth: number
   filesOpen: boolean
   filesWidth: number
-  leftPanel: 'files' | 'projects'
+  leftPanel: 'files' | 'projects' | 'workspaces'
   leftPinned: boolean
   rightPanel: 'none' | 'ai' | 'properties' | 'tools'
   rightPinned: boolean
   rightWidth: number
+  panelsSwapped: boolean
+  autoHidePanels: boolean
+  autoHideDelay: number
 }
 
 export const LAYOUT_STORAGE_KEY = 'canvas-live.layout.v2'
@@ -26,6 +29,15 @@ export const DEFAULT_LAYOUT: WorkspaceLayout = {
   rightPanel: 'none',
   rightPinned: false,
   rightWidth: PANEL_LIMITS.right.default,
+  panelsSwapped: false,
+  autoHidePanels: true,
+  autoHideDelay: 280,
+}
+
+export function boundedAutoHideDelay(value: number) {
+  return Number.isFinite(value)
+    ? Math.round(Math.max(0, Math.min(2000, value)))
+    : DEFAULT_LAYOUT.autoHideDelay
 }
 
 export function boundedPanelWidth(
@@ -62,7 +74,11 @@ export function parseLayout(raw: string | null): WorkspaceLayout {
         typeof candidate.filesWidth === 'number'
           ? boundedPanelWidth(candidate.filesWidth, 'files')
           : DEFAULT_LAYOUT.filesWidth,
-      leftPanel: candidate.leftPanel === 'projects' ? 'projects' : 'files',
+      leftPanel:
+        candidate.leftPanel === 'projects' ||
+        candidate.leftPanel === 'workspaces'
+          ? candidate.leftPanel
+          : 'files',
       leftPinned: candidate.leftPinned === true,
       rightPanel:
         candidate.rightPanel === 'ai' ||
@@ -75,6 +91,15 @@ export function parseLayout(raw: string | null): WorkspaceLayout {
         typeof candidate.rightWidth === 'number'
           ? boundedPanelWidth(candidate.rightWidth, 'right')
           : DEFAULT_LAYOUT.rightWidth,
+      panelsSwapped: candidate.panelsSwapped === true,
+      autoHidePanels:
+        typeof candidate.autoHidePanels === 'boolean'
+          ? candidate.autoHidePanels
+          : DEFAULT_LAYOUT.autoHidePanels,
+      autoHideDelay:
+        typeof candidate.autoHideDelay === 'number'
+          ? boundedAutoHideDelay(candidate.autoHideDelay)
+          : DEFAULT_LAYOUT.autoHideDelay,
     }
   } catch {
     return { ...DEFAULT_LAYOUT }

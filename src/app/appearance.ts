@@ -107,10 +107,22 @@ export function resolveAppearanceVariables(
     stronger ? ink : surface,
     stronger * 0.25 + softer * 0.08,
   )
-  const duration = { slow: 280, normal: 180, fast: 110 }[
+  const baseDuration = { slow: 280, normal: 180, fast: 110 }[
     preferences.motionSpeed
   ]
+  const duration = Math.round((baseDuration * 100) / preferences.motionScale)
   const smooth = preferences.motionStyle === 'smooth'
+  const flow = preferences.motionEffect === 'flow'
+  const pop = preferences.motionEffect === 'pop'
+  const easing = {
+    standard: smooth
+      ? 'cubic-bezier(0.22, 1, 0.36, 1)'
+      : 'cubic-bezier(0.2, 0, 0.2, 1)',
+    linear: 'linear',
+    'ease-in': 'ease-in',
+    'ease-out': 'ease-out',
+    'ease-in-out': 'ease-in-out',
+  }[preferences.motionEasing]
   const rail = mix(baseRail, ink, stronger * 0.025)
   const well = mix(baseWell, ink, stronger * 0.04)
   const textBackgrounds =
@@ -153,18 +165,18 @@ export function resolveAppearanceVariables(
     '--motion-fast': preferences.reduceMotion
       ? '0ms'
       : `${Math.round(duration * 0.65)}ms`,
-    '--motion-distance': preferences.reduceMotion
-      ? '0px'
-      : smooth
-        ? '8px'
-        : '3px',
-    '--motion-lift': preferences.reduceMotion
-      ? '0px'
-      : smooth
-        ? '-2px'
-        : '-1px',
-    '--motion-easing': smooth
-      ? 'cubic-bezier(0.22, 1, 0.36, 1)'
-      : 'cubic-bezier(0.2, 0, 0.2, 1)',
+    '--motion-distance':
+      preferences.reduceMotion || !flow ? '0px' : smooth ? '8px' : '3px',
+    '--motion-lift':
+      preferences.reduceMotion || !flow ? '0px' : smooth ? '-2px' : '-1px',
+    '--motion-easing': easing,
+    '--motion-enter-scale': !preferences.reduceMotion && pop ? '0.96' : '1',
+    '--motion-hover-scale': !preferences.reduceMotion && pop ? '1.04' : '1',
+    '--rail-button-bg': preferences.railButtonBackground
+      ? 'var(--panel)'
+      : 'transparent',
+    '--rail-button-line': preferences.railButtonBackground
+      ? 'var(--line)'
+      : 'transparent',
   }
 }

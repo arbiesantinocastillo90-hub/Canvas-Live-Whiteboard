@@ -1,19 +1,28 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react'
 import Icon from './Icon'
+import { projectTree, type Project } from './workspace'
 export default function ProjectDialog({
   kind,
   initialName,
   onClose,
   onSubmit,
   entity = 'project',
+  projectParents,
+  initialParentId = null,
 }: {
   kind: 'create' | 'rename'
   initialName: string
   onClose: () => void
-  onSubmit: (name: string) => string | null | Promise<string | null>
+  onSubmit: (
+    name: string,
+    parentId?: string | null,
+  ) => string | null | Promise<string | null>
   entity?: 'project' | 'file'
+  projectParents?: Project[]
+  initialParentId?: string | null
 }) {
   const [name, setName] = useState(initialName)
+  const [parentId, setParentId] = useState(initialParentId)
   const [error, setError] = useState<string | null>(null)
   const [pending, setPending] = useState(false)
   const input = useRef<HTMLInputElement>(null)
@@ -36,7 +45,7 @@ export default function ProjectDialog({
     }
     if (event.key !== 'Tab') return
     const items = dialog.current?.querySelectorAll<HTMLElement>(
-      'button:not(:disabled), input:not(:disabled)',
+      'button:not(:disabled), input:not(:disabled), select:not(:disabled)',
     )
     if (!items?.length) return
     const first = items[0],
@@ -93,7 +102,10 @@ export default function ProjectDialog({
             if (pending) return
             setPending(true)
             try {
-              const result = onSubmit(name)
+              const result = onSubmit(
+                name,
+                projectParents ? parentId : undefined,
+              )
               setError(result instanceof Promise ? await result : result)
             } catch {
               setError('The name could not be saved. Please try again.')
@@ -120,6 +132,31 @@ export default function ProjectDialog({
               setError(null)
             }}
           />
+          {projectParents && (
+            <>
+              <label className="input-label" htmlFor="project-parent">
+                Parent project
+              </label>
+              <select
+                className="project-parent-select"
+                id="project-parent"
+                value={parentId ?? ''}
+                disabled={pending}
+                onChange={(event) => {
+                  setParentId(event.target.value || null)
+                  setError(null)
+                }}
+              >
+                <option value="">Top level</option>
+                {projectTree(projectParents).map(({ project, depth }) => (
+                  <option
+                    key={project.id}
+                    value={project.id}
+                  >{`${'\u00a0\u00a0'.repeat(depth)}${project.name}`}</option>
+                ))}
+              </select>
+            </>
+          )}
           {error && (
             <p id="project-name-error" role="alert" className="form-error">
               {error}

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   canvasExportFilename,
+  connectionEndpoints,
   createCanvasDocument,
   LCANVAS_MAX_BYTES,
   parseLCANVAS,
@@ -13,6 +14,7 @@ import {
   assignElementArea,
   connectElements,
   createElement,
+  moveElement,
 } from './canvasOperations'
 
 function populatedDocument(): CanvasDocument {
@@ -77,6 +79,97 @@ function populatedDocument(): CanvasDocument {
 }
 
 describe('LCANVAS version 2', () => {
+  it('retains endpoint sides in v2 while accepting earlier connections without them', () => {
+    const document = connectElements(populatedDocument(), 'rect', 'ellipse', {
+      id: 'link',
+      fromSide: 'bottom',
+      toSide: 'top',
+    })
+    expect(parseLCANVAS(serializeLCANVAS(document))).toEqual(document)
+    const legacyConnection = { ...document.elements.at(-1)! }
+    if (legacyConnection.type !== 'connection')
+      throw new Error('Missing connection')
+    delete legacyConnection.fromSide
+    delete legacyConnection.toSide
+    const legacy = {
+      ...document,
+      elements: [...document.elements.slice(0, -1), legacyConnection],
+    }
+    expect(validateCanvasDocument(legacy).elements.at(-1)).toMatchObject({
+      fromSide: 'right',
+      toSide: 'left',
+    })
+    expect(legacyConnection).not.toHaveProperty('fromSide')
+    expect(legacyConnection).not.toHaveProperty('toSide')
+    for (const patch of [
+      { fromSide: 'center' },
+      { toSide: null },
+      { fromSide: undefined },
+      { fromSide: 'left', arbitrary: true },
+    ]) {
+      expect(() =>
+        validateCanvasDocument({
+          ...document,
+          elements: [
+            ...document.elements.slice(0, -1),
+            { ...legacyConnection, ...patch },
+          ],
+        }),
+      ).toThrow()
+    }
+  })
+  it('normalizes legacy links once from loaded geometry before object movement', () => {
+    const original = connectElements(populatedDocument(), 'rect', 'ellipse', {
+      id: 'legacy-link',
+    })
+    const legacyLink = { ...original.elements.at(-1)! }
+    if (legacyLink.type !== 'connection') throw new Error('Missing connection')
+    delete legacyLink.fromSide
+    delete legacyLink.toSide
+    const raw = JSON.stringify({
+      ...original,
+      elements: [...original.elements.slice(0, -1), legacyLink],
+    })
+    const loaded = parseLCANVAS(raw)
+    const edge = loaded.elements.at(-1)!
+    if (edge.type !== 'connection') throw new Error('Missing connection')
+    const before = connectionEndpoints(loaded, edge)
+    const moved = moveElement(loaded, 'ellipse', -350, 500)
+    const after = connectionEndpoints(moved, edge)
+    expect(edge).toMatchObject({ fromSide: 'right', toSide: 'left' })
+    expect({ x: after.x1, y: after.y1 }).toEqual({ x: before.x1, y: before.y1 })
+    expect({ x: after.x2, y: after.y2 }).toEqual({ x: -350, y: 540 })
+    expect(parseLCANVAS(serializeLCANVAS(moved))).toEqual(moved)
+    expect(JSON.parse(raw).elements.at(-1)).not.toHaveProperty('fromSide')
+    expect(JSON.parse(raw).elements.at(-1)).not.toHaveProperty('toSide')
+  })
+
+  it('preserves explicit auto sides while normalizing only the missing side', () => {
+    const original = connectElements(populatedDocument(), 'rect', 'ellipse', {
+      id: 'mixed-link',
+      fromSide: 'auto',
+      toSide: 'auto',
+    })
+    const legacyLink = { ...original.elements.at(-1)! }
+    if (legacyLink.type !== 'connection') throw new Error('Missing connection')
+    delete legacyLink.toSide
+    const loaded = validateCanvasDocument({
+      ...original,
+      elements: [...original.elements.slice(0, -1), legacyLink],
+    })
+    const edge = loaded.elements.at(-1)!
+    if (edge.type !== 'connection') throw new Error('Missing connection')
+    expect(edge).toMatchObject({ fromSide: 'auto', toSide: 'left' })
+    const before = connectionEndpoints(loaded, edge)
+    const moved = moveElement(loaded, 'ellipse', -350, 500)
+    const after = connectionEndpoints(moved, edge)
+    expect({ x: after.x1, y: after.y1 }).not.toEqual({
+      x: before.x1,
+      y: before.y1,
+    })
+    expect({ x: after.x2, y: after.y2 }).toEqual({ x: -350, y: 540 })
+    expect(validateCanvasDocument(original)).toEqual(original)
+  })
   it('migrates validated version 1 shapes, labels, lines and view into Main without mutating input', () => {
     const legacy = {
       format: 'LCANVAS',
