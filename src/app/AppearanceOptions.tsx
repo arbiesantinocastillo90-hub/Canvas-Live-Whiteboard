@@ -228,6 +228,48 @@ export default function AppearanceOptions({
         </fieldset>
 
         <fieldset className="option-card">
+          <legend className="option-title">Canvas text</legend>
+          <label className="toggle-control">
+            <input
+              type="checkbox"
+              checked={preferences.autoGrowShapes}
+              onChange={(event) =>
+                update('autoGrowShapes', event.target.checked)
+              }
+            />
+            <span>Grow shapes with text</span>
+          </label>
+          <label className="toggle-control">
+            <input
+              type="checkbox"
+              checked={preferences.fitTextToShape}
+              onChange={(event) =>
+                update('fitTextToShape', event.target.checked)
+              }
+            />
+            <span>Fit text when shapes shrink</span>
+          </label>
+          <div className="range-control">
+            <label htmlFor="minimum-text-size">Minimum text size</label>
+            <output htmlFor="minimum-text-size">
+              {preferences.minTextSize} px
+            </output>
+            <input
+              id="minimum-text-size"
+              type="range"
+              min="8"
+              max="32"
+              step="1"
+              value={preferences.minTextSize}
+              disabled={!preferences.fitTextToShape}
+              onChange={(event) =>
+                update('minTextSize', Number(event.target.value))
+              }
+            />
+          </div>
+        </fieldset>
+
+        <fieldset className="option-card">
           <legend className="option-title">Motion</legend>
           <p className="option-description">Choose how your interface moves.</p>
           <label className="toggle-control">

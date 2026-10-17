@@ -59,6 +59,66 @@
 }
 .canvas-tabs-content {
   width: max-content;
+  min-width: 100%;
+}
+.tab-unit {
+  position: relative;
+  flex-shrink: 0;
+}
+.tab-unit[data-drop-edge]::after {
+  content: '';
+  position: absolute;
+  pointer-events: none;
+  z-index: 3;
+  top: 4px;
+  bottom: 4px;
+  width: 3px;
+  border-radius: 3px;
+  background: var(--accent);
+  box-shadow: 0 0 6px var(--tint);
+}
+.tab-unit[data-drop-edge='before']::after {
+  left: -1px;
+}
+.tab-unit[data-drop-edge='after']::after {
+  right: -1px;
+}
+.canvas-tab[draggable='true'] {
+  cursor: grab;
+  transition:
+    opacity var(--motion-duration, 150ms),
+    background-color var(--motion-duration, 150ms),
+    transform var(--motion-duration, 150ms);
+}
+.canvas-tab[data-dragging='true'] {
+  opacity: 0.45;
+  background: var(--tint);
+  transform: translateY(-2px) scale(0.97);
+  cursor: grabbing;
+}
+.tab-unit[data-settling='true'] .canvas-tab {
+  animation: tab-drop-settle var(--motion-duration, 180ms) ease-out;
+}
+@keyframes tab-drop-settle {
+  from {
+    background-color: var(--tint);
+    transform: translateY(-2px) scale(0.97);
+  }
+  to {
+    transform: translateY(0) scale(1);
+  }
+}
+.app-shell[data-motion='reduced'] .canvas-tab[draggable='true'] {
+  transition: none;
+  transform: none;
+  animation: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .canvas-tab[draggable='true'] {
+    transition: none;
+    transform: none;
+    animation: none;
+  }
 }
 .canvas-tab[data-selected='true'] {
   outline: 1px solid var(--accent);

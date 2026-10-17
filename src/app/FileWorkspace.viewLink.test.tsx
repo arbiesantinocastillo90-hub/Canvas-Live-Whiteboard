@@ -13,6 +13,7 @@ import { createCanvasDocument } from './lcanvas'
 import { DEFAULT_LAYOUT, LAYOUT_STORAGE_KEY } from './layout'
 import { DEFAULT_PREFERENCES } from './workspace'
 import { normalizeProjectView } from './workspaceSessions'
+import { DEFAULT_LINK_OPTIONS } from './liveViewLinks'
 
 async function mount(
   copy = vi.fn<(capture: WorkspaceViewCapture) => Promise<string>>(
@@ -81,6 +82,37 @@ afterEach(() => {
 })
 
 describe('copying workspace view links', () => {
+  it('opens a keyboard-accessible choice of link modes and honors disabled modes', async () => {
+    const copy = vi.fn<
+      (
+        capture: WorkspaceViewCapture,
+        mode?: 'exact' | 'latest',
+      ) => Promise<string>
+    >(async () => 'http://127.0.0.1:4173/#view=latest')
+    await mount(copy, {
+      linkOptions: { ...DEFAULT_LINK_OPTIONS, exactEnabled: false },
+    })
+    const trigger = screen.getByRole('button', { name: 'Copy view link' })
+    fireEvent.click(trigger)
+    const menu = screen.getByRole('menu', { name: 'Copy workspace link' })
+    expect(
+      within(menu).queryByRole('menuitem', { name: 'Copy exact view' }),
+    ).toBeNull()
+    expect(
+      screen.getByRole('menuitem', { name: 'Copy latest view' }),
+    ).toHaveFocus()
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Copy latest view' }))
+    await screen.findByRole('dialog', { name: 'Workspace link' })
+    expect(copy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        view: expect.objectContaining({ activeId: 'alpha' }),
+      }),
+      'latest',
+    )
+    expect(screen.queryByRole('menu')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Close view link' }))
+    expect(trigger).toHaveFocus()
+  })
   it('applies a snapshot camera once and retains later navigation when switching away and back', async () => {
     const copy = vi.fn<(capture: WorkspaceViewCapture) => Promise<string>>(
       async () => 'http://127.0.0.1:4173/#view=test',
@@ -100,16 +132,18 @@ describe('copying workspace view links', () => {
       clientY: 200,
     })
     fireEvent.click(screen.getByRole('button', { name: 'Copy view link' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Copy exact view' }))
     fireEvent.click(
       await screen.findByRole('button', { name: 'Close view link' }),
     )
-    const camera = copy.mock.calls[0][0].activeView.viewport
+    const camera = copy.mock.calls[0][0].activeView!.viewport
     expect(camera.zoom).toBeGreaterThan(1.2)
     fireEvent.click(screen.getByRole('tab', { name: 'Beta' }))
     fireEvent.click(screen.getByRole('tab', { name: 'Alpha' }))
     fireEvent.click(screen.getByRole('button', { name: 'Copy view link' }))
-    await screen.findByRole('dialog', { name: 'Snapshot link' })
-    expect(copy.mock.calls[1][0].activeView.viewport).toEqual(camera)
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Copy exact view' }))
+    await screen.findByRole('dialog', { name: 'Workspace link' })
+    expect(copy.mock.calls[1][0].activeView?.viewport).toEqual(camera)
   })
   it('captures all open tabs and flushes valid property drafts before generating a selectable fallback URL', async () => {
     const { copy, container } = await mount()
@@ -119,7 +153,9 @@ describe('copying workspace view links', () => {
       target: { value: 'Captured draft' },
     })
     fireEvent.click(screen.getByRole('button', { name: 'Copy view link' }))
-    const dialog = await screen.findByRole('dialog', { name: 'Snapshot link' })
+    expect(copy).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Copy exact view' }))
+    const dialog = await screen.findByRole('dialog', { name: 'Workspace link' })
     expect(
       within(dialog).getByLabelText('Copy this URL into Obsidian'),
     ).toHaveValue('http://127.0.0.1:4173/#view=test')
@@ -129,7 +165,7 @@ describe('copying workspace view links', () => {
     expect(captured.files[1].document.elements[0]).toMatchObject({
       text: 'Captured draft',
     })
-    expect(captured.activeView.selectedIds).toHaveLength(1)
+    expect(captured.activeView?.selectedIds).toHaveLength(1)
     expect(captured.layout.rightPanel).toBe('properties')
     expect(container.querySelector('.canvas-view-status')).toBeNull()
     expect(screen.getAllByLabelText('Canvas zoom')).toHaveLength(1)
@@ -148,6 +184,7 @@ describe('copying workspace view links', () => {
       target: { value: '-5' },
     })
     fireEvent.click(screen.getByRole('button', { name: 'Copy view link' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Copy exact view' }))
     await waitFor(() =>
       expect(
         screen

@@ -3,6 +3,7 @@ import {
   validateCanvasFileRecord,
   type CanvasFileStore,
 } from './canvasFiles'
+import { sharedCanvasFileStore } from './localLibrary'
 import type { CanvasDraft } from './canvasDrafts'
 import { validCanvasId, validateCanvasDocument } from './lcanvas'
 
@@ -213,6 +214,7 @@ const stores = new WeakMap<CanvasFileStore, CanvasRecoveryStore>()
 export function recoveryFor(
   store: CanvasFileStore = canvasFileStore,
 ): CanvasRecoveryStore {
+  if (store === sharedCanvasFileStore) return recoveryFor(canvasFileStore)
   let recovery = stores.get(store)
   if (!recovery) {
     let factory: IDBFactory | null = null

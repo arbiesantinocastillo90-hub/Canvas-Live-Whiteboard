@@ -17,6 +17,7 @@ export type WorkspaceLayout = {
   controlsWidth: number
   tabBarHeight: number
   statusBarHeight: number
+  allProjectsCollapsed: boolean
 }
 
 export const LAYOUT_STORAGE_KEY = 'canvas-live.layout.v2'
@@ -50,6 +51,7 @@ export const DEFAULT_LAYOUT: WorkspaceLayout = {
   controlsWidth: CHROME_LIMITS.controlsWidth.default,
   tabBarHeight: CHROME_LIMITS.tabBarHeight.default,
   statusBarHeight: CHROME_LIMITS.statusBarHeight.default,
+  allProjectsCollapsed: false,
 }
 
 export function boundedChromeSize(
@@ -86,6 +88,7 @@ export function parseLayout(raw: string | null): WorkspaceLayout {
       return { ...DEFAULT_LAYOUT }
     const candidate = value as Record<string, unknown>
     return {
+      allProjectsCollapsed: candidate.allProjectsCollapsed === true,
       sidebarOpen:
         typeof candidate.sidebarOpen === 'boolean'
           ? candidate.sidebarOpen

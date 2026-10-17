@@ -26,6 +26,35 @@ afterEach(() => {
 })
 
 describe('workspace metadata validation', () => {
+  it('persists optional smart text settings and defaults malformed additions independently', () => {
+    const preferences = {
+      ...DEFAULT_PREFERENCES,
+      autoGrowShapes: false,
+      fitTextToShape: false,
+      minTextSize: 14,
+    }
+    const state = { ...EMPTY_STATE, preferences }
+    expect(parseWorkspace(JSON.stringify(state)).preferences).toEqual(
+      preferences,
+    )
+    expect(
+      parseWorkspace(
+        JSON.stringify({
+          ...state,
+          preferences: {
+            ...preferences,
+            minTextSize: 100,
+            autoGrowShapes: 'no',
+          },
+        }),
+      ).preferences,
+    ).toMatchObject({
+      autoGrowShapes: true,
+      fitTextToShape: false,
+      minTextSize: 8,
+    })
+  })
+
   it('starts with independent default objects and no fictional projects', () => {
     const first = parseWorkspace(null)
     first.preferences.mode = 'dark'

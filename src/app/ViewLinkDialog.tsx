@@ -53,7 +53,7 @@ export default function ViewLinkDialog({
         >
           <Icon name="close" />
         </button>
-        <h2 id="view-link-title">Snapshot link</h2>
+        <h2 id="view-link-title">Workspace link</h2>
         <label htmlFor="snapshot-url">Copy this URL into Obsidian</label>
         <textarea id="snapshot-url" ref={input} readOnly value={url} rows={4} />
         <button className="button primary" onClick={onClose}>

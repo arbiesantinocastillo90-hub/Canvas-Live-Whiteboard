@@ -30,6 +30,37 @@ const projects: Project[] = [
 ]
 
 describe('project organizer', () => {
+  it('collapses the complete tree independently and temporarily reveals search results', () => {
+    const props = { projects, onOpen: vi.fn() }
+    const view = render(<ProjectExplorer {...props} />)
+    const toggle = screen.getByRole('button', { name: 'All projects' })
+    fireEvent.click(toggle)
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    expect(
+      document.getElementById(toggle.getAttribute('aria-controls')!),
+    ).toHaveAttribute('hidden')
+    expect(
+      screen.queryByRole('button', { name: 'Open project Goals' }),
+    ).toBeNull()
+    expect(
+      screen.getByRole('button', { name: 'Select recent project Goals' }),
+    ).toBeInTheDocument()
+    view.rerender(<ProjectExplorer {...props} search="Goals" />)
+    expect(
+      screen.getByRole('button', { name: 'All projects' }),
+    ).toHaveAttribute('aria-expanded', 'true')
+    expect(
+      screen.getByRole('button', { name: 'Open project Goals' }),
+    ).toBeInTheDocument()
+    view.rerender(<ProjectExplorer {...props} />)
+    expect(
+      screen.getByRole('button', { name: 'All projects' }),
+    ).toHaveAttribute('aria-expanded', 'false')
+    fireEvent.click(screen.getByRole('button', { name: 'All projects' }))
+    expect(
+      screen.getByRole('button', { name: 'Open project Goals' }),
+    ).toBeInTheDocument()
+  })
   it('collapses an organizer branch without hiding its pinned or recent shortcuts', () => {
     const onOpen = vi.fn()
     render(<ProjectExplorer projects={projects} onOpen={onOpen} />)

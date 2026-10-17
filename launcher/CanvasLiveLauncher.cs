@@ -147,6 +147,7 @@ internal sealed class StaticSite : IDisposable
     private readonly List<TcpClient> clients = new List<TcpClient>();
     private readonly SemaphoreSlim slots = new SemaphoreSlim(16);
     private readonly string identity;
+    private readonly LocalLibrary library;
     private TcpListener listener;
     private volatile bool stopping;
     internal string Url { get; private set; }
@@ -154,6 +155,7 @@ internal sealed class StaticSite : IDisposable
     internal StaticSite(string root, string key)
     {
         root = Path.GetFullPath(root);
+        library = new LocalLibrary(Path.Combine(Path.GetDirectoryName(root), "data"));
         if (!File.Exists(Path.Combine(root, "index.html")))
             throw new FileNotFoundException("The packaged website is missing: app/index.html.");
         CollectAssets(root, root);
@@ -243,6 +245,7 @@ internal sealed class StaticSite : IDisposable
                 }
             if (host != new Uri(Url).Authority)
             { Reply(stream, 403, "Forbidden", "text/plain", new byte[0], false); return; }
+            if (library.Serve(stream, request[0], request[1], lines, Url.TrimEnd('/'))) return;
             bool head = request[0] == "HEAD";
             if (request[0] != "GET" && !head)
             { Reply(stream, 405, "Method Not Allowed", "text/plain", new byte[0], false); return; }
@@ -257,6 +260,11 @@ internal sealed class StaticSite : IDisposable
             string file;
             if (!assets.TryGetValue(path, out file))
             { Reply(stream, 404, "Not Found", "text/plain", new byte[0], head); return; }
+            if (path == "/" || path == "/index.html")
+            {
+                string html = File.ReadAllText(file, Encoding.UTF8).Replace("</head>", "<meta name=\"canvas-live-storage\" content=\"local-v1\"></head>");
+                Reply(stream, 200, "OK", "text/html; charset=utf-8", Encoding.UTF8.GetBytes(html), head); return;
+            }
             using (FileStream content = File.OpenRead(file))
             {
                 WriteHeader(stream, 200, "OK", ContentType(file), content.Length);

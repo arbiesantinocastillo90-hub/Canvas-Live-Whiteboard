@@ -19,6 +19,27 @@ function Options() {
 }
 
 describe('appearance controls', () => {
+  it('customizes independent growth, fitting and minimum readable text size', () => {
+    render(<Options />)
+    const growth = screen.getByRole('checkbox', {
+      name: 'Grow shapes with text',
+    })
+    const fit = screen.getByRole('checkbox', {
+      name: 'Fit text when shapes shrink',
+    })
+    const minimum = screen.getByRole('slider', { name: 'Minimum text size' })
+    expect(growth).toBeChecked()
+    expect(fit).toBeChecked()
+    fireEvent.change(minimum, { target: { value: '14' } })
+    expect(minimum).toHaveValue('14')
+    fireEvent.click(growth)
+    fireEvent.click(fit)
+    expect(growth).not.toBeChecked()
+    expect(minimum).toBeDisabled()
+    fireEvent.click(fit)
+    expect(minimum).toHaveValue('14')
+  })
+
   it('keeps advanced colors collapsed and allows an individual automatic reset', () => {
     render(<Options />)
     const summary = screen.getByText('Fine-tune colors')

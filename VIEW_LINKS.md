@@ -1,5 +1,7 @@
 # Portable view links
 
+**Current links:** the exact/latest reference modes supersede the default snapshot-copy behavior below. Canvas contents stay live in the native local library. This page remains the guide for older v1 frozen URLs. See [Canvas Live Links and local files](docs/LIVE_LINKS_AND_LIBRARY.md).
+
 Copy view link captures the current workspace appearance and layout, active project, every open tab in that project, each open canvas document and camera, and the active selection, tool, layer, connection settings and focus mode. It captures the condition at copy time. It does not silently discard tabs to make a shorter link.
 
 The URL carries the snapshot in its fragment. Opening it creates an isolated editing session with new workspace, project and file identities. Its documents, recovery and layout stay separate from the main app's browser library; loading or reloading embeds does not accumulate projects or replace originals. Changes after the link was copied are independent. Opening the same link again restores the copied condition again. Save or Export the copied canvases as local LCANVAS files to keep later edits before closing or reloading the embed. A fresh Copy view link can also capture the edited condition.

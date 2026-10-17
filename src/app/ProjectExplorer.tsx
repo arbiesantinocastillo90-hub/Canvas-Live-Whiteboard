@@ -1,4 +1,4 @@
-import { useState, type CSSProperties } from 'react'
+import { useId, useState, type CSSProperties } from 'react'
 import Icon from './Icon'
 import { projectTree, type Project } from './workspace'
 
@@ -29,6 +29,8 @@ export default function ProjectExplorer({
   onHideRecent,
   recentsCollapsed,
   onRecentsCollapsedChange,
+  allProjectsCollapsed,
+  onAllProjectsCollapsedChange,
   search = '',
   variant = 'home',
   count,
@@ -42,11 +44,15 @@ export default function ProjectExplorer({
   onHideRecent?: (id: string) => void
   recentsCollapsed?: boolean
   onRecentsCollapsedChange?: (collapsed: boolean) => void
+  allProjectsCollapsed?: boolean
+  onAllProjectsCollapsedChange?: (collapsed: boolean) => void
   search?: string
   variant?: 'home' | 'work'
   count?: (id: string) => number
 }) {
   const [localRecentsCollapsed, setLocalRecentsCollapsed] = useState(false)
+  const [localAllCollapsed, setLocalAllCollapsed] = useState(false)
+  const allProjectsId = useId()
   const [closedParents, setClosedParents] = useState<Set<string>>(new Set())
   const query = search.trim().toLocaleLowerCase()
   const matching = projects.filter((project) =>
@@ -73,6 +79,8 @@ export default function ProjectExplorer({
     .filter((project) => project.pinned)
     .sort((a, b) => b.lastOpenedAt - a.lastOpenedAt)
   const collapsed = recentsCollapsed ?? localRecentsCollapsed
+  // A search temporarily reveals its matches without changing the saved choice.
+  const allCollapsed = !query && (allProjectsCollapsed ?? localAllCollapsed)
   function shortcut(project: Project, isPinned: boolean) {
     return (
       <div className="project-shortcut-row" key={project.id}>
@@ -146,99 +154,116 @@ export default function ProjectExplorer({
       )}
       {!!projects.length && (
         <section aria-label="All projects">
-          <h3 className="project-section-title">All projects</h3>
-          {tree
-            .filter(({ project }) => {
-              if (query) return true
-              let parent = project.parentId
-              const seen = new Set<string>()
-              while (parent && !seen.has(parent)) {
-                if (closedParents.has(parent)) return false
-                seen.add(parent)
-                parent = projects.find((entry) => entry.id === parent)?.parentId
-              }
-              return true
-            })
-            .map(({ project, depth }) => {
-              const hasChildren = projects.some(
-                (entry) => entry.parentId === project.id,
-              )
-              return (
-                <div
-                  className="project-tree-row"
-                  key={project.id}
-                  style={{ '--project-depth': depth } as CSSProperties}
-                >
-                  {hasChildren ? (
-                    <button
-                      className="project-tree-toggle"
-                      aria-label={`${!query && closedParents.has(project.id) ? 'Expand' : 'Collapse'} project ${project.name}`}
-                      aria-expanded={!!query || !closedParents.has(project.id)}
-                      onClick={() =>
-                        setClosedParents((current) => {
-                          const next = new Set(current)
-                          if (next.has(project.id)) next.delete(project.id)
-                          else next.add(project.id)
-                          return next
-                        })
-                      }
-                    >
-                      <span aria-hidden="true">
-                        {closedParents.has(project.id) && !query ? '▸' : '▾'}
-                      </span>
-                    </button>
-                  ) : (
-                    <span className="project-tree-spacer" />
-                  )}
-                  <button
-                    className="project-open"
-                    aria-label={`Open project ${project.name}`}
-                    aria-pressed={selectedId === project.id}
-                    title={project.name}
-                    onClick={() => onOpen(project.id)}
+          <button
+            className="project-section-toggle"
+            aria-expanded={!allCollapsed}
+            aria-controls={allProjectsId}
+            onClick={() => {
+              setLocalAllCollapsed(!allCollapsed)
+              onAllProjectsCollapsedChange?.(!allCollapsed)
+            }}
+          >
+            <span aria-hidden="true">{allCollapsed ? '▸' : '▾'}</span>
+            All projects
+          </button>
+          <div id={allProjectsId} hidden={allCollapsed}>
+            {tree
+              .filter(({ project }) => {
+                if (query) return true
+                let parent = project.parentId
+                const seen = new Set<string>()
+                while (parent && !seen.has(parent)) {
+                  if (closedParents.has(parent)) return false
+                  seen.add(parent)
+                  parent = projects.find(
+                    (entry) => entry.id === parent,
+                  )?.parentId
+                }
+                return true
+              })
+              .map(({ project, depth }) => {
+                const hasChildren = projects.some(
+                  (entry) => entry.parentId === project.id,
+                )
+                return (
+                  <div
+                    className="project-tree-row"
+                    key={project.id}
+                    style={{ '--project-depth': depth } as CSSProperties}
                   >
-                    <Icon name="folder" />
-                    <span>{project.name}</span>
-                    {count && <small>{count(project.id)}</small>}
-                  </button>
-                  <div className="project-row-actions">
-                    {onNewChild && (
+                    {hasChildren ? (
                       <button
-                        className="icon-button"
-                        aria-label={`Create project inside ${project.name}`}
-                        title="New nested project"
-                        onClick={() => onNewChild(project.id)}
+                        className="project-tree-toggle"
+                        aria-label={`${!query && closedParents.has(project.id) ? 'Expand' : 'Collapse'} project ${project.name}`}
+                        aria-expanded={
+                          !!query || !closedParents.has(project.id)
+                        }
+                        onClick={() =>
+                          setClosedParents((current) => {
+                            const next = new Set(current)
+                            if (next.has(project.id)) next.delete(project.id)
+                            else next.add(project.id)
+                            return next
+                          })
+                        }
                       >
-                        <Icon name="plus" />
+                        <span aria-hidden="true">
+                          {closedParents.has(project.id) && !query ? '▸' : '▾'}
+                        </span>
                       </button>
+                    ) : (
+                      <span className="project-tree-spacer" />
                     )}
-                    {onRename && (
-                      <button
-                        className="icon-button"
-                        aria-label={`Rename project ${project.name}`}
-                        title="Rename or move project"
-                        onClick={() => onRename(project)}
-                      >
-                        <Icon name="edit" />
-                      </button>
-                    )}
-                    {project.recentHidden && onPin && (
-                      <button
-                        className="icon-button"
-                        aria-label={`Pin project ${project.name}`}
-                        title="Pin project"
-                        onClick={() => onPin(project.id, true)}
-                      >
-                        <PinMark />
-                      </button>
-                    )}
+                    <button
+                      className="project-open"
+                      aria-label={`Open project ${project.name}`}
+                      aria-pressed={selectedId === project.id}
+                      title={project.name}
+                      onClick={() => onOpen(project.id)}
+                    >
+                      <Icon name="folder" />
+                      <span>{project.name}</span>
+                      {count && <small>{count(project.id)}</small>}
+                    </button>
+                    <div className="project-row-actions">
+                      {onNewChild && (
+                        <button
+                          className="icon-button"
+                          aria-label={`Create project inside ${project.name}`}
+                          title="New nested project"
+                          onClick={() => onNewChild(project.id)}
+                        >
+                          <Icon name="plus" />
+                        </button>
+                      )}
+                      {onRename && (
+                        <button
+                          className="icon-button"
+                          aria-label={`Rename project ${project.name}`}
+                          title="Rename or move project"
+                          onClick={() => onRename(project)}
+                        >
+                          <Icon name="edit" />
+                        </button>
+                      )}
+                      {project.recentHidden && onPin && (
+                        <button
+                          className="icon-button"
+                          aria-label={`Pin project ${project.name}`}
+                          title="Pin project"
+                          onClick={() => onPin(project.id, true)}
+                        >
+                          <PinMark />
+                        </button>
+                      )}
+                    </div>
                   </div>
-                </div>
-              )
-            })}
-          {!matching.length && (
-            <p className="file-list-empty">No projects found</p>
-          )}
+                )
+              })}
+            {!matching.length && (
+              <p className="file-list-empty">No projects found</p>
+            )}
+          </div>
         </section>
       )}
     </div>

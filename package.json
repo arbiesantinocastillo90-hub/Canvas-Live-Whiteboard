@@ -20,6 +20,7 @@
     "test": "vitest run && vitest run --config vitest.mcp.config.ts",
     "test:watch": "vitest",
     "test:launcher": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/test-windows-launcher.ps1",
+    "test:library": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/test-windows-library.ps1",
     "licenses": "node scripts/check-licenses.mjs",
     "check": "npm run typecheck && npm run lint && npm run format:check && npm run test && npm run build",
     "build:mcp": "node scripts/build-mcp.mjs",

@@ -671,7 +671,15 @@ describe('manual LCANVAS editor', () => {
       text: '<script>alert(1)</script>\nhttps://example.com',
     })
     const { container } = mount(document)
-    expect(screen.getByText('<script>alert(1)</script>')).toBeInTheDocument()
+    const literalText = Array.from(container.querySelectorAll('text')).find(
+      (text) => text.getAttribute('aria-label')?.startsWith('<script>'),
+    )
+    expect(literalText?.getAttribute('aria-label')).toBe(
+      '<script>alert(1)</script>\nhttps://example.com',
+    )
+    expect(literalText?.textContent).toBe(
+      '<script>alert(1)</script>https://example.com',
+    )
     expect(container.querySelector('script,a,foreignObject')).toBeNull()
     expect(container.querySelector('clipPath')?.id).toMatch(/^[\w-]+$/u)
   })

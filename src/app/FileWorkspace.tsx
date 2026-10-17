@@ -49,6 +49,10 @@ import {
 import { recoveryFor, mergeRecoveredDrafts } from './canvasRecovery'
 import ProjectDialog from './ProjectDialog'
 import ViewLinkDialog from './ViewLinkDialog'
+import { NotificationBell } from './SessionNotifications'
+import { useSessionNotifications } from './notificationSession'
+import { DEFAULT_LINK_OPTIONS, type LinkOptions } from './liveViewLinks'
+import { localLibrary, sharedCanvasFileStore } from './localLibrary'
 import {
   canvasFileStore,
   createCanvasFileRecord,
@@ -59,6 +63,8 @@ import {
   createCanvasDocument,
   parseLCANVAS,
   serializeLCANVAS,
+  CANVAS_FILE_ACCEPT,
+  type CanvasViewport,
   type CanvasDocument,
 } from './lcanvas'
 import type { Preferences, Project } from './workspace'
@@ -82,7 +88,7 @@ export type WorkspaceOpenRequest = {
 export type WorkspaceViewCapture = {
   files: CanvasFileRecord[]
   view: ProjectViewSession
-  activeView: EditorViewState & { focusMode: boolean }
+  activeView: (EditorViewState & { focusMode: boolean }) | null
   layout: WorkspaceLayout
 }
 
@@ -97,6 +103,13 @@ function message(error: unknown) {
 
 function sameDocument(left: CanvasDocument, right: CanvasDocument) {
   return JSON.stringify(left) === JSON.stringify(right)
+}
+
+function sameContent(left: CanvasDocument, right: CanvasDocument) {
+  return (
+    JSON.stringify({ ...left, viewport: undefined }) ===
+    JSON.stringify({ ...right, viewport: undefined })
+  )
 }
 
 function openingTimestamp(entries: Entry[]) {
@@ -127,6 +140,11 @@ export default function FileWorkspace({
   onCopyViewLink,
   initialViewState,
   onInitialViewApplied,
+  notificationScopeId = project.id,
+  linkOptions = DEFAULT_LINK_OPTIONS,
+  onLiveViewChange,
+  initialCameras,
+  onPrepareProjectExportReady,
 }: {
   project: Project
   preferences: Preferences
@@ -142,10 +160,34 @@ export default function FileWorkspace({
   viewSession?: ProjectViewSession
   onViewSessionChange?: (view: ProjectViewSession) => void
   workspacesPanel?: ReactNode
-  onCopyViewLink?: (capture: WorkspaceViewCapture) => Promise<string>
-  initialViewState?: EditorViewState & { focusMode: boolean }
+  onCopyViewLink?: (
+    capture: WorkspaceViewCapture,
+    mode?: 'exact' | 'latest',
+  ) => Promise<string>
+  initialViewState?: EditorViewState & { focusMode?: boolean }
   onInitialViewApplied?: () => void
+  notificationScopeId?: string
+  linkOptions?: LinkOptions
+  onLiveViewChange?: (capture: WorkspaceViewCapture) => void
+  initialCameras?: Record<string, CanvasViewport>
+  onPrepareProjectExportReady?: (
+    prepare: (() => CanvasFileRecord[]) | null,
+  ) => void
 }) {
+  const notifications = useSessionNotifications(notificationScopeId)
+  const { notify } = notifications
+  const setError = useCallback(
+    (text: string | null) => {
+      if (text) notify(text, 'error')
+    },
+    [notify],
+  )
+  const setNotice = useCallback(
+    (text: string | null) => {
+      if (text) notify(text, 'info')
+    },
+    [notify],
+  )
   const [entries, setEntries] = useState<Entry[]>([])
   const [openIds, setOpenIds] = useState<string[]>([])
   const [activeId, setActiveId] = useState<string | null>(null)
@@ -153,6 +195,15 @@ export default function FileWorkspace({
     viewSession ? normalizeProjectView(viewSession) : null,
   )
   const [initialEditorView, setInitialEditorView] = useState(initialViewState)
+  const camerasToRestore = useRef({ ...initialCameras })
+  const replacementViews = useRef(new Map<string, EditorViewState>())
+  const [editorEpochs, setEditorEpochs] = useState<Record<string, number>>({})
+  const [liveViewRevision, setLiveViewRevision] = useState(0)
+  const currentEditorView = useRef<{
+    fileId: string
+    state: EditorViewState
+  } | null>(null)
+  const lastPublishedView = useRef('')
   const [viewMeta, setViewMeta] = useState(() =>
     normalizeProjectView(viewSession),
   )
@@ -178,6 +229,10 @@ export default function FileWorkspace({
   const [busy, setBusy] = useState(false)
   const [copyingView, setCopyingView] = useState(false)
   const [viewLink, setViewLink] = useState<string | null>(null)
+  const [linkMenuOpen, setLinkMenuOpen] = useState(false)
+  const [linkMenuPosition, setLinkMenuPosition] = useState({ left: 0, top: 0 })
+  const linkMenu = useRef<HTMLDivElement>(null)
+  const linkButton = useRef<HTMLButtonElement>(null)
   const [editorStatus, setEditorStatus] = useState<CanvasEditorStatus | null>(
     null,
   )
@@ -194,6 +249,7 @@ export default function FileWorkspace({
   const [permissionIds, setPermissionIds] = useState(new Set<string>())
   const [failedSaveIds, setFailedSaveIds] = useState(new Set<string>())
   const entriesRef = useRef<Entry[]>([])
+  const remoteConflicts = useRef(new Map<string, string>())
   const bindingsRef = useRef(localBindings)
   const workspaceActiveRef = useRef(workspaceActive)
   const manualSaving = useRef(false)
@@ -225,8 +281,6 @@ export default function FileWorkspace({
     else changeLayout({ ...layout, rightPanel: panel })
   }
   const [search, setSearch] = useState('')
-  const [error, setError] = useState<string | null>(null)
-  const [notice, setNotice] = useState<string | null>(null)
   const [prompt, setPrompt] = useState<FilePrompt | null>(null)
   const importInput = useRef<HTMLInputElement>(null)
   const fileToggle = useRef<HTMLButtonElement>(null)
@@ -250,11 +304,16 @@ export default function FileWorkspace({
   const toolsSide = layout.panelsSwapped ? 'left' : 'right'
   useCanvasDraftProtection(store)
   const active = entries.find((entry) => entry.record.id === activeId)
+  const sharedStoreActive =
+    store === sharedCanvasFileStore && localLibrary.available
   const localBinding = activeId ? localBindings.get(activeId) : undefined
   const localDirty = Boolean(
     active &&
     localBinding &&
-    !sameDocument(active.record.document, localBinding.savedDocument),
+    !(sharedStoreActive ? sameContent : sameDocument)(
+      active.record.document,
+      localBinding.savedDocument,
+    ),
   )
   useLayoutEffect(() => {
     entriesRef.current = entries
@@ -269,6 +328,33 @@ export default function FileWorkspace({
     (controller: CanvasEditorController | null) => {
       if (controller && activeId) {
         editorController.current = { fileId: activeId, controller }
+        const state = controller.getViewState()
+        currentEditorView.current = { fileId: activeId, state }
+        replacementViews.current.delete(activeId)
+        if (
+          camerasToRestore.current[activeId] ||
+          (activeId === initialView.current?.activeId && initialEditorView)
+        ) {
+          delete camerasToRestore.current[activeId]
+          setEntries((current) =>
+            current.map((entry) =>
+              entry.record.id === activeId &&
+              JSON.stringify(entry.record.document.viewport) !==
+                JSON.stringify(state.viewport)
+                ? {
+                    ...entry,
+                    record: {
+                      ...entry.record,
+                      document: {
+                        ...entry.record.document,
+                        viewport: state.viewport,
+                      },
+                    },
+                  }
+                : entry,
+            ),
+          )
+        }
         if (activeId === initialView.current?.activeId && initialEditorView) {
           setInitialEditorView(undefined)
           onInitialViewApplied?.()
@@ -277,6 +363,20 @@ export default function FileWorkspace({
         editorController.current = null
     },
     [activeId, initialEditorView, onInitialViewApplied],
+  )
+  const rememberEditorView = useCallback(
+    (state: EditorViewState) => {
+      if (!activeId) return
+      const previous = currentEditorView.current
+      if (
+        previous?.fileId === activeId &&
+        JSON.stringify(previous.state) === JSON.stringify(state)
+      )
+        return
+      currentEditorView.current = { fileId: activeId, state }
+      setLiveViewRevision((current) => current + 1)
+    },
+    [activeId],
   )
   const getController = useCallback(
     () =>
@@ -342,30 +442,108 @@ export default function FileWorkspace({
     const entry = entries.find((item) => item.record.id === id)
     if (entry) openFile(entry)
   }
-  async function copyViewLink() {
+  function captureCurrentView(): WorkspaceViewCapture {
+    const current =
+      editorController.current?.fileId === activeId
+        ? editorController.current.controller
+        : null
+    const state =
+      current?.getViewState() ??
+      (currentEditorView.current?.fileId === activeId
+        ? currentEditorView.current.state
+        : null)
+    return structuredClone({
+      files: openIds
+        .map((id) => currentSnapshot(id))
+        .filter((file): file is CanvasFileRecord => !!file),
+      view: normalizeProjectView({
+        ...viewMeta,
+        openIds,
+        activeId,
+        editorSession: state ?? viewMeta.editorSession,
+      }),
+      activeView: activeId && state ? { ...state, focusMode: focused } : null,
+      layout: { ...layout, rightPanel, rightPinned },
+    })
+  }
+  const publishLiveView = useEffectEvent(() => {
+    if (!onLiveViewChange || !workspaceActive) return
+    const capture = captureCurrentView()
+    const signature = JSON.stringify({
+      view: capture.view,
+      activeView: capture.activeView,
+      layout: capture.layout,
+      cameras: capture.files.map((file) => [file.id, file.document.viewport]),
+    })
+    if (signature === lastPublishedView.current) return
+    lastPublishedView.current = signature
+    onLiveViewChange(capture)
+  })
+  useEffect(() => {
+    if (!loading) publishLiveView()
+  }, [
+    loading,
+    openIds,
+    activeId,
+    viewMeta,
+    layout,
+    rightPanel,
+    rightPinned,
+    focused,
+    liveViewRevision,
+    entries,
+    workspaceActive,
+  ])
+  const prepareProjectExport = useCallback(() => {
+    if (workspaceActive) editorController.current?.controller.flushDraft?.()
+    return entriesRef.current
+      .map((entry) => currentSnapshot(entry.record.id))
+      .filter((file): file is CanvasFileRecord => !!file)
+  }, [workspaceActive])
+  useEffect(() => {
+    onPrepareProjectExportReady?.(prepareProjectExport)
+    return () => onPrepareProjectExportReady?.(null)
+  }, [onPrepareProjectExportReady, prepareProjectExport])
+  useEffect(() => {
+    if (!linkMenuOpen) return
+    linkMenu.current?.querySelector<HTMLButtonElement>('button')?.focus()
+    const outside = (event: PointerEvent) => {
+      if (
+        event.target instanceof Node &&
+        !linkMenu.current?.contains(event.target) &&
+        !linkButton.current?.contains(event.target)
+      )
+        setLinkMenuOpen(false)
+    }
+    const escape = (event: globalThis.KeyboardEvent) => {
+      if (event.key !== 'Escape') return
+      event.preventDefault()
+      setLinkMenuOpen(false)
+      linkButton.current?.focus()
+    }
+    document.addEventListener('pointerdown', outside)
+    document.addEventListener('keydown', escape)
+    return () => {
+      document.removeEventListener('pointerdown', outside)
+      document.removeEventListener('keydown', escape)
+    }
+  }, [linkMenuOpen])
+  async function copyViewLink(mode: 'exact' | 'latest' = 'exact') {
     const current = editorController.current
     if (!current || !activeId || !onCopyViewLink || copyingView) return
+    if (
+      mode === 'exact' ? !linkOptions.exactEnabled : !linkOptions.latestEnabled
+    )
+      return
+    setLinkMenuOpen(false)
+    linkButton.current?.focus()
     setCopyingView(true)
     setError(null)
     try {
       current.controller.flushDraft?.()
       // Capture synchronously before compression/clipboard work, including drafts.
-      const state = current.controller.getViewState()
-      const files = openIds
-        .map((id) => currentSnapshot(id))
-        .filter((file): file is CanvasFileRecord => !!file)
-      const capture: WorkspaceViewCapture = structuredClone({
-        files,
-        view: normalizeProjectView({
-          ...viewMeta,
-          openIds,
-          activeId,
-          editorSession: state,
-        }),
-        activeView: { ...state, focusMode: focused },
-        layout: { ...layout, rightPanel, rightPinned },
-      })
-      const pendingLink = onCopyViewLink(capture)
+      const capture = captureCurrentView()
+      const pendingLink = onCopyViewLink(capture, mode)
       // Promise-backed ClipboardItem keeps the initiating click's permission.
       if (navigator.clipboard?.write && typeof ClipboardItem !== 'undefined') {
         const content = pendingLink.then(
@@ -379,7 +557,10 @@ export default function FileWorkspace({
               'text/plain': content,
             }),
           ])
-          if (alive.current) setNotice('Snapshot link copied.')
+          if (alive.current)
+            setNotice(
+              `${mode === 'exact' ? 'Exact view' : 'Latest view'} link copied.`,
+            )
           return
         } catch {
           // The selectable link below also works in embedded browsers.
@@ -390,7 +571,10 @@ export default function FileWorkspace({
         if (!navigator.clipboard?.writeText)
           throw new Error('Clipboard unavailable')
         await navigator.clipboard.writeText(url)
-        if (alive.current) setNotice('Snapshot link copied.')
+        if (alive.current)
+          setNotice(
+            `${mode === 'exact' ? 'Exact view' : 'Latest view'} link copied.`,
+          )
       } catch {
         if (alive.current) setViewLink(url)
       }
@@ -431,7 +615,7 @@ export default function FileWorkspace({
           },
           {
             id: 'file.import',
-            label: 'Import LCANVAS',
+            label: 'Import CLF',
             category: 'Files',
             execute: () => {
               void openLocalFiles()
@@ -468,12 +652,26 @@ export default function FileWorkspace({
           },
           {
             id: 'file.copyViewLink',
-            label: 'Copy snapshot view link',
+            label: 'Copy exact view link',
             category: 'Files',
             execute: () => {
               void copyViewLink()
             },
-            enabled: Boolean(active && onCopyViewLink) && !copyingView,
+            enabled:
+              Boolean(active && onCopyViewLink && linkOptions.exactEnabled) &&
+              !copyingView,
+            allowWhileTyping: true,
+          },
+          {
+            id: 'file.copyLatestViewLink',
+            label: 'Copy latest view link',
+            category: 'Files',
+            execute: () => {
+              void copyViewLink('latest')
+            },
+            enabled:
+              Boolean(active && onCopyViewLink && linkOptions.latestEnabled) &&
+              !copyingView,
             allowWhileTyping: true,
           },
           {
@@ -532,6 +730,17 @@ export default function FileWorkspace({
   )
 
   function restoreTabs(restored: Entry[]) {
+    setViewMeta((current) =>
+      current.recentIds.length
+        ? current
+        : {
+            ...current,
+            recentIds: [...restored]
+              .sort((a, b) => b.record.lastOpenedAt - a.record.lastOpenedAt)
+              .slice(0, 1000)
+              .map((entry) => entry.record.id),
+          },
+    )
     const requested = initialOpenRequest.current
     const retained = (initialView.current?.openIds ?? []).filter((id) =>
       restored.some((entry) => entry.record.id === id),
@@ -574,17 +783,32 @@ export default function FileWorkspace({
           ...files.map((file) => file.lastOpenedAt),
         )
         const cachedDrafts = projectDrafts(store).get(project.id) ?? []
-        const savedEntries = files.map(
-          (record) =>
-            cachedDrafts.find(
-              (entry) => entry.record.id === record.id && entry.dirty,
-            ) ?? {
+        const savedEntries = files.map((record) => {
+          const draft = cachedDrafts.find(
+            (entry) => entry.record.id === record.id && entry.dirty,
+          )
+          if (
+            draft &&
+            sharedStoreActive &&
+            sameContent(draft.savedDocument, record.document)
+          )
+            return {
+              ...draft,
+              record: {
+                ...draft.record,
+                ...record,
+                document: draft.record.document,
+              },
+            }
+          return (
+            draft ?? {
               record,
               dirty: false,
               savedDocument: record.document,
               persistence: result.persistence,
-            },
-        )
+            }
+          )
+        })
         // Drafts can exist without a saved record (for example after a failed write).
         savedEntries.push(
           ...cachedDrafts.filter(
@@ -620,7 +844,7 @@ export default function FileWorkspace({
         restored = mergeRecoveredDrafts(
           savedEntries.map((entry) => {
             const local = rememberedBindings.get(entry.record.id)
-            return local && !entry.dirty
+            return local && !entry.dirty && !sharedStoreActive
               ? {
                   ...entry,
                   record: { ...entry.record, document: local.savedDocument },
@@ -630,6 +854,29 @@ export default function FileWorkspace({
           }),
           recoveredDrafts,
         )
+        if (sharedStoreActive)
+          restored = restored.map((entry) => {
+            const saved = files.find((record) => record.id === entry.record.id)
+            if (!saved || !entry.dirty) return entry
+            if (!sameContent(entry.savedDocument, saved.document)) {
+              remoteConflicts.current.set(
+                saved.id,
+                JSON.stringify({ ...saved.document, viewport: undefined }),
+              )
+              setNotice(
+                'A recovered draft differs from the current local-library file. Export the draft before reopening the latest file.',
+              )
+              return entry
+            }
+            return {
+              ...entry,
+              record: {
+                ...entry.record,
+                ...saved,
+                document: entry.record.document,
+              },
+            }
+          })
         setLocalBindings(rememberedBindings)
         setEntries(restored)
         restoreTabs(restored)
@@ -652,7 +899,155 @@ export default function FileWorkspace({
       cancelled = true
       alive.current = false
     }
-  }, [project.id, store])
+  }, [project.id, store, sharedStoreActive, setError, setNotice])
+
+  const remoteReadFailed = useRef(false)
+  useEffect(() => {
+    if (loading || !sharedStoreActive) return
+    let cancelled = false
+    let reading = false
+    async function poll() {
+      if (reading || manualSaving.current || pendingFileSaves.current.size)
+        return
+      reading = true
+      try {
+        const result = await store.list(project.id)
+        if (
+          cancelled ||
+          !alive.current ||
+          manualSaving.current ||
+          pendingFileSaves.current.size
+        )
+          return
+        remoteReadFailed.current = false
+        const incoming = new Map(result.value.map((file) => [file.id, file]))
+        const replacements: string[] = []
+        let changed = false
+        const restored = entriesRef.current.map((entry) => {
+          const remote = incoming.get(entry.record.id)
+          if (!remote) return entry
+          incoming.delete(entry.record.id)
+          const controller =
+            editorController.current?.fileId === entry.record.id
+              ? editorController.current.controller
+              : null
+          const document = controller?.getDocument() ?? entry.record.document
+          const changedContent = !sameContent(
+            remote.document,
+            entry.savedDocument,
+          )
+          const locallyEdited = !sameContent(document, entry.savedDocument)
+          const activeElement = globalThis.document.activeElement
+          const editing =
+            !!controller &&
+            (!!focusRoot.current?.querySelector(
+              '.canvas-inline-edit, .lcanvas-stage[data-dragging="true"], .canvas-inspector [aria-invalid="true"]',
+            ) ||
+              (activeElement instanceof Element &&
+                !!activeElement.closest('.canvas-inspector') &&
+                activeElement.matches('input, textarea, select')))
+          if (changedContent && (locallyEdited || editing)) {
+            const signature = JSON.stringify({
+              ...remote.document,
+              viewport: undefined,
+            })
+            if (remoteConflicts.current.get(remote.id) !== signature) {
+              remoteConflicts.current.set(remote.id, signature)
+              setNotice(
+                'This canvas changed in another view. Your local edits were kept; export them before reopening the latest file.',
+              )
+            }
+            return entry
+          }
+          remoteConflicts.current.delete(remote.id)
+          const sameRevision = Object.getOwnPropertySymbols(remote).every(
+            (key) =>
+              Reflect.get(remote, key) === Reflect.get(entry.record, key),
+          )
+          if (
+            !changedContent &&
+            sameRevision &&
+            remote.updatedAt === entry.record.updatedAt
+          )
+            return entry
+          changed = true
+          const viewport = document.viewport
+          if (changedContent) {
+            if (controller)
+              replacementViews.current.set(remote.id, controller.getViewState())
+            replacements.push(remote.id)
+            return {
+              record: {
+                ...remote,
+                document: { ...remote.document, viewport },
+                lastOpenedAt: Math.max(
+                  remote.lastOpenedAt,
+                  entry.record.lastOpenedAt,
+                ),
+              },
+              savedDocument: { ...remote.document, viewport },
+              dirty: false,
+              persistence: result.persistence,
+            }
+          }
+          // A revision that kept the same saved content is safe to rebase onto.
+          // Spreading the acknowledgement carries its opaque CAS symbol too.
+          return {
+            ...entry,
+            record: {
+              ...entry.record,
+              ...remote,
+              document,
+              lastOpenedAt: Math.max(
+                remote.lastOpenedAt,
+                entry.record.lastOpenedAt,
+              ),
+            },
+            persistence: result.persistence,
+          }
+        })
+        for (const remote of incoming.values()) {
+          changed = true
+          restored.push({
+            record: remote,
+            savedDocument: remote.document,
+            dirty: false,
+            persistence: result.persistence,
+          })
+        }
+        if (changed) {
+          entriesRef.current = restored
+          setEntries(restored)
+        }
+        if (replacements.length) {
+          setEditorEpochs((current) => {
+            const next = { ...current }
+            replacements.forEach((id) => {
+              next[id] = (next[id] ?? 0) + 1
+            })
+            return next
+          })
+          setNotice(
+            'Updated from another Canvas Live view. Undo starts from the updated version.',
+          )
+        }
+      } catch (failure) {
+        if (!cancelled && alive.current && !remoteReadFailed.current) {
+          remoteReadFailed.current = true
+          setNotice(`Live file updates paused: ${message(failure)}`)
+        }
+      } finally {
+        reading = false
+      }
+    }
+    const timer = setInterval(() => {
+      void poll()
+    }, 1000)
+    return () => {
+      cancelled = true
+      clearInterval(timer)
+    }
+  }, [loading, sharedStoreActive, project.id, store, setNotice])
 
   useEffect(() => {
     if (!loading)
@@ -673,7 +1068,7 @@ export default function FileWorkspace({
         })
     }, 400)
     return () => clearTimeout(timer)
-  }, [entries, loading, project.id, store])
+  }, [entries, loading, project.id, store, setNotice])
   useEffect(() => {
     function flushRecovery() {
       const drafts = entriesRef.current.filter((entry) => entry.dirty)
@@ -688,7 +1083,7 @@ export default function FileWorkspace({
       window.removeEventListener('pagehide', flushRecovery)
       flushRecovery()
     }
-  }, [project.id, store])
+  }, [project.id, store, setNotice])
   useEffect(() => {
     if (!workspaceActive && !loading)
       void recoveryFor(store)
@@ -699,7 +1094,7 @@ export default function FileWorkspace({
         .catch((failure: unknown) => {
           if (alive.current) setNotice(message(failure))
         })
-  }, [workspaceActive, loading, project.id, store])
+  }, [workspaceActive, loading, project.id, store, setNotice])
 
   function accept(record: CanvasFileRecord, persistence: Entry['persistence']) {
     openingSequence.current = Math.max(
@@ -719,6 +1114,13 @@ export default function FileWorkspace({
       current.includes(record.id) ? current : [...current, record.id],
     )
     setActiveId(record.id)
+    setViewMeta((current) => ({
+      ...current,
+      recentIds: [
+        record.id,
+        ...current.recentIds.filter((id) => id !== record.id),
+      ].slice(0, 1000),
+    }))
   }
 
   async function submitFile(name: string) {
@@ -779,10 +1181,12 @@ export default function FileWorkspace({
     const failures: string[] = []
     for (const file of selected) {
       try {
-        if (!/\.lcanvas$/iu.test(file.name))
-          throw new Error('Choose an .lcanvas file.')
+        if (!/\.(?:clf|lcanvas)$/iu.test(file.name))
+          throw new Error(
+            'Choose a .CLF file (legacy .lcanvas is also supported).',
+          )
         if (file.size > 10 * 1024 * 1024)
-          throw new Error('LCANVAS files must be 10 MiB or smaller.')
+          throw new Error('Canvas files must be 10 MiB or smaller.')
         const document = parseLCANVAS(await file.text())
         const result = await store.save(
           createCanvasFileRecord(
@@ -810,10 +1214,12 @@ export default function FileWorkspace({
     for (const source of selected) {
       try {
         if (
-          !/\.lcanvas$/iu.test(source.file.name) ||
+          !/\.(?:clf|lcanvas)$/iu.test(source.file.name) ||
           source.file.size > 10 * 1024 * 1024
         )
-          throw new Error('Choose an .lcanvas file no larger than 10 MiB.')
+          throw new Error(
+            'Choose a .CLF file no larger than 10 MiB (legacy .lcanvas is also supported).',
+          )
         const document = parseLCANVAS(await source.file.text())
         if (!alive.current) break
         let prior: Entry | undefined
@@ -881,7 +1287,7 @@ export default function FileWorkspace({
         })
         setNotice(
           result.error
-            ? 'This .lcanvas file is stored locally. Browser recovery is unavailable.'
+            ? 'This .CLF file is stored locally. Browser recovery is unavailable.'
             : null,
         )
         accept(result.value, result.persistence)
@@ -913,6 +1319,10 @@ export default function FileWorkspace({
     setActiveId(id)
     setViewMeta((current) => ({
       ...current,
+      recentIds: [
+        id,
+        ...current.recentIds.filter((recentId) => recentId !== id),
+      ].slice(0, 1000),
       shortcuts: current.shortcuts.map((item) =>
         item.id === id ? { ...item, hidden: false } : item,
       ),
@@ -1005,7 +1415,10 @@ export default function FileWorkspace({
         entry.record.id === activeId
           ? {
               ...entry,
-              dirty: !sameDocument(entry.savedDocument, document),
+              dirty: !(sharedStoreActive ? sameContent : sameDocument)(
+                entry.savedDocument,
+                document,
+              ),
               record: {
                 ...entry.record,
                 document,
@@ -1026,9 +1439,20 @@ export default function FileWorkspace({
           ? {
               ...entry,
               savedDocument: snapshot.document,
-              dirty: !sameDocument(entry.record.document, snapshot.document),
+              dirty: !(sharedStoreActive ? sameContent : sameDocument)(
+                entry.record.document,
+                snapshot.document,
+              ),
               persistence,
-              record: { ...entry.record, updatedAt: snapshot.updatedAt },
+              record: {
+                ...entry.record,
+                ...snapshot,
+                document: entry.record.document,
+                lastOpenedAt: Math.max(
+                  entry.record.lastOpenedAt,
+                  snapshot.lastOpenedAt,
+                ),
+              },
             }
           : entry,
       )
@@ -1058,17 +1482,21 @@ export default function FileWorkspace({
   async function cacheSaved(snapshot: CanvasFileRecord) {
     try {
       const result = await store.save(snapshot)
-      rememberSaved(snapshot, result.persistence)
+      rememberSaved(result.value, result.persistence)
       if (alive.current && result.error)
         setNotice(
-          'Saved to file. Browser recovery is unavailable; the .lcanvas file is stored locally.',
+          'Saved to file. Browser recovery is unavailable; the .CLF file is stored locally.',
         )
     } catch (failure) {
       // A completed physical file remains saved even if its browser copy fails.
-      rememberSaved(snapshot, 'session')
+      // A failed shared-library commit must keep its original baseline and CAS
+      // revision, so polling cannot replace the unsynchronized physical edit.
+      if (!sharedStoreActive) rememberSaved(snapshot, 'session')
       if (alive.current)
         setNotice(
-          `The local file is saved. Its browser copy could not be updated: ${message(failure)}`,
+          sharedStoreActive
+            ? `The .CLF file is saved. Its local-library copy could not be updated; your edits remain open: ${message(failure)}`
+            : `The local file is saved. Its browser copy could not be updated: ${message(failure)}`,
         )
     }
   }
@@ -1159,7 +1587,20 @@ export default function FileWorkspace({
     try {
       if (editorController.current?.fileId === id)
         editorController.current.controller.flushDraft?.()
+      if (sharedStoreActive && !saveAs && remoteConflicts.current.has(id))
+        throw new Error(
+          'This canvas changed in another view. Export your local edits before reopening the latest file.',
+        )
       const existing = bindingsRef.current.get(id)
+      if (sharedStoreActive && !saveAs && !existing) {
+        const snapshot = currentSnapshot(id)
+        if (!snapshot) return
+        const result = await store.save(snapshot)
+        rememberSaved(result.value, result.persistence)
+        if (alive.current)
+          setNotice(result.error ?? 'Saved to the local library.')
+        return
+      }
       if (!supportsLocalCanvasSave() && saveAs && existing) {
         exportFile()
         return
@@ -1168,10 +1609,10 @@ export default function FileWorkspace({
         const snapshot = currentSnapshot(id)
         if (!snapshot) return
         const result = await store.save(snapshot)
-        rememberSaved(snapshot, result.persistence)
+        rememberSaved(result.value, result.persistence)
         if (alive.current)
           setNotice(
-            'Browser copy only. Use Export to download a local .lcanvas backup, or open Canvas Live in Chrome or Edge for Save and Save as.',
+            'Browser copy only. Use Export to download a local .CLF backup, or open Canvas Live in Chrome or Edge for Save and Save as.',
           )
         return
       }
@@ -1220,7 +1661,10 @@ export default function FileWorkspace({
         !target?.autoSave ||
         permissionIds.has(id) ||
         pendingFileSaves.current.has(id) ||
-        sameDocument(entry.record.document, target.savedDocument)
+        (sharedStoreActive ? sameContent : sameDocument)(
+          entry.record.document,
+          target.savedDocument,
+        )
       )
         continue
       void saveBoundFile(id, target, false, false).catch((failure: unknown) => {
@@ -1283,7 +1727,7 @@ export default function FileWorkspace({
       setTimeout(() => revoke(url), 1000)
       setDownloadedIds((current) => new Set(current).add(id))
       setNotice(
-        'Download copy requested. Keep the .lcanvas file from Downloads or your chosen folder as a backup.',
+        'Download copy requested. Keep the .CLF file from Downloads or your chosen folder as a backup.',
       )
       setError(null)
     } catch (failure) {
@@ -1321,12 +1765,12 @@ export default function FileWorkspace({
           className={`canvas-file ${entry.record.id === activeId ? 'is-active' : ''}`}
           aria-label={`Open ${section === 'all' ? '' : section + ' '}canvas ${entry.record.document.name}`}
           onClick={() => openFile(entry)}
-          title={`${entry.record.document.name}.lcanvas`}
+          title={`${entry.record.document.name}.CLF`}
         >
           <Icon name="canvas" />
           <span>
             {entry.record.document.name}
-            <small>.lcanvas</small>
+            <small>.CLF</small>
           </span>
           {entry.dirty && (
             <span className="file-dirty" aria-label="Unsaved changes" />
@@ -1366,13 +1810,25 @@ export default function FileWorkspace({
   const pinnedFiles = visible.filter(
     (entry) => shortcut(entry.record.id)?.pinned,
   )
+  const recentOrder = new Map(
+    viewMeta.recentIds.map((id, index) => [id, index]),
+  )
   const recentFiles = visible
     .filter(
       (entry) =>
         !shortcut(entry.record.id)?.pinned &&
         !shortcut(entry.record.id)?.hidden,
     )
-    .sort((a, b) => b.record.lastOpenedAt - a.record.lastOpenedAt)
+    .sort((a, b) => {
+      const aIndex = recentOrder.get(a.record.id)
+      const bIndex = recentOrder.get(b.record.id)
+      if (aIndex !== undefined || bIndex !== undefined)
+        return (
+          (aIndex ?? Number.MAX_SAFE_INTEGER) -
+          (bIndex ?? Number.MAX_SAFE_INTEGER)
+        )
+      return b.record.lastOpenedAt - a.record.lastOpenedAt
+    })
 
   return (
     <section
@@ -1402,20 +1858,10 @@ export default function FileWorkspace({
         ref={importInput}
         type="file"
         multiple
-        accept=".lcanvas"
-        aria-label="Import LCANVAS files"
+        accept={CANVAS_FILE_ACCEPT}
+        aria-label="Import CLF files"
         onChange={importFiles}
       />
-      {error && (
-        <div className="file-message error" role="alert">
-          {error}
-        </div>
-      )}
-      {notice && (
-        <div className="file-message" role="status">
-          {notice}
-        </div>
-      )}
       <div
         className="workspace-deck"
         data-panels-swapped={layout.panelsSwapped}
@@ -1502,7 +1948,7 @@ export default function FileWorkspace({
                 </button>
                 <button
                   className="icon-button"
-                  title="Import LCANVAS files"
+                  title="Import CLF files"
                   aria-label="Import"
                   disabled={loading || busy}
                   onClick={() => {
@@ -1667,7 +2113,7 @@ export default function FileWorkspace({
                   void saveFile(true)
                 }}
                 aria-label="Save as"
-                title="Save as a local LCANVAS file · Ctrl+Shift+S"
+                title="Save as a local .CLF file · Ctrl+Shift+S"
               >
                 <Icon name="files" />
               </button>
@@ -1690,13 +2136,32 @@ export default function FileWorkspace({
               )}
               {onCopyViewLink && (
                 <button
+                  ref={linkButton}
                   className="icon-button"
-                  disabled={!active || copyingView}
+                  disabled={
+                    !active ||
+                    copyingView ||
+                    (!linkOptions.exactEnabled && !linkOptions.latestEnabled)
+                  }
                   onClick={() => {
-                    void copyViewLink()
+                    const box = linkButton.current?.getBoundingClientRect()
+                    if (box)
+                      setLinkMenuPosition({
+                        left: Math.max(
+                          8,
+                          Math.min(box.left, window.innerWidth - 228),
+                        ),
+                        top: Math.max(
+                          8,
+                          Math.min(box.bottom + 5, window.innerHeight - 110),
+                        ),
+                      })
+                    setLinkMenuOpen((current) => !current)
                   }}
                   aria-label="Copy view link"
-                  title="Copy snapshot link · includes open canvases, camera and layout"
+                  aria-haspopup="menu"
+                  aria-expanded={linkMenuOpen}
+                  title="Copy an exact or latest workspace view"
                 >
                   <Icon name="link" />
                 </button>
@@ -1706,7 +2171,7 @@ export default function FileWorkspace({
                 disabled={!active}
                 onClick={exportFile}
                 aria-label="Export"
-                title="Export LCANVAS"
+                title="Export .CLF"
               >
                 <Icon name="export" />
               </button>
@@ -1734,7 +2199,7 @@ export default function FileWorkspace({
           >
             {active ? (
               <CanvasEditor
-                key={active.record.id}
+                key={`${active.record.id}:${editorEpochs[active.record.id] ?? 0}`}
                 document={active.record.document}
                 active={workspaceActive}
                 grid={preferences.grid}
@@ -1762,10 +2227,27 @@ export default function FileWorkspace({
                 initialSession={viewMeta.editorSession ?? undefined}
                 onSessionChange={rememberEditorSession}
                 initialViewState={
-                  active.record.id === initialView.current?.activeId
+                  replacementViews.current.get(active.record.id) ??
+                  (active.record.id === initialView.current?.activeId &&
+                  initialEditorView
                     ? initialEditorView
-                    : undefined
+                    : camerasToRestore.current[active.record.id]
+                      ? {
+                          viewport: camerasToRestore.current[active.record.id],
+                          selectedIds: [],
+                          tool: viewMeta.editorSession?.tool ?? 'select',
+                          activeLayerId:
+                            viewMeta.editorSession?.activeLayerId ??
+                            active.record.document.layers[0].id,
+                        }
+                      : undefined)
                 }
+                onViewStateChange={rememberEditorView}
+                textOptions={{
+                  autoGrowShapes: preferences.autoGrowShapes,
+                  fitTextToShape: preferences.fitTextToShape,
+                  minTextSize: preferences.minTextSize,
+                }}
                 statusInFooter
                 onStatusChange={rememberStatus}
               />
@@ -1810,13 +2292,15 @@ export default function FileWorkspace({
               title={
                 localBinding
                   ? `${localBinding.handle.name} · ${permissionIds.has(activeId!) ? 'Click Save to resume local writes' : localBinding.autoSave ? 'Auto-save enabled' : 'Auto-save paused'}`
-                  : active?.dirty
-                    ? 'Save to a local .lcanvas file to keep these changes'
-                    : active?.persistence === 'browser'
-                      ? 'Browser copy only; Save or Export to keep a physical .lcanvas file'
-                      : active
-                        ? 'This tab only; Save or Export to keep a physical .lcanvas file'
-                        : undefined
+                  : sharedStoreActive
+                    ? 'Saved canvas contents live in the local Canvas Live library. Save as creates a separate .CLF file.'
+                    : active?.dirty
+                      ? 'Save to a local .CLF file to keep these changes'
+                      : active?.persistence === 'browser'
+                        ? 'Browser copy only; Save or Export to keep a physical .CLF file'
+                        : active
+                          ? 'This tab only; Save or Export to keep a physical .CLF file'
+                          : undefined
               }
             >
               {active
@@ -1833,7 +2317,9 @@ export default function FileWorkspace({
                           : downloadedIds.has(active.record.id)
                             ? 'Download copy requested'
                             : active.persistence === 'browser'
-                              ? 'Browser copy'
+                              ? sharedStoreActive
+                                ? 'Local library'
+                                : 'Browser copy'
                               : 'Session only'
                 : 'No canvas open'}
             </span>
@@ -1873,6 +2359,10 @@ export default function FileWorkspace({
                 ?
               </button>
             )}
+            <NotificationBell
+              scopeId={notificationScopeId}
+              channel={notifications}
+            />
           </div>
         </div>
         <DockPanel
@@ -1950,6 +2440,59 @@ export default function FileWorkspace({
       )}
       {viewLink && (
         <ViewLinkDialog url={viewLink} onClose={() => setViewLink(null)} />
+      )}
+      {linkMenuOpen && (
+        <div
+          ref={linkMenu}
+          className="tab-context-menu view-link-menu"
+          role="menu"
+          aria-label="Copy workspace link"
+          style={linkMenuPosition}
+          onKeyDown={(event) => {
+            if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key))
+              return
+            const items = Array.from(
+              linkMenu.current?.querySelectorAll<HTMLButtonElement>('button') ??
+                [],
+            )
+            if (!items.length) return
+            event.preventDefault()
+            const index = items.indexOf(
+              document.activeElement as HTMLButtonElement,
+            )
+            const next =
+              event.key === 'Home'
+                ? 0
+                : event.key === 'End'
+                  ? items.length - 1
+                  : (index +
+                      (event.key === 'ArrowDown' ? 1 : -1) +
+                      items.length) %
+                    items.length
+            items[next]?.focus()
+          }}
+        >
+          {linkOptions.exactEnabled && (
+            <button
+              role="menuitem"
+              onClick={() => {
+                void copyViewLink('exact')
+              }}
+            >
+              Copy exact view
+            </button>
+          )}
+          {linkOptions.latestEnabled && (
+            <button
+              role="menuitem"
+              onClick={() => {
+                void copyViewLink('latest')
+              }}
+            >
+              Copy latest view
+            </button>
+          )}
+        </div>
       )}
     </section>
   )

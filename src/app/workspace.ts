@@ -16,6 +16,9 @@ export type Preferences = {
   motionEasing: 'standard' | 'linear' | 'ease-in' | 'ease-out' | 'ease-in-out'
   motionEffect: 'flow' | 'fade' | 'pop'
   railButtonBackground: boolean
+  autoGrowShapes: boolean
+  fitTextToShape: boolean
+  minTextSize: number
 }
 
 export type Project = {
@@ -57,6 +60,9 @@ export const DEFAULT_PREFERENCES: Preferences = {
   motionEasing: 'standard',
   motionEffect: 'flow',
   railButtonBackground: true,
+  autoGrowShapes: true,
+  fitTextToShape: true,
+  minTextSize: 8,
 }
 
 export const EMPTY_STATE: WorkspaceState = {
@@ -235,6 +241,21 @@ function validateWorkspace(value: unknown): WorkspaceState | null {
         typeof preferences.railButtonBackground === 'boolean'
           ? preferences.railButtonBackground
           : DEFAULT_PREFERENCES.railButtonBackground,
+      autoGrowShapes:
+        typeof preferences.autoGrowShapes === 'boolean'
+          ? preferences.autoGrowShapes
+          : DEFAULT_PREFERENCES.autoGrowShapes,
+      fitTextToShape:
+        typeof preferences.fitTextToShape === 'boolean'
+          ? preferences.fitTextToShape
+          : DEFAULT_PREFERENCES.fitTextToShape,
+      minTextSize:
+        typeof preferences.minTextSize === 'number' &&
+        Number.isFinite(preferences.minTextSize) &&
+        preferences.minTextSize >= 8 &&
+        preferences.minTextSize <= 32
+          ? preferences.minTextSize
+          : DEFAULT_PREFERENCES.minTextSize,
     },
     projects,
     lastProjectId:

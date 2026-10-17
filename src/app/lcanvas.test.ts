@@ -481,12 +481,14 @@ describe('LCANVAS version 2', () => {
   })
 
   it.each([
-    ['My Plan', 'My Plan.lcanvas'],
-    ['A/B: draft?', 'A-B- draft-.lcanvas'],
-    ['CON', 'Canvas-CON.lcanvas'],
-    ['LPT1.notes', 'Canvas-LPT1.notes.lcanvas'],
-    ['existing.LCANVAS', 'existing.lcanvas'],
-    ['...', 'Canvas.lcanvas'],
+    ['My Plan', 'My Plan.CLF'],
+    ['A/B: draft?', 'A-B- draft-.CLF'],
+    ['CON', 'Canvas-CON.CLF'],
+    ['LPT1.notes', 'Canvas-LPT1.notes.CLF'],
+    ['existing.LCANVAS', 'existing.CLF'],
+    ['existing.clf', 'existing.CLF'],
+    ['existing.CLF.lcanvas', 'existing.CLF'],
+    ['...', 'Canvas.CLF'],
   ])(
     'produces portable Windows-safe export filenames: %s',
     (name, expected) => {

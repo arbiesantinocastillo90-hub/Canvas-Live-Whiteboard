@@ -116,8 +116,8 @@
   color: var(--ink);
 }
 
-/* Invisible strips must not reserve space or block canvas gestures. Buttons
-   remain in the keyboard order; their own hover or focus reveals them. */
+/* Transparent strips reclaim canvas space. Floating buttons remain visible
+   and interactive; empty rail space passes gestures through to the canvas. */
 .app-shell[data-section='work'][data-separate-rails='true'] {
   position: relative;
   grid-template-columns: minmax(0, 1fr);
@@ -172,7 +172,7 @@
 .app-shell[data-separate-rails='true'] .workspace-ribbon button,
 .app-shell[data-separate-rails='true'] .canvas-view-rail button {
   pointer-events: auto;
-  opacity: 0;
+  opacity: 1;
   transition:
     opacity var(--motion-fast) var(--motion-easing),
     background-color var(--motion-fast) var(--motion-easing),
@@ -306,4 +306,8 @@
   .app-shell [data-autohide-status='true'] .file-statusbar > * {
     opacity: 1;
   }
+}
+
+.app-shell[data-separate-rails='true'] .canvas-view-rail button:disabled {
+  opacity: 0.4;
 }

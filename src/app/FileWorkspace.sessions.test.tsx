@@ -73,6 +73,66 @@ function deferred<T>() {
 }
 
 describe('canvas file presentation sessions', () => {
+  it('retains copied recent-file order when the underlying files are opened in another view', async () => {
+    const store = createCanvasFileStore({ indexedDB: null })
+    await store.save(canvas('Alpha', 'a', 100))
+    await store.save(canvas('Beta', 'b', 200))
+    const callback = vi.fn<(view: ProjectViewSession) => void>()
+    const first = render(
+      <FileWorkspace
+        {...props(store, {
+          viewSession: sessions({
+            openIds: ['a', 'b'],
+            activeId: 'a',
+            recentIds: ['a', 'b'],
+          }),
+          onViewSessionChange: callback,
+        })}
+      />,
+    )
+    await screen.findByRole('tab', { name: 'Alpha' })
+    await waitFor(() =>
+      expect(lastView(callback).recentIds).toEqual(['a', 'b']),
+    )
+    const copiedView = structuredClone(lastView(callback))
+    first.unmount()
+    await store.markOpened(project.id, 'b', 9000)
+    render(<FileWorkspace {...props(store, { viewSession: copiedView })} />)
+    await screen.findByRole('tab', { name: 'Alpha' })
+    expect(
+      within(screen.getByRole('region', { name: 'Recent files' }))
+        .getAllByRole('button', { name: /^Open recent canvas / })
+        .map((button) => button.getAttribute('aria-label')),
+    ).toEqual(['Open recent canvas Alpha', 'Open recent canvas Beta'])
+  })
+
+  it('seeds legacy recent files once and promotes opened files through presentation state without saving contents', async () => {
+    const store = createCanvasFileStore({ indexedDB: null })
+    await store.save(canvas('Alpha', 'a', 100))
+    await store.save(canvas('Beta', 'b', 200))
+    const save = vi.spyOn(store, 'save')
+    const callback = vi.fn<(view: ProjectViewSession) => void>()
+    render(
+      <FileWorkspace
+        {...props(store, {
+          viewSession: sessions({ openIds: ['b'], activeId: 'b' }),
+          onViewSessionChange: callback,
+        })}
+      />,
+    )
+    await screen.findByRole('tab', { name: 'Beta' })
+    await waitFor(() =>
+      expect(lastView(callback).recentIds).toEqual(['b', 'a']),
+    )
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Open recent canvas Alpha' }),
+    )
+    await waitFor(() =>
+      expect(lastView(callback).recentIds).toEqual(['a', 'b']),
+    )
+    expect(save).not.toHaveBeenCalled()
+    expect(JSON.stringify(lastView(callback))).not.toContain('elements')
+  })
   beforeEach(() => {
     vi.restoreAllMocks()
     localStorage.clear()

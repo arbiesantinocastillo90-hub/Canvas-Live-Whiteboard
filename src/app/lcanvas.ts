@@ -68,6 +68,8 @@ export type CanvasDocument = {
 }
 
 export const LCANVAS_MAX_BYTES = 10 * 1024 * 1024
+export const CANVAS_FILE_EXTENSION = '.CLF'
+export const CANVAS_FILE_ACCEPT = '.CLF,.clf,.lcanvas,application/json'
 export const LCANVAS_MAX_ELEMENTS = 5000
 export const LCANVAS_MAX_LAYERS = 100
 export const LCANVAS_MIN_ZOOM = 0.1
@@ -617,7 +619,7 @@ export function canvasExportFilename(name: string): string {
   const safe = requireCanvasName(name)
     .replace(/[<>:"/\\|?*]/gu, '-')
     .replace(/[. ]+$/gu, '')
-    .replace(/\.lcanvas$/iu, '')
+    .replace(/(?:\.(?:lcanvas|clf))+$/iu, '')
   const base = safe || 'Canvas'
-  return `${/^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/iu.test(base) ? `Canvas-${base}` : base}.lcanvas`
+  return `${/^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/iu.test(base) ? `Canvas-${base}` : base}${CANVAS_FILE_EXTENSION}`
 }

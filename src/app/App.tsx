@@ -12,6 +12,40 @@ import FileWorkspace, {
   type WorkspaceViewCapture,
 } from './FileWorkspace'
 import { decodeViewLink, encodeViewLink } from './viewLinks'
+import CanvasLiveLinksOptions from './CanvasLiveLinksOptions'
+import {
+  encodeExactLiveLink,
+  encodeLatestLiveLink,
+  parseLiveLink,
+  loadLinkOptions,
+  persistLinkOptions,
+  type LinkOptions,
+  type LiveViewState,
+} from './liveViewLinks'
+import {
+  readLatestLiveView,
+  resolveLiveView,
+  saveLatestLiveView,
+  LATEST_WORKSPACE_STORAGE_KEY,
+  type LiveViewLaunch,
+} from './liveViewState'
+import {
+  bootstrapLocalLibrary,
+  syncWorkspaceChanges,
+  syncSessionChanges,
+  METADATA_LIBRARY_KEY,
+  SESSIONS_LIBRARY_KEY,
+  parseLibrarySessions,
+  parseLibraryWorkspace,
+} from './librarySync'
+import { localLibrary, libraryKey, sharedCanvasFileStore } from './localLibrary'
+import { canvasFileStore } from './canvasFiles'
+import { NotificationBell, NotificationsProvider } from './SessionNotifications'
+import { useSessionNotifications } from './notificationSession'
+import type { CanvasViewport } from './lcanvas'
+import ProjectTransfer from './ProjectTransfer'
+import { collectProjectTree, type ProjectArchive } from './projectArchive'
+import { projectDrafts } from './canvasDrafts'
 import { restoreViewLink, type RestoredViewLink } from './viewLinkRestore'
 import HomePage from './HomePage'
 import { DEFAULT_LAYOUT, loadLayout, persistLayout } from './layout'
@@ -59,23 +93,73 @@ function snapshotIdentity() {
   return { id: crypto.randomUUID(), createdAt: Date.now() }
 }
 
+type AppLaunch = {
+  restored?: RestoredViewLink
+  linked?: LiveViewLaunch
+  error?: string
+}
+function needsLibraryStartup(hash: string) {
+  if (hash) return true
+  if (
+    document.querySelector(
+      'meta[name="canvas-live-storage"][content="local-v1"]',
+    )
+  )
+    return true
+  try {
+    return (
+      loadLinkOptions().resumeLatest &&
+      !!localStorage.getItem(LATEST_WORKSPACE_STORAGE_KEY)
+    )
+  } catch {
+    return false
+  }
+}
+async function openAppView(hash: string): Promise<AppLaunch> {
+  // Old portable snapshots retain their isolated file copies and permissions.
+  if (hash && !hash.startsWith('#view=2')) {
+    const snapshot = await decodeViewLink(hash)
+    return snapshot ? { restored: await restoreViewLink(snapshot) } : {}
+  }
+  const library = await bootstrapLocalLibrary()
+  if (library.error) throw new Error(library.error)
+  const options = loadLinkOptions()
+  const route = hash ? parseLiveLink(hash) : null
+  const view =
+    route?.kind === 'exact'
+      ? route.view
+      : route?.kind === 'latest'
+        ? await readLatestLiveView(route.workspaceId)
+        : options.resumeLatest
+          ? await readLatestLiveView()
+          : null
+  if (route && !view)
+    throw new Error(
+      'This workspace has no saved latest view yet. Open it in Canvas Live first.',
+    )
+  return view ? { linked: await resolveLiveView(view, options) } : {}
+}
 export default function App() {
   const [viewHash, setViewHash] = useState(() =>
     window.location.hash.startsWith('#view=') ? window.location.hash : '',
   )
-  const hasViewLink = !!viewHash
-  const [launch, setLaunch] = useState<{
-    restored?: RestoredViewLink
-    error?: string
-  } | null>(() => (hasViewLink ? null : {}))
+  const [launch, setLaunch] = useState<AppLaunch | null>(() =>
+    needsLibraryStartup(
+      window.location.hash.startsWith('#view=') ? window.location.hash : '',
+    )
+      ? null
+      : {},
+  )
   const pendingLaunch = useRef<{
     hash: string
-    promise: Promise<RestoredViewLink | null>
+    promise: Promise<AppLaunch>
   } | null>(null)
   useEffect(() => {
     const changed = () => {
-      const hash = window.location.hash
-      if (hash.startsWith('#view=') && hash !== viewHash) {
+      const hash = window.location.hash.startsWith('#view=')
+        ? window.location.hash
+        : ''
+      if (hash !== viewHash) {
         setLaunch(null)
         setViewHash(hash)
       }
@@ -84,18 +168,16 @@ export default function App() {
     return () => window.removeEventListener('hashchange', changed)
   }, [viewHash])
   useEffect(() => {
-    if (!hasViewLink) return
+    if (!needsLibraryStartup(viewHash)) {
+      setLaunch({})
+      return
+    }
     let active = true
     if (pendingLaunch.current?.hash !== viewHash)
-      pendingLaunch.current = {
-        hash: viewHash,
-        promise: decodeViewLink(viewHash).then((snapshot) =>
-          snapshot ? restoreViewLink(snapshot) : null,
-        ),
-      }
+      pendingLaunch.current = { hash: viewHash, promise: openAppView(viewHash) }
     void pendingLaunch.current.promise
-      .then((restored) => {
-        if (active) setLaunch(restored ? { restored } : {})
+      .then((result) => {
+        if (active) setLaunch(result)
       })
       .catch((failure: unknown) => {
         if (active)
@@ -103,44 +185,63 @@ export default function App() {
             error:
               failure instanceof Error
                 ? failure.message
-                : 'This snapshot link could not be opened.',
+                : 'This view could not be opened. Existing files were retained.',
           })
       })
     return () => {
       active = false
     }
-  }, [hasViewLink, viewHash])
+    // A completed launch is not restarted by its own state update.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [viewHash])
   if (!launch)
     return (
       <main className="snapshot-opening" role="status">
-        Opening snapshot…
+        Opening workspace...
       </main>
     )
   return (
     <WorkspaceCommandsProvider>
-      <WorkspaceApp
-        key={viewHash}
-        restored={launch.restored}
-        linkError={launch.error}
-      />
+      <NotificationsProvider key={viewHash}>
+        <WorkspaceApp
+          key={viewHash}
+          restored={launch.restored}
+          linked={launch.linked}
+          linkError={launch.error}
+        />
+      </NotificationsProvider>
     </WorkspaceCommandsProvider>
   )
 }
 
 function WorkspaceApp({
   restored,
+  linked,
   linkError,
 }: {
   restored?: RestoredViewLink
+  linked?: LiveViewLaunch
   linkError?: string
 }) {
-  useCanvasDraftProtection(restored?.store)
+  const fileStore =
+    restored?.store ??
+    linked?.fileStore ??
+    (localLibrary.available ? sharedCanvasFileStore : canvasFileStore)
+  useCanvasDraftProtection(fileStore)
   // A portable link owns an isolated editing session. Its settings and file
   // copies must not replace the main app's library or grant native file access.
-  const saveMetadata = (value: WorkspaceState) =>
-    restored ? true : persistWorkspace(value)
-  const saveSessions = (value: WorkspaceSessions) =>
-    restored ? true : persistWorkspaceSessions(value)
+  const saveMetadata = (value: WorkspaceState, before = workspace) => {
+    if (restored) return true
+    const result = persistWorkspace(value)
+    void syncWorkspaceChanges(before, value).catch(reportSaveFailure)
+    return result
+  }
+  const saveSessions = (value: WorkspaceSessions, before = sessions) => {
+    if (restored) return true
+    const result = persistWorkspaceSessions(value)
+    void syncSessionChanges(before, value).catch(reportSaveFailure)
+    return result
+  }
   const saveLayout = (value: typeof DEFAULT_LAYOUT) =>
     restored ? true : persistLayout(value)
   const [startup] = useState(() => {
@@ -149,6 +250,12 @@ function WorkspaceApp({
         workspace: restored.workspace,
         layout: restored.snapshot.workspace.layout,
         sessions: restored.sessions,
+      }
+    if (linked)
+      return {
+        workspace: linked.workspace,
+        layout: linked.layout,
+        sessions: linked.sessions,
       }
     const metadata = loadWorkspace()
     const saved = loadWorkspaceSessions(
@@ -173,25 +280,39 @@ function WorkspaceApp({
     }
   })
   const [workspace, setWorkspace] = useState(startup.workspace)
-  const [section, setSection] = useState<Section>(restored ? 'work' : 'home')
-  const [workspaceStarted, setWorkspaceStarted] = useState(!!restored)
+  const [section, setSection] = useState<Section>(
+    linked?.section ?? (restored ? 'work' : 'home'),
+  )
+  const [workspaceStarted, setWorkspaceStarted] = useState(
+    !!(restored || linked?.view.projectId),
+  )
   const [homeProjectId, setHomeProjectId] = useState(workspace.lastProjectId)
   const [openRequest, setOpenRequest] = useState<WorkspaceOpenRequest>()
   const requestSequence = useRef(0)
+  const prepareProjectExport = useRef<
+    (() => import('./canvasFiles').CanvasFileRecord[]) | null
+  >(null)
+  const registerProjectExport = useCallback(
+    (prepare: (() => import('./canvasFiles').CanvasFileRecord[]) | null) => {
+      prepareProjectExport.current = prepare
+    },
+    [],
+  )
   const [prompt, setPrompt] = useState<ProjectPrompt | null>(null)
   const [search, setSearch] = useState('')
-  const [visibleLinkError, setVisibleLinkError] = useState(linkError)
   const [storageError, setStorageError] = useState(
     restored?.storageError ?? false,
   )
   const [canvasFocused, setCanvasFocused] = useState(
-    restored?.snapshot.activeView.focusMode ?? false,
+    linked?.view.activeView?.focusMode ??
+      restored?.snapshot.activeView.focusMode ??
+      false,
   )
   const [layout, setLayout] = useState(startup.layout)
   const [sessions, setSessions] = useState(startup.sessions)
   const [sessionStorageError, setSessionStorageError] = useState(false)
   const [initialLinkView, setInitialLinkView] = useState(
-    restored?.snapshot.activeView,
+    linked?.initialView ?? restored?.snapshot.activeView,
   )
   const acknowledgeInitialView = useCallback(
     () => setInitialLinkView(undefined),
@@ -202,6 +323,36 @@ function WorkspaceApp({
   )!
   const [systemDark, setSystemDark] = useState(
     () => window.matchMedia?.('(prefers-color-scheme: dark)').matches ?? false,
+  )
+  const notificationScopeId = `${savedWorkspace.id}:${window.location.hash || 'main'}`
+  const { notify } = useSessionNotifications(notificationScopeId)
+  const [linkOptions, setLinkOptions] = useState(loadLinkOptions)
+  const cameras = useRef<Record<string, CanvasViewport>>(
+    linked?.initialCameras ?? {},
+  )
+  const cameraHistory = useRef<Record<string, Record<string, CanvasViewport>>>({
+    [savedWorkspace.id]: linked?.initialCameras ?? {},
+  })
+  const [rememberedCameras, setRememberedCameras] = useState<
+    Record<string, Record<string, CanvasViewport>>
+  >(() => ({ [savedWorkspace.id]: linked?.initialCameras ?? {} }))
+  const lastCapture = useRef<WorkspaceViewCapture | null>(null)
+  const [captureVersion, setCaptureVersion] = useState(0)
+  const latestSignature = useRef('')
+  const latestToSave = useRef<LiveViewState | null>(null)
+  const saveFailure = useRef('')
+  const reportSaveFailure = useCallback(
+    (failure: unknown) => {
+      const message =
+        failure instanceof Error
+          ? failure.message
+          : 'The local library could not save these changes. Keep this tab open and export a copy.'
+      if (saveFailure.current !== message) {
+        saveFailure.current = message
+        notify(message, 'error')
+      }
+    },
+    [notify],
   )
   const projects = workspace.projects
   const activeProject = workspace.projects.find(
@@ -226,7 +377,7 @@ function WorkspaceApp({
     id: string,
     request?: Omit<WorkspaceOpenRequest, 'sequence'>,
   ) {
-    setVisibleLinkError(undefined)
+    if (id !== workspace.lastProjectId) lastCapture.current = null
     updateWorkspace(openProject(workspace, id))
     setWorkspaceStarted(true)
     setHomeProjectId(id)
@@ -255,13 +406,16 @@ function WorkspaceApp({
     setSessions((current) => {
       const next = change(current)
       if (JSON.stringify(next) === JSON.stringify(current)) return current
-      setSessionStorageError(!saveSessions(next))
+      setSessionStorageError(!saveSessions(next, current))
       return next
     })
   }
   function selectSavedWorkspace(id: string, state = sessions) {
     const saved = state.items.find((item) => item.id === id)
     if (!saved) return
+    lastCapture.current = null
+    cameras.current = cameraHistory.current[id] ?? {}
+    setInitialLinkView(undefined)
     const next = { ...state, activeId: id }
     setSessionStorageError(!saveSessions(next))
     setSessions(next)
@@ -275,7 +429,9 @@ function WorkspaceApp({
       preferences: saved.preferences,
       lastProjectId: projectId,
     }
-    setStorageError(!saveMetadata(updated) || !saveLayout(saved.layout))
+    setStorageError(
+      (!restored && !persistWorkspace(updated)) || !saveLayout(saved.layout),
+    )
     setWorkspace(updated)
     setLayout(saved.layout)
     setHomeProjectId(projectId)
@@ -306,28 +462,318 @@ function WorkspaceApp({
         : current
     })
   }
-  function copyViewLink(capture: WorkspaceViewCapture) {
-    if (!activeProject)
-      throw new Error('Open a canvas before copying a view link.')
-    return encodeViewLink(
-      {
-        format: 'CanvasLiveView',
-        version: 1,
-        ...snapshotIdentity(),
-        workspace: structuredClone({
-          ...savedWorkspace,
-          preferences: workspace.preferences,
+  const captureLiveView = useCallback(
+    (capture: WorkspaceViewCapture) => {
+      const previous = lastCapture.current
+      for (const file of capture.files)
+        cameras.current[file.id] = file.document.viewport
+      if (capture.activeView && capture.view.activeId)
+        cameras.current[capture.view.activeId] = capture.activeView.viewport
+      const snapshot = { ...cameras.current }
+      cameraHistory.current[savedWorkspace.id] = snapshot
+      setRememberedCameras((current) =>
+        JSON.stringify(current[savedWorkspace.id]) === JSON.stringify(snapshot)
+          ? current
+          : { ...current, [savedWorkspace.id]: snapshot },
+      )
+      lastCapture.current = capture
+      if (
+        JSON.stringify(
+          previous && {
+            view: previous.view,
+            activeView: previous.activeView,
+            layout: previous.layout,
+          },
+        ) !==
+        JSON.stringify({
+          view: capture.view,
+          activeView: capture.activeView,
           layout: capture.layout,
-          projectId: activeProject.id,
-          views: { [activeProject.id]: capture.view },
-        }),
-        project: structuredClone(activeProject),
-        files: capture.files,
-        activeView: capture.activeView,
-      },
-      window.location.href,
-    )
+        })
+      )
+        setCaptureVersion((version) => version + 1)
+    },
+    [savedWorkspace.id],
+  )
+  function buildLiveView(capture = lastCapture.current): LiveViewState {
+    const projectId = workspace.lastProjectId
+    const view =
+      capture && capture.files.every((file) => file.projectId === projectId)
+        ? capture
+        : null
+    return {
+      format: 'CanvasLiveLink',
+      version: 2,
+      workspaceId: savedWorkspace.id,
+      workspace: structuredClone({
+        ...savedWorkspace,
+        preferences: workspace.preferences,
+        layout,
+        projectId,
+        views:
+          view && projectId
+            ? { ...savedWorkspace.views, [projectId]: view.view }
+            : savedWorkspace.views,
+      }),
+      projectId,
+      projectPresentation: Object.fromEntries(
+        projects.map((project) => [
+          project.id,
+          {
+            pinned: !!project.pinned,
+            recentHidden: !!project.recentHidden,
+            lastOpenedAt: project.lastOpenedAt,
+          },
+        ]),
+      ),
+      cameras: structuredClone(cameras.current),
+      activeView: view?.activeView ?? null,
+      section: section === 'projects' ? 'home' : section,
+      updatedAt: Date.now(),
+    }
   }
+  async function copyViewLink(
+    capture: WorkspaceViewCapture,
+    mode: 'exact' | 'latest' = 'exact',
+  ) {
+    if (!activeProject || !capture.activeView)
+      throw new Error('Open a canvas before copying a view link.')
+    if (restored) {
+      if (mode === 'latest')
+        throw new Error(
+          'This older snapshot is isolated. Open your main workspace to copy a latest link.',
+        )
+      return encodeViewLink(
+        {
+          format: 'CanvasLiveView',
+          version: 1,
+          ...snapshotIdentity(),
+          workspace: structuredClone({
+            ...savedWorkspace,
+            preferences: workspace.preferences,
+            layout: capture.layout,
+            projectId: activeProject.id,
+            views: { [activeProject.id]: capture.view },
+          }),
+          project: structuredClone(activeProject),
+          files: capture.files,
+          activeView: capture.activeView,
+        },
+        window.location.href,
+      )
+    }
+    captureLiveView(capture)
+    const view = buildLiveView(capture)
+    view.workspace.layout = capture.layout
+    if (mode === 'latest') {
+      await saveLatestLiveView(view)
+      return encodeLatestLiveLink(savedWorkspace.id, window.location.href)
+    }
+    return encodeExactLiveLink(view, window.location.href)
+  }
+  useEffect(() => {
+    if (restored || (!linkOptions.latestEnabled && !linkOptions.resumeLatest))
+      return
+    const view = buildLiveView()
+    const signature = JSON.stringify({ ...view, updatedAt: 0 })
+    if (signature === latestSignature.current) return
+    latestSignature.current = signature
+    latestToSave.current = view
+    // Workspace definitions are saved separately from this per-view state.
+    persistWorkspaceSessions(sessions)
+    const timer = window.setTimeout(() => {
+      void saveLatestLiveView(view).catch(reportSaveFailure)
+    }, 300)
+    return () => window.clearTimeout(timer)
+    // Capture changes are signaled only for UI state, never document content.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    workspace,
+    sessions,
+    savedWorkspace.id,
+    section,
+    layout,
+    captureVersion,
+    linkOptions.latestEnabled,
+    linkOptions.resumeLatest,
+    restored,
+    reportSaveFailure,
+  ])
+  useEffect(() => {
+    if (restored || (!linkOptions.latestEnabled && !linkOptions.resumeLatest))
+      return
+    const flush = () => {
+      if (latestToSave.current)
+        void saveLatestLiveView(latestToSave.current).catch(reportSaveFailure)
+    }
+    window.addEventListener('pagehide', flush)
+    const visibility = () => {
+      if (document.visibilityState === 'hidden') flush()
+    }
+    document.addEventListener('visibilitychange', visibility)
+    return () => {
+      flush()
+      window.removeEventListener('pagehide', flush)
+      document.removeEventListener('visibilitychange', visibility)
+    }
+  }, [
+    restored,
+    linkOptions.latestEnabled,
+    linkOptions.resumeLatest,
+    reportSaveFailure,
+  ])
+  useEffect(() => {
+    if (linkError) notify(linkError, 'error')
+  }, [linkError, notify])
+  useEffect(() => {
+    if (storageError || sessionStorageError)
+      notify(
+        'Your browser could not remember these changes. Keep this tab open and export a copy.',
+        'error',
+      )
+  }, [storageError, sessionStorageError, notify])
+  useEffect(() => {
+    if (restored || !localLibrary.available) return
+    let alive = true
+    let pending = false
+    const refresh = async () => {
+      if (pending || document.visibilityState === 'hidden') return
+      pending = true
+      try {
+        await localLibrary.refresh()
+        if (!alive) return
+        const metadata = localLibrary.cached(METADATA_LIBRARY_KEY).value
+        const saved = parseLibrarySessions(
+          localLibrary.cached(SESSIONS_LIBRARY_KEY).value,
+        )
+        if (!saved)
+          throw new Error(
+            'The local workspace list is invalid. Your current workspace was retained.',
+          )
+        if (metadata) {
+          const current = parseLibraryWorkspace(metadata)
+          if (!current)
+            throw new Error(
+              'The local project library is invalid. Your current workspace was retained.',
+            )
+          setWorkspace((previous) => {
+            const projects = current.projects.map((project) => {
+              const local = previous.projects.find(
+                (item) => item.id === project.id,
+              )
+              return local
+                ? {
+                    ...project,
+                    pinned: local.pinned,
+                    recentHidden: local.recentHidden,
+                    lastOpenedAt: local.lastOpenedAt,
+                  }
+                : project
+            })
+            if (JSON.stringify(projects) === JSON.stringify(previous.projects))
+              return previous
+            const next = { ...previous, projects }
+            persistWorkspace(next)
+            return next
+          })
+        }
+        if (saved)
+          setSessions((previous) => {
+            const items = saved.items.map((item) => {
+              const local = previous.items.find((old) => old.id === item.id)
+              return local ? { ...local, name: item.name } : item
+            })
+            if (JSON.stringify(items) === JSON.stringify(previous.items))
+              return previous
+            const next = { ...previous, items }
+            persistWorkspaceSessions(next)
+            return next
+          })
+      } catch (failure) {
+        if (alive) reportSaveFailure(failure)
+      } finally {
+        pending = false
+      }
+    }
+    const timer = window.setInterval(() => {
+      void refresh()
+    }, 1800)
+    return () => {
+      alive = false
+      window.clearInterval(timer)
+    }
+  }, [restored, reportSaveFailure])
+  function changeLinkOptions(next: LinkOptions) {
+    setLinkOptions(next)
+    if (!persistLinkOptions(next))
+      notify('Link settings could not be remembered in this browser.', 'error')
+    if (localLibrary.available)
+      void localLibrary
+        .transform(libraryKey('settings', 'links'), () => next)
+        .catch(reportSaveFailure)
+  }
+  async function exportProject(): Promise<ProjectArchive> {
+    const rootId =
+      section === 'home' || section === 'projects'
+        ? homeProjectId
+        : activeProject?.id
+    if (!rootId) throw new Error('Select a project to export.')
+    // Flush a live editor before reading its draft cache or saved records.
+    const activeFiles = prepareProjectExport.current?.() ?? []
+    const tree = collectProjectTree(projects, rootId)
+    const files = new Map<string, import('./canvasFiles').CanvasFileRecord>()
+    for (const project of tree) {
+      const saved = await fileStore.list(project.id)
+      for (const record of saved.value) files.set(record.id, record)
+      for (const draft of projectDrafts(fileStore).get(project.id) ?? [])
+        files.set(draft.record.id, draft.record)
+    }
+    const ids = new Set(tree.map((project) => project.id))
+    for (const file of activeFiles)
+      if (ids.has(file.projectId)) files.set(file.id, file)
+    return { rootProjectId: rootId, projects: tree, files: [...files.values()] }
+  }
+  async function importProject(archive: ProjectArchive) {
+    if (projects.length + archive.projects.length > 100)
+      throw new Error(
+        'This library can hold up to 100 projects. Import into a separate library or export existing projects first.',
+      )
+    if (
+      archive.projects.some((project) =>
+        projects.some((existing) => existing.id === project.id),
+      )
+    )
+      throw new Error(
+        'A project identifier is already in use. Import the file again to generate fresh identifiers.',
+      )
+    for (const file of archive.files)
+      if ((await fileStore.get(file.projectId, file.id)).value)
+        throw new Error(
+          'A canvas identifier is already in use. No existing file was replaced.',
+        )
+    // Publish project metadata only after every new file has been saved.
+    for (const file of archive.files) await fileStore.save(file)
+    updateWorkspace({
+      ...workspace,
+      projects: [...projects, ...archive.projects],
+      lastProjectId: archive.rootProjectId,
+    })
+    setHomeProjectId(archive.rootProjectId)
+    setWorkspaceStarted(false)
+    setSection('home')
+  }
+  const projectTransfer = (
+    <ProjectTransfer
+      onExport={exportProject}
+      onImport={importProject}
+      scopeId={notificationScopeId}
+      exportDisabled={
+        !(section === 'home' || section === 'projects'
+          ? homeProjectId
+          : activeProject?.id)
+      }
+    />
+  )
   const workspacesPanel = (
     <WorkspacesPanel
       state={sessions}
@@ -348,7 +794,6 @@ function WorkspaceApp({
     />
   )
   function navigate(next: Section) {
-    setVisibleLinkError(undefined)
     if (next === 'work' && (homeProjectId ?? workspace.lastProjectId))
       enterProject((homeProjectId ?? workspace.lastProjectId)!)
     else setSection(next === 'work' ? 'home' : next)
@@ -647,17 +1092,6 @@ function WorkspaceApp({
           </header>
         )}
         <main id="main-content" tabIndex={-1}>
-          {visibleLinkError && (
-            <div className="storage-alert" role="alert">
-              {visibleLinkError} Your existing projects are available below.
-            </div>
-          )}
-          {(storageError || sessionStorageError) && (
-            <div className="storage-alert" role="alert">
-              Your browser couldn’t remember these changes. They’ll remain
-              available in this tab for this session.
-            </div>
-          )}
           {section === 'options' && (
             <>
               <AppearanceOptions
@@ -682,6 +1116,11 @@ function WorkspaceApp({
                   Reset workspace layout
                 </button>
               </section>
+              <CanvasLiveLinksOptions
+                value={linkOptions}
+                onChange={changeLinkOptions}
+                localStorageAvailable={!storageError}
+              />
               <HotkeyOptions />
             </>
           )}
@@ -690,7 +1129,14 @@ function WorkspaceApp({
           )}
           {(section === 'home' || section === 'projects') && (
             <HomePage
-              store={restored?.store}
+              store={fileStore}
+              workspaceName={savedWorkspace.name}
+              projectActions={projectTransfer}
+              notificationScopeId={notificationScopeId}
+              allProjectsCollapsed={layout.allProjectsCollapsed}
+              onAllProjectsCollapsedChange={(collapsed) =>
+                updateLayout({ ...layout, allProjectsCollapsed: collapsed })
+              }
               projects={projects}
               selectedProjectId={homeProjectId}
               onSelectProject={setHomeProjectId}
@@ -730,7 +1176,7 @@ function WorkspaceApp({
                 aria-hidden={section !== 'work'}
               >
                 <FileWorkspace
-                  store={restored?.store}
+                  store={fileStore}
                   key={`${savedWorkspace.id}:${activeProject.id}`}
                   project={activeProject}
                   preferences={workspace.preferences}
@@ -740,10 +1186,21 @@ function WorkspaceApp({
                   workspaceActive={section === 'work'}
                   openRequest={openRequest}
                   viewSession={savedWorkspace.views[activeProject.id]}
+                  notificationScopeId={notificationScopeId}
+                  linkOptions={
+                    restored
+                      ? { ...linkOptions, latestEnabled: false }
+                      : linkOptions
+                  }
                   onCopyViewLink={copyViewLink}
+                  onLiveViewChange={captureLiveView}
+                  onPrepareProjectExportReady={registerProjectExport}
+                  initialCameras={rememberedCameras[savedWorkspace.id]}
                   initialViewState={
-                    savedWorkspace.id === restored?.snapshot.workspace.id &&
-                    activeProject.id === restored.snapshot.project.id
+                    (savedWorkspace.id === restored?.snapshot.workspace.id &&
+                      activeProject.id === restored.snapshot.project.id) ||
+                    (savedWorkspace.id === linked?.view.workspaceId &&
+                      activeProject.id === linked.view.projectId)
                       ? initialLinkView
                       : undefined
                   }
@@ -757,6 +1214,7 @@ function WorkspaceApp({
                   projectPanel={
                     <div className="project-explorer">
                       <div className="file-panel-actions">
+                        {projectTransfer}
                         <button
                           className="icon-button"
                           aria-label="New project"
@@ -805,6 +1263,13 @@ function WorkspaceApp({
                           updateWorkspace({
                             ...workspace,
                             projectRecentsCollapsed: collapsed,
+                          })
+                        }
+                        allProjectsCollapsed={layout.allProjectsCollapsed}
+                        onAllProjectsCollapsedChange={(collapsed) =>
+                          updateLayout({
+                            ...layout,
+                            allProjectsCollapsed: collapsed,
                           })
                         }
                         search={search}
@@ -860,6 +1325,11 @@ function WorkspaceApp({
           onClose={() => setPrompt(null)}
           onSubmit={submitProject}
         />
+      )}
+      {section !== 'work' && (
+        <div className="outer-notifications">
+          <NotificationBell scopeId={notificationScopeId} />
+        </div>
       )}
       <WorkspaceOverlays />
     </div>

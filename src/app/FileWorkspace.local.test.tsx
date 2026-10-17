@@ -387,13 +387,12 @@ describe('smart physical file saving in the workspace', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Export' }))
     expect(makeUrl).toHaveBeenCalledWith(expect.any(Blob))
     expect((click.mock.instances[0] as HTMLAnchorElement).download).toBe(
-      'Roadmap.lcanvas',
+      'Roadmap.CLF',
     )
     expect(screen.getByText('Unsaved changes')).toBeInTheDocument()
-    expect(screen.getByText(/^Download copy requested\./)).toHaveAttribute(
-      'role',
-      'status',
-    )
+    expect(
+      screen.getByText(/^Download copy requested\./).closest('[role="status"]'),
+    ).toHaveTextContent('Download copy requested.')
     act(() => {
       vi.advanceTimersByTime(1000)
     })
@@ -473,10 +472,9 @@ describe('smart physical file saving in the workspace', () => {
     save()
     await screen.findByText('Saved to file')
     expect(file.read().elements).toHaveLength(1)
-    expect(screen.getByText(/^The local file is saved\./)).toHaveAttribute(
-      'role',
-      'status',
-    )
+    expect(
+      screen.getByText(/^The local file is saved\./).closest('[role="status"]'),
+    ).toHaveTextContent('The local file is saved.')
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
     expect(screen.queryByText('Unsaved changes')).not.toBeInTheDocument()
     view.unmount()

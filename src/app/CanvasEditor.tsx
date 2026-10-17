@@ -55,6 +55,13 @@ import {
 } from './editorHistory'
 import { CanvasInspector } from './CanvasInspector'
 import {
+  adaptCanvasText,
+  DEFAULT_TEXT_OPTIONS,
+  growCanvasText,
+  layoutCanvasText,
+  type TextLayoutOptions,
+} from './canvasText'
+import {
   applyCanvasCommand,
   type CanvasCommandResult,
 } from '../mcp/canvasCommands'
@@ -67,6 +74,7 @@ import {
 } from './workspaceCommandsContext'
 import './canvas-viewer.css'
 import './canvas-editor.css'
+import './smart-text.css'
 
 export type CanvasEditorProps = {
   active?: boolean
@@ -91,7 +99,9 @@ export type CanvasEditorProps = {
   onSessionChange?: (session: EditorSession) => void
   initialViewState?: EditorViewState
   onStatusChange?: (status: CanvasEditorStatus) => void
+  onViewStateChange?: (state: EditorViewState) => void
   statusInFooter?: boolean
+  textOptions?: TextLayoutOptions
 }
 
 export type EditorSession = { tool: string; activeLayerId: string | null }
@@ -225,29 +235,28 @@ function ObjectText({
   element,
   prefix,
   centered,
+  textOptions,
 }: {
   element: Extract<CanvasElement, { text: string }>
   prefix: string
   centered: boolean
+  textOptions: TextLayoutOptions
 }) {
-  const padding = centered ? 12 : 0
-  const lines = element.text.split('\n')
-  const x = element.x + (centered ? element.width / 2 : 0)
-  const y = centered
-    ? element.y +
-      element.height / 2 -
-      ((lines.length - 1) * element.fontSize * 1.3) / 2
-    : element.y
+  const layout = layoutCanvasText(element, textOptions)
+  const { box, lines, fontSize, lineHeight } = layout
+  const x = centered ? box.x + box.width / 2 : box.x
+  const y =
+    box.y + (centered ? Math.max(0, (box.height - layout.height) / 2) : 0)
   const clipId = `${prefix}-text`
   return (
     <g pointerEvents="none">
       <defs>
         <clipPath id={clipId}>
           <rect
-            x={element.x + padding}
-            y={element.y + padding}
-            width={Math.max(0, element.width - padding * 2)}
-            height={Math.max(0, element.height - padding * 2)}
+            x={Math.min(box.x, centered ? x - layout.width / 2 : x)}
+            y={y}
+            width={Math.max(box.width, layout.width)}
+            height={Math.max(box.height, layout.height)}
           />
         </clipPath>
       </defs>
@@ -255,19 +264,17 @@ function ObjectText({
         x={x}
         y={y}
         fill={element.color}
-        fontSize={element.fontSize}
+        fontSize={fontSize}
         fontFamily="'Segoe UI', system-ui, sans-serif"
         textAnchor={centered ? 'middle' : 'start'}
-        dominantBaseline={centered ? 'middle' : 'text-before-edge'}
+        dominantBaseline="text-before-edge"
         clipPath={`url(#${clipId})`}
+        aria-label={element.text}
+        data-text-overflow={layout.overflow}
         xmlSpace="preserve"
       >
         {lines.map((line, index) => (
-          <tspan
-            key={index}
-            x={x}
-            dy={index === 0 ? 0 : element.fontSize * 1.3}
-          >
+          <tspan key={index} x={x} dy={index === 0 ? 0 : lineHeight}>
             {line || '\u00a0'}
           </tspan>
         ))}
@@ -281,11 +288,13 @@ export function EditorObject({
   element,
   prefix,
   editing = false,
+  textOptions = DEFAULT_TEXT_OPTIONS,
 }: {
   document: CanvasDocument
   element: CanvasElement
   prefix: string
   editing?: boolean
+  textOptions?: TextLayoutOptions
 }) {
   const common = {
     stroke: element.color,
@@ -326,7 +335,12 @@ export function EditorObject({
             />
           )}
           {!editing && (
-            <ObjectText element={element} prefix={prefix} centered />
+            <ObjectText
+              element={element}
+              prefix={prefix}
+              centered
+              textOptions={textOptions}
+            />
           )}
         </>
       )
@@ -361,7 +375,12 @@ export function EditorObject({
       )
     case 'text':
       return editing ? null : (
-        <ObjectText element={element} prefix={prefix} centered={false} />
+        <ObjectText
+          element={element}
+          prefix={prefix}
+          centered={false}
+          textOptions={textOptions}
+        />
       )
     case 'line':
       return (
@@ -449,8 +468,10 @@ export default function CanvasEditor({
   onSessionChange,
   initialViewState,
   onStatusChange,
+  onViewStateChange,
   statusInFooter = false,
   dockSide = 'right',
+  textOptions = DEFAULT_TEXT_OPTIONS,
 }: CanvasEditorProps) {
   const dockMode = dockHost !== undefined
   const [history, setHistory] = useState(() =>
@@ -526,7 +547,20 @@ export default function CanvasEditor({
   )
   const [error, setError] = useState('')
   const prefix = useId().replace(/[^\w-]/gu, '')
-  const board = history.present
+  const board =
+    inlineEdit && inlineEdit.value !== inlineEdit.original
+      ? {
+          ...history.present,
+          elements: history.present.elements.map((element) =>
+            element.id === inlineEdit.id && 'text' in element
+              ? growCanvasText(
+                  { ...element, text: inlineEdit.value },
+                  textOptions,
+                )
+              : element,
+          ),
+        }
+      : history.present
   const view = board.viewport
   const visible = orderedVisibleElements(board)
   const selected = board.elements.find((element) => element.id === selectedId)
@@ -654,8 +688,11 @@ export default function CanvasEditor({
     }
   }
 
-  function commit(next: CanvasDocument) {
-    showHistory(commitEditorHistory(currentHistory.current, next))
+  function commit(next: CanvasDocument, adaptText = true) {
+    const adapted = adaptText
+      ? adaptCanvasText(currentHistory.current.present, next, textOptions)
+      : next
+    showHistory(commitEditorHistory(currentHistory.current, adapted))
     setError('')
   }
 
@@ -718,9 +755,29 @@ export default function CanvasEditor({
             : 'Redid the latest canvas change.',
       }
     }
-    const result = applyCanvasCommand(controller.current.getDocument(), command)
+    const before = controller.current.getDocument()
+    const result = applyCanvasCommand(before, command)
     commit(result.document)
-    return { ...result, document: controller.current.getDocument() }
+    const after = controller.current.getDocument()
+    const oldElements = new Map(
+      before.elements.map((element) => [element.id, element]),
+    )
+    return {
+      ...result,
+      document: after,
+      affectedIds: [
+        ...new Set([
+          ...result.affectedIds,
+          ...after.elements
+            .filter(
+              (element) =>
+                JSON.stringify(element) !==
+                JSON.stringify(oldElements.get(element.id)),
+            )
+            .map((element) => element.id),
+        ]),
+      ],
+    }
   }
 
   function flushEditorDraft() {
@@ -752,6 +809,23 @@ export default function CanvasEditor({
     executeCommand.current = executeBridgeCommand
     flushCurrentDraft.current = flushEditorDraft
   })
+
+  useEffect(() => {
+    onViewStateChange?.({
+      ...controller.current.getViewState(),
+      viewport: { ...view },
+    })
+  }, [
+    onViewStateChange,
+    view,
+    selectedIds,
+    mode,
+    activeLayerId,
+    arrowStyle,
+    connectionStyle,
+    sourceSide,
+    targetSide,
+  ])
 
   useEffect(() => {
     activeRef.current = active
@@ -1508,17 +1582,18 @@ export default function CanvasEditor({
       x: (screenPoint.x - current.viewport.x) / current.viewport.zoom,
       y: (screenPoint.y - current.viewport.y) / current.viewport.zoom,
     }
-    const result =
-      structured || isCanvasClipboard(raw)
-        ? pasteCanvasClipboard(current, raw, {
-            layerId: activeLayerId,
-            center: point,
-          })
-        : pasteCanvasText(current, raw, {
-            layerId: activeLayerId,
-            center: point,
-          })
-    commit(result.document)
+    const isStructured = structured || isCanvasClipboard(raw)
+    const result = isStructured
+      ? pasteCanvasClipboard(current, raw, {
+          layerId: activeLayerId,
+          center: point,
+        })
+      : pasteCanvasText(current, raw, {
+          layerId: activeLayerId,
+          center: point,
+        })
+    // Structured copies preserve deliberately sized objects and their layout.
+    commit(result.document, !isStructured)
     setSelectedIds(result.selectedIds)
     setMode('select')
     setConnectionSource(null)
@@ -1594,7 +1669,7 @@ export default function CanvasEditor({
       selectedIds,
       { layerId: activeLayerId },
     )
-    commit(result.document)
+    commit(result.document, false)
     setSelectedIds(result.selectedIds)
   }
   const commandAvailable = active && !dragging && !inlineEdit
@@ -1818,7 +1893,31 @@ export default function CanvasEditor({
   const editedElement = inlineEdit
     ? board.elements.find((element) => element.id === inlineEdit.id)
     : null
-  const editBounds = editedElement ? elementBounds(board, editedElement) : null
+  const editLayout =
+    editedElement && 'text' in editedElement
+      ? layoutCanvasText(
+          { ...editedElement, text: inlineEdit?.value ?? editedElement.text },
+          textOptions,
+        )
+      : null
+  const editBounds = editLayout
+    ? {
+        ...editLayout.box,
+        y:
+          editLayout.box.y +
+          (editedElement?.type === 'text'
+            ? 0
+            : Math.max(0, (editLayout.box.height - editLayout.height) / 2)),
+        height: editLayout.height,
+      }
+    : editedElement && 'width' in editedElement
+      ? {
+          x: editedElement.x + 14,
+          y: editedElement.y + 8,
+          width: Math.max(1, editedElement.width - 28),
+          height: 28,
+        }
+      : null
   const connectionOptions = (
     <div className="canvas-connection-options">
       <span>
@@ -2131,6 +2230,7 @@ export default function CanvasEditor({
                       element={element}
                       prefix={`${prefix}-${index}`}
                       editing={inlineEdit?.id === element.id}
+                      textOptions={textOptions}
                     />
                   </g>
                 )
@@ -2215,12 +2315,8 @@ export default function CanvasEditor({
               style={{
                 left: editBounds.x * view.zoom + view.x,
                 top: editBounds.y * view.zoom + view.y,
-                width: Math.max(48, editBounds.width * view.zoom),
-                height: Math.max(
-                  32,
-                  (editedElement.type === 'area' ? 42 : editBounds.height) *
-                    view.zoom,
-                ),
+                width: editBounds.width * view.zoom,
+                height: Math.max(1, editBounds.height * view.zoom + 2),
               }}
             >
               <textarea
@@ -2235,12 +2331,7 @@ export default function CanvasEditor({
                 maxLength={editedElement.type === 'area' ? 120 : 20000}
                 spellCheck
                 style={{
-                  fontSize:
-                    (editedElement.type === 'area'
-                      ? 14
-                      : 'fontSize' in editedElement
-                        ? editedElement.fontSize
-                        : 20) * view.zoom,
+                  fontSize: (editLayout?.fontSize ?? 14) * view.zoom,
                   color: editedElement.color,
                 }}
                 onChange={(event) => {

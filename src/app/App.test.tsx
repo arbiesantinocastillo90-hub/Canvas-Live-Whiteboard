@@ -92,7 +92,7 @@ describe('workspace navigation and appearance', () => {
     const unload = new Event('beforeunload', { cancelable: true })
     fireEvent(window, unload)
     expect(unload.defaultPrevented).toBe(true)
-    fireEvent.click(screen.getByRole('button', { name: 'Work' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Work' }))
     await screen.findByLabelText('Editing canvas: 1 visible objects')
     expect(screen.getByText('Unsaved changes')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
@@ -171,20 +171,20 @@ describe('workspace navigation and appearance', () => {
     ).not.toBeInTheDocument()
   })
 
-  it('creates and renames projects, changes recency, and reopens the latest after remount', () => {
+  it('creates and renames projects, changes recency, and reopens the latest after remount', async () => {
     const view = render(<App />)
     createNamedProject('Roadmap')
     createNamedProject('Garden')
     fireEvent.click(
       screen.getByRole('button', { name: 'Open project Roadmap' }),
     )
-    fireEvent.click(screen.getByRole('button', { name: 'Work' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Work' }))
     fireEvent.click(screen.getByRole('button', { name: 'Files' }))
     expect(
       screen.getByRole('heading', { name: 'Roadmap', level: 2 }),
     ).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Options' }))
-    fireEvent.click(screen.getByRole('button', { name: 'Work' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Work' }))
     fireEvent.click(screen.getByRole('button', { name: 'Files' }))
     expect(
       screen.getByRole('heading', { name: 'Roadmap', level: 2 }),
@@ -197,7 +197,7 @@ describe('workspace navigation and appearance', () => {
     view.unmount()
     render(<App />)
     expect(document.querySelector('.canvas-editor')).toBeNull()
-    fireEvent.click(screen.getByRole('button', { name: 'Work' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Work' }))
     fireEvent.click(screen.getByRole('button', { name: 'Files' }))
     expect(
       screen.getByRole('heading', { name: 'New roadmap', level: 2 }),
@@ -242,7 +242,7 @@ describe('workspace navigation and appearance', () => {
     view.unmount()
     render(<App />)
     expect(document.querySelector('.canvas-editor')).toBeNull()
-    fireEvent.click(screen.getByRole('button', { name: 'Work' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Work' }))
     await screen.findByLabelText('Editing canvas: 1 visible objects')
     expect(
       screen.getByRole('button', { name: 'Unpin left panel' }),
@@ -260,7 +260,7 @@ describe('workspace navigation and appearance', () => {
     expect(JSON.parse(localStorage.getItem(LAYOUT_STORAGE_KEY)!)).toEqual(
       DEFAULT_LAYOUT,
     )
-    fireEvent.click(screen.getByRole('button', { name: 'Work' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Work' }))
     await screen.findByLabelText('Editing canvas: 1 visible objects')
   })
 
@@ -334,11 +334,11 @@ describe('workspace navigation and appearance', () => {
     await screen.findByRole('region', { name: 'Editing canvas canvas view' })
   })
 
-  it('filters projects and clears an empty search', () => {
+  it('filters projects and clears an empty search', async () => {
     render(<App />)
     createNamedProject('Roadmap')
     createNamedProject('Garden')
-    fireEvent.click(screen.getByRole('button', { name: 'Work' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Work' }))
     fireEvent.click(screen.getByRole('button', { name: /^Projects/ }))
     fireEvent.change(
       screen.getByRole('searchbox', { name: 'Search projects' }),
@@ -360,7 +360,7 @@ describe('workspace navigation and appearance', () => {
     ).toBeInTheDocument()
   })
 
-  it('applies all appearance controls and persists them without changing projects', () => {
+  it('applies all appearance controls and persists them without changing projects', async () => {
     const view = render(<App />)
     createNamedProject('My project')
     fireEvent.click(screen.getByRole('button', { name: 'Options' }))
@@ -377,7 +377,7 @@ describe('workspace navigation and appearance', () => {
     expect(view.container.firstChild).toHaveStyle('--accent: #ffcc00')
     view.unmount()
     render(<App />)
-    fireEvent.click(screen.getByRole('button', { name: 'Work' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Work' }))
     fireEvent.click(screen.getByRole('button', { name: 'Files' }))
     expect(
       screen.getByRole('heading', { name: 'My project', level: 2 }),
@@ -447,7 +447,7 @@ describe('workspace navigation and appearance', () => {
     ).toHaveFocus()
   })
 
-  it('retains usable project state in the session if browser storage fails', () => {
+  it('retains usable project state in the session if browser storage fails', async () => {
     localStorage.setItem(
       STORAGE_KEY,
       JSON.stringify(createProject(EMPTY_STATE, 'Remembered', 1, 'one')),
@@ -458,9 +458,9 @@ describe('workspace navigation and appearance', () => {
     render(<App />)
     createNamedProject('Session project')
     expect(screen.getByRole('alert')).toHaveTextContent(
-      'Your browser couldn’t remember these changes',
+      'Your browser could not remember these changes',
     )
-    fireEvent.click(screen.getByRole('button', { name: 'Work' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Work' }))
     fireEvent.click(screen.getByRole('button', { name: 'Files' }))
     expect(
       screen.getByRole('heading', { name: 'Session project', level: 2 }),

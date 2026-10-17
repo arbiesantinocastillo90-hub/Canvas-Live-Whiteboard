@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import {
   canvasFileStore,
   type CanvasFileRecord,
@@ -19,11 +19,15 @@ import {
 import Icon from './Icon'
 import ProjectExplorer from './ProjectExplorer'
 import { projectDescendants, type Project } from './workspace'
+import { useSessionNotifications } from './notificationSession'
+import { localLibrary, sharedCanvasFileStore } from './localLibrary'
 import './home-page.css'
 
 type HomeFile = { record: CanvasFileRecord; dirty: boolean; project: Project }
 
 export default function HomePage({
+  workspaceName,
+  projectActions,
   projects,
   selectedProjectId,
   onSelectProject,
@@ -33,12 +37,17 @@ export default function HomePage({
   onHideRecentProject,
   projectRecentsCollapsed,
   onProjectRecentsCollapsedChange,
+  allProjectsCollapsed,
+  onAllProjectsCollapsedChange,
   onOpenFile,
   onNewCanvas,
   onImport,
   onLocalImport,
   store = canvasFileStore,
+  notificationScopeId = 'home',
 }: {
+  workspaceName?: string
+  projectActions?: ReactNode
   projects: Project[]
   selectedProjectId: string | null
   onSelectProject: (id: string | null) => void
@@ -48,15 +57,24 @@ export default function HomePage({
   onHideRecentProject?: (id: string) => void
   projectRecentsCollapsed?: boolean
   onProjectRecentsCollapsedChange?: (collapsed: boolean) => void
+  allProjectsCollapsed?: boolean
+  onAllProjectsCollapsedChange?: (collapsed: boolean) => void
   onOpenFile: (projectId: string, fileId: string) => void
   onNewCanvas: (projectId: string) => void
   onImport: (projectId: string, files: File[]) => void
   onLocalImport?: (projectId: string, files: LocalCanvasImport[]) => void
   store?: CanvasFileStore
+  notificationScopeId?: string
 }) {
   const [files, setFiles] = useState<HomeFile[]>([])
   const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
+  const { notify } = useSessionNotifications(notificationScopeId)
+  const setError = useCallback(
+    (message: string | null) => {
+      if (message) notify(message, 'error')
+    },
+    [notify],
+  )
   const [search, setSearch] = useState('')
   const importInput = useRef<HTMLInputElement>(null)
   const alive = useRef(true)
@@ -80,7 +98,7 @@ export default function HomePage({
           .catch(() => ({
             drafts: [],
             error:
-              'Draft recovery could not be loaded. Open a saved LCANVAS file if needed.',
+              'Draft recovery could not be loaded. Open a saved .CLF file if needed.',
           }))
         const drafts = mergeRecoveredDrafts(
           recovery.drafts,
@@ -93,9 +111,11 @@ export default function HomePage({
               const bound = await localFilesFor(store)
                 .get(project.id, record.id)
                 .catch(() => null)
-              const savedRecord = bound
-                ? { ...record, document: bound.savedDocument }
-                : record
+              const savedRecord =
+                bound &&
+                !(store === sharedCanvasFileStore && localLibrary.available)
+                  ? { ...record, document: bound.savedDocument }
+                  : record
               return {
                 record: savedRecord,
                 dirty: false,
@@ -138,7 +158,7 @@ export default function HomePage({
     return () => {
       cancelled = true
     }
-  }, [projectSignature, store])
+  }, [projectSignature, store, setError])
   const selectedIds = selected
     ? projectDescendants(projects, selected.id)
     : null
@@ -178,7 +198,7 @@ export default function HomePage({
     },
     {
       id: 'file.import',
-      label: 'Import LCANVAS',
+      label: 'Import CLF',
       category: 'Files',
       enabled: !!targetProject,
       execute: () => {
@@ -197,9 +217,16 @@ export default function HomePage({
 
   return (
     <section className="home-page" aria-label="Canvas Live home">
+      {workspaceName && (
+        <h2 className="home-workspace-name" aria-label="Current workspace">
+          <Icon name="work" />
+          <span>{workspaceName}</span>
+        </h2>
+      )}
       <aside className="home-projects" aria-label="Home projects">
         <div className="home-projects-heading">
           <h2>Projects</h2>
+          {projectActions}
           <button
             className="icon-button"
             aria-label="Create a new project"
@@ -228,6 +255,8 @@ export default function HomePage({
           onHideRecent={onHideRecentProject}
           recentsCollapsed={projectRecentsCollapsed}
           onRecentsCollapsedChange={onProjectRecentsCollapsedChange}
+          allProjectsCollapsed={allProjectsCollapsed}
+          onAllProjectsCollapsedChange={onAllProjectsCollapsedChange}
           count={(id) => {
             const ids = projectDescendants(projects, id)
             return files.filter((file) => ids.has(file.project.id)).length
@@ -241,7 +270,7 @@ export default function HomePage({
             <button
               className="button secondary"
               aria-label="Import"
-              title="Import LCANVAS files"
+              title="Import .CLF files"
               disabled={!targetProject}
               onClick={() => {
                 void openImport()
@@ -277,8 +306,8 @@ export default function HomePage({
           className="file-import-input"
           type="file"
           multiple
-          accept=".lcanvas"
-          aria-label="Import LCANVAS files"
+          accept=".clf,.CLF,.lcanvas"
+          aria-label="Import CLF files"
           ref={importInput}
           onChange={(event) => {
             const selectedFiles = Array.from(event.target.files ?? [])
@@ -287,11 +316,6 @@ export default function HomePage({
               onImport(targetProject.id, selectedFiles)
           }}
         />
-        {error && (
-          <div className="file-message" role="status">
-            {error}
-          </div>
-        )}
         {loading ? (
           <div className="home-empty" role="status">
             Loading files…
@@ -338,7 +362,7 @@ export default function HomePage({
                 className="home-file"
                 key={record.id}
                 aria-label={`Open canvas ${record.document.name} in ${project.name}`}
-                title={`${record.document.name}.lcanvas`}
+                title={`${record.document.name}.CLF`}
                 onClick={() => onOpenFile(project.id, record.id)}
               >
                 <div className="home-file-preview" aria-hidden="true">
@@ -353,7 +377,7 @@ export default function HomePage({
                 </div>
                 <div className="home-file-details">
                   <span>{project.name}</span>
-                  <small>.lcanvas</small>
+                  <small>.CLF</small>
                 </div>
               </button>
             ))}

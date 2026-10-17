@@ -39,6 +39,21 @@ function tabOrder() {
   return screen.getAllByRole('tab').map((tab) => tab.getAttribute('aria-label'))
 }
 
+function positionedDrag(
+  type: string,
+  element: Element,
+  clientX: number,
+  dataTransfer: object,
+) {
+  const event = new MouseEvent(type, {
+    bubbles: true,
+    cancelable: true,
+    clientX,
+  })
+  Object.defineProperty(event, 'dataTransfer', { value: dataTransfer })
+  fireEvent(element, event)
+}
+
 function InteractiveTabs() {
   const [ids, setIds] = useState(['a', 'b', 'c'])
   const [activeId, setActiveId] = useState<string | null>('c')
@@ -236,6 +251,64 @@ describe('canvas tab presentation and navigation', () => {
       { dataTransfer: transfer },
     )
     expect(tabOrder()).toEqual(['Beta', 'Gamma', 'Alpha'])
+  })
+
+  it('shows the insertion side and release feedback when dragging right to the end and back left', () => {
+    render(<InteractiveTabs />)
+    const unit = (name: string) =>
+      screen.getByRole('tab', { name }).closest('.tab-unit') as HTMLElement
+    for (const [name, left] of [
+      ['Alpha', 0],
+      ['Beta', 100],
+      ['Gamma', 200],
+    ] as const) {
+      vi.spyOn(unit(name), 'getBoundingClientRect').mockReturnValue({
+        left,
+        right: left + 100,
+        width: 100,
+      } as DOMRect)
+    }
+    const transfer = { setData: vi.fn(), effectAllowed: '', dropEffect: '' }
+    fireEvent.dragStart(
+      screen.getByRole('tab', { name: 'Alpha' }).closest('.canvas-tab')!,
+      { dataTransfer: transfer },
+    )
+    expect(
+      screen.getByRole('tab', { name: 'Alpha' }).closest('.canvas-tab'),
+    ).toHaveAttribute('data-dragging', 'true')
+    positionedDrag('dragover', unit('Gamma'), 280, transfer)
+    expect(unit('Gamma')).toHaveAttribute('data-drop-edge', 'after')
+    positionedDrag('drop', unit('Gamma'), 280, transfer)
+    expect(tabOrder()).toEqual(['Beta', 'Gamma', 'Alpha'])
+    expect(unit('Alpha')).toHaveAttribute('data-settling', 'true')
+    expect(unit('Gamma')).not.toHaveAttribute('data-drop-edge')
+    expect(
+      screen.getByRole('tab', { name: 'Alpha' }).closest('.canvas-tab'),
+    ).toHaveAttribute('data-dragging', 'false')
+    fireEvent.dragStart(
+      screen.getByRole('tab', { name: 'Alpha' }).closest('.canvas-tab')!,
+      { dataTransfer: transfer },
+    )
+    positionedDrag('dragover', unit('Beta'), 110, transfer)
+    expect(unit('Beta')).toHaveAttribute('data-drop-edge', 'before')
+    positionedDrag('drop', unit('Beta'), 110, transfer)
+    expect(tabOrder()).toEqual(['Alpha', 'Beta', 'Gamma'])
+  })
+
+  it('cancels a self drag cleanly without changing order or activating another file', () => {
+    const initial = props()
+    render(<CanvasTabs {...initial} />)
+    const tab = screen
+      .getByRole('tab', { name: 'Beta' })
+      .closest('.canvas-tab')!
+    const transfer = { setData: vi.fn(), effectAllowed: '', dropEffect: '' }
+    fireEvent.dragStart(tab, { dataTransfer: transfer })
+    fireEvent.dragOver(tab, { dataTransfer: transfer })
+    fireEvent.drop(tab, { dataTransfer: transfer })
+    expect(initial.onOrder).not.toHaveBeenCalled()
+    expect(initial.onOpen).not.toHaveBeenCalled()
+    expect(tab).toHaveAttribute('data-dragging', 'false')
+    expect(document.querySelector('[data-drop-edge]')).toBeNull()
   })
 
   it('close actions only emit file identifiers and retain the files collection', () => {

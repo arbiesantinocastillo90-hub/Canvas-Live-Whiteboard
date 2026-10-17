@@ -285,7 +285,7 @@ describe('LCANVAS project workspace', () => {
         },
       ],
     }
-    fireEvent.change(screen.getByLabelText('Import LCANVAS files'), {
+    fireEvent.change(screen.getByLabelText('Import CLF files'), {
       target: {
         files: [
           upload('diagram.LCANVAS', serializeLCANVAS(imported)),
@@ -323,13 +323,15 @@ describe('LCANVAS project workspace', () => {
     const wrong = upload('image.png', 'not a canvas')
     const huge = upload('huge.lcanvas', '{}')
     Object.defineProperty(huge, 'size', { value: 10 * 1024 * 1024 + 1 })
-    fireEvent.change(screen.getByLabelText('Import LCANVAS files'), {
+    fireEvent.change(screen.getByLabelText('Import CLF files'), {
       target: { files: [wrong, huge] },
     })
     const error = await screen.findByRole('alert')
-    expect(error).toHaveTextContent('image.png: Choose an .lcanvas file.')
     expect(error).toHaveTextContent(
-      'huge.lcanvas: LCANVAS files must be 10 MiB or smaller.',
+      'image.png: Choose a .CLF file (legacy .lcanvas is also supported).',
+    )
+    expect(error).toHaveTextContent(
+      'huge.lcanvas: Canvas files must be 10 MiB or smaller.',
     )
     expect(wrong.text).not.toHaveBeenCalled()
     expect(huge.text).not.toHaveBeenCalled()

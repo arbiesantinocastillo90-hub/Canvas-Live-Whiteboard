@@ -3,6 +3,8 @@ import Icon from './Icon'
 import {
   parseSavedWorkspace,
   serializeSavedWorkspace,
+  workspaceExportFilename,
+  WORKSPACE_FILE_ACCEPT,
   type SavedWorkspace,
   type WorkspaceSessions,
 } from './workspaceSessions'
@@ -60,10 +62,7 @@ export default function WorkspacesPanel({
       const url = URL.createObjectURL(blob)
       const link = document.createElement('a')
       link.href = url
-      const filename = Array.from(current.name)
-        .map((character) => (character.charCodeAt(0) < 32 ? '-' : character))
-        .join('')
-      link.download = `${filename.replace(/[<>:"/\\|?*]/gu, '-').replace(/[. ]+$/u, '') || 'workspace'}.lworkspace`
+      link.download = workspaceExportFilename(current.name)
       link.click()
       setTimeout(() => URL.revokeObjectURL(url), 1000)
     })
@@ -91,7 +90,7 @@ export default function WorkspacesPanel({
       <input
         ref={importInput}
         type="file"
-        accept=".lworkspace,application/json"
+        accept={WORKSPACE_FILE_ACCEPT}
         hidden
         aria-label="Import workspace file"
         onChange={(event) => {

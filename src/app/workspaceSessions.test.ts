@@ -12,6 +12,7 @@ import {
   serializeSavedWorkspace,
   SESSIONS_STORAGE_KEY,
   updateSavedWorkspace,
+  workspaceExportFilename,
   type SavedWorkspace,
   type WorkspaceSessions,
 } from './workspaceSessions'
@@ -31,6 +32,45 @@ function state(item = snapshot()): WorkspaceSessions {
 }
 
 describe('named UI workspace snapshots', () => {
+  it('keeps bounded unique recent-file references and accepts older views without them', () => {
+    expect(normalizeProjectView({ openIds: ['a'] }).recentIds).toEqual([])
+    expect(
+      normalizeProjectView({
+        recentIds: ['b', 'a', 'b', '__proto__', ' spaced ', '', 1],
+      }).recentIds,
+    ).toEqual(['b', 'a'])
+    expect(
+      normalizeProjectView({
+        recentIds: Array.from(
+          { length: 1200 },
+          (_, index) => `recent-${index}`,
+        ),
+      }).recentIds,
+    ).toHaveLength(1000)
+    const item = snapshot()
+    item.views.project = normalizeProjectView({
+      openIds: ['a'],
+      activeId: 'a',
+      recentIds: ['b', 'a'],
+    })
+    expect(
+      parseSavedWorkspace(serializeSavedWorkspace(item), 'import').views.project
+        .recentIds,
+    ).toEqual(['b', 'a'])
+  })
+  it.each([
+    ['Planning', 'Planning.CLW'],
+    ['Plan.lworkspace', 'Plan.CLW'],
+    ['Plan.clw', 'Plan.CLW'],
+    ['CON', 'Workspace-CON.CLW'],
+    ['A/B: plan?', 'A-B- plan-.CLW'],
+    ['...', 'Workspace.CLW'],
+  ])(
+    'exports a portable .CLW name without repeated suffixes: %s',
+    (name, expected) => {
+      expect(workspaceExportFilename(name)).toBe(expected)
+    },
+  )
   beforeEach(() => {
     vi.restoreAllMocks()
     localStorage.clear()

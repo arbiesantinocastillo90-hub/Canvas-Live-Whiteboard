@@ -56,7 +56,13 @@ describe('physical local LCANVAS files', () => {
     expect(await chooseLocalCanvasSave('Roadmap')).toBe(handle)
     expect(save).toHaveBeenCalledWith(
       expect.objectContaining({
-        suggestedName: 'Roadmap.lcanvas',
+        suggestedName: 'Roadmap.CLF',
+        types: [
+          {
+            description: 'Canvas Live file (.CLF)',
+            accept: { 'application/json': ['.CLF', '.clf', '.lcanvas'] },
+          },
+        ],
         excludeAcceptAllOption: true,
       }),
     )
@@ -72,7 +78,7 @@ describe('physical local LCANVAS files', () => {
     const { handle } = localHandle('Other.txt')
     vi.stubGlobal('showSaveFilePicker', async () => handle)
     await expect(chooseLocalCanvasSave('Canvas')).rejects.toThrow(
-      'Choose a local .lcanvas',
+      'Choose a local .CLF',
     )
     vi.stubGlobal('showOpenFilePicker', async () =>
       Array.from({ length: 101 }, () => handle),
@@ -80,6 +86,18 @@ describe('physical local LCANVAS files', () => {
     await expect(chooseLocalCanvasFiles()).rejects.toThrow('up to 100')
     expect(handle.getFile).not.toHaveBeenCalled()
   })
+
+  it.each(['Canvas.CLF', 'Canvas.clf', 'Canvas.lcanvas', 'Canvas.LCANVAS'])(
+    'keeps explicit Save bound to the existing physical filename: %s',
+    async (name) => {
+      const { handle, read } = localHandle(name)
+      await writeLocalCanvas(handle, createCanvasDocument('Updated'))
+      expect(handle.name).toBe(name)
+      expect(read().name).toBe('Updated')
+      vi.stubGlobal('showOpenFilePicker', async () => [handle])
+      expect((await chooseLocalCanvasFiles())?.[0].handle).toBe(handle)
+    },
+  )
 
   it('never prompts for permission in background and prompts only for explicit Save', async () => {
     const { handle } = localHandle()

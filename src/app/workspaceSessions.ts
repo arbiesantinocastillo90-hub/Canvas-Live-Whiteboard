@@ -11,6 +11,7 @@ export type TabGroup = { id: string; name: string; collapsed: boolean }
 export type FileShortcut = { id: string; pinned: boolean; hidden: boolean }
 export type ProjectViewSession = {
   openIds: string[]
+  recentIds: string[]
   activeId: string | null
   tabs: TabPresentation[]
   groups: TabGroup[]
@@ -32,8 +33,25 @@ export type WorkspaceSessions = {
   items: SavedWorkspace[]
 }
 export const SESSIONS_STORAGE_KEY = 'canvas-live.sessions.v1'
+export const WORKSPACE_FILE_EXTENSION = '.CLW'
+export const WORKSPACE_FILE_ACCEPT = '.CLW,.clw,.lworkspace,application/json'
+export function workspaceExportFilename(workspaceName: string): string {
+  const safe = Array.from(name(workspaceName))
+    .map((character) =>
+      character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127
+        ? '-'
+        : character,
+    )
+    .join('')
+    .replace(/[<>:"/\\|?*]/gu, '-')
+    .replace(/[. ]+$/u, '')
+    .replace(/(?:\.(?:lworkspace|clw))+$/iu, '')
+  const base = safe || 'Workspace'
+  return `${/^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/iu.test(base) ? `Workspace-${base}` : base}${WORKSPACE_FILE_EXTENSION}`
+}
 export const EMPTY_PROJECT_VIEW: ProjectViewSession = {
   openIds: [],
+  recentIds: [],
   activeId: null,
   tabs: [],
   groups: [],
@@ -79,6 +97,9 @@ export function normalizeProjectView(value: unknown): ProjectViewSession {
   if (!record(value)) return { ...EMPTY_PROJECT_VIEW }
   const openIds = Array.isArray(value.openIds)
     ? [...new Set(value.openIds.filter(validId))].slice(0, MAX_REFERENCES)
+    : []
+  const recentIds = Array.isArray(value.recentIds)
+    ? [...new Set(value.recentIds.filter(validId))].slice(0, MAX_REFERENCES)
     : []
   const groups: TabGroup[] = []
   for (const item of Array.isArray(value.groups)
@@ -145,6 +166,7 @@ export function normalizeProjectView(value: unknown): ProjectViewSession {
       : null
   return {
     openIds,
+    recentIds,
     activeId:
       validId(value.activeId) && openIds.includes(value.activeId)
         ? value.activeId
@@ -321,7 +343,9 @@ export function parseSavedWorkspace(
     value.format !== 'CanvasLiveWorkspace' ||
     value.version !== 1
   )
-    throw new Error('Choose a Canvas Live .lworkspace file.')
+    throw new Error(
+      'Choose a Canvas Live .CLW file (legacy .lworkspace is also supported).',
+    )
   const workspace = normalizeSavedWorkspace(value.workspace)
   if (!workspace || !validId(id)) throw new Error('Invalid workspace file.')
   return { ...workspace, id }
