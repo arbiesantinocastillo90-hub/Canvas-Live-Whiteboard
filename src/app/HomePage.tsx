@@ -1,3 +1,4 @@
+import { baseCanvasStore, scopedCanvasRecord } from './canvasStoreScope'
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import {
   canvasFileStore,
@@ -92,8 +93,8 @@ export default function HomePage({
   onAllProjectsCollapsedChange?: (collapsed: boolean) => void
   onOpenFile: (projectId: string, fileId: string) => void
   onNewCanvas: (projectId: string) => void
-  onImport: (projectId: string, files: File[]) => void
-  onLocalImport?: (projectId: string, files: LocalCanvasImport[]) => void
+  onImport: (projectId: string | null, files: File[]) => void
+  onLocalImport?: (projectId: string | null, files: LocalCanvasImport[]) => void
   store?: CanvasFileStore
   notificationScopeId?: string
 }) {
@@ -167,11 +168,16 @@ export default function HomePage({
               const bound = await localFilesFor(store)
                 .get(project.id, record.id)
                 .catch(() => null)
-              const savedRecord =
+              const savedRecord = scopedCanvasRecord(
+                store,
                 bound &&
-                !(store === sharedCanvasFileStore && localLibrary.available)
+                  !(
+                    baseCanvasStore(store) === sharedCanvasFileStore &&
+                    localLibrary.available
+                  )
                   ? { ...record, document: bound.savedDocument }
-                  : record
+                  : record,
+              )
               return {
                 record: savedRecord,
                 dirty: false,
@@ -180,7 +186,17 @@ export default function HomePage({
               }
             }),
           )
-          const restored = mergeRecoveredDrafts(savedEntries, drafts)
+          const restored = mergeRecoveredDrafts(
+            savedEntries,
+            drafts.map((draft) => ({
+              ...draft,
+              record: scopedCanvasRecord(store, draft.record),
+              savedDocument: scopedCanvasRecord(store, {
+                ...draft.record,
+                document: draft.savedDocument,
+              }).document,
+            })),
+          )
           return {
             files: restored.map((draft) => ({
               record: draft.record,
@@ -290,12 +306,11 @@ export default function HomePage({
     )
   }
   async function openImport() {
-    if (!targetProject) return
     if (supportsLocalCanvasOpen() && onLocalImport) {
       try {
         const selectedFiles = await chooseLocalCanvasFiles()
         if (alive.current && selectedFiles?.length)
-          onLocalImport(targetProject.id, selectedFiles)
+          onLocalImport(targetProject?.id ?? null, selectedFiles)
       } catch (failure) {
         if (alive.current)
           setError(
@@ -320,7 +335,7 @@ export default function HomePage({
       id: 'file.import',
       label: 'Import CLF',
       category: 'Files',
-      enabled: !!targetProject,
+      enabled: true,
       execute: () => {
         void openImport()
       },
@@ -579,7 +594,6 @@ export default function HomePage({
                   className="button secondary"
                   aria-label="Import"
                   title="Import .CLF files"
-                  disabled={!targetProject}
                   onClick={() => {
                     void openImport()
                   }}
@@ -647,8 +661,8 @@ export default function HomePage({
           onChange={(event) => {
             const selectedFiles = Array.from(event.target.files ?? [])
             event.target.value = ''
-            if (targetProject && selectedFiles.length)
-              onImport(targetProject.id, selectedFiles)
+            if (selectedFiles.length)
+              onImport(targetProject?.id ?? null, selectedFiles)
           }}
         />
         {loading ? (
@@ -661,6 +675,12 @@ export default function HomePage({
               <Icon name="folder" />
             </span>
             <h2>No projects yet</h2>
+            <button
+              className="button secondary"
+              onClick={() => void openImport()}
+            >
+              Import canvas files
+            </button>
             <button className="button primary" onClick={() => onNewProject()}>
               <Icon name="plus" />
               Create project

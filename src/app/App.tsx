@@ -1,3 +1,8 @@
+import { createWorkspaceCanvasStore } from './canvasStoreScope'
+import {
+  initializeWorkspaceContents,
+  workspaceProjects,
+} from './workspaceContents'
 import {
   useCallback,
   useEffect,
@@ -14,7 +19,6 @@ import {
   type ItemPresentation,
 } from './itemPresentation'
 import type { CanvasFileRecord } from './canvasFiles'
-import { recoveryFor } from './canvasRecovery'
 import { resolveAppearanceVariables } from './appearance'
 import FileWorkspace, {
   type WorkspaceOpenRequest,
@@ -232,11 +236,10 @@ function WorkspaceApp({
   linked?: LiveViewLaunch
   linkError?: string
 }) {
-  const fileStore =
+  const baseFileStore =
     restored?.store ??
     linked?.fileStore ??
     (localLibrary.available ? sharedCanvasFileStore : canvasFileStore)
-  useCanvasDraftProtection(fileStore)
   // A portable link owns an isolated editing session. Its settings and file
   // copies must not replace the main app's library or grant native file access.
   const saveMetadata = (value: WorkspaceState, before = workspace) => {
@@ -314,8 +317,8 @@ function WorkspaceApp({
   const createButton = useRef<HTMLButtonElement>(null)
   const workspaceOptions = useRef<HTMLDivElement>(null)
   const [customization, setCustomization] = useState<
-    | { kind: 'project'; project: Project }
-    | { kind: 'file'; record: CanvasFileRecord }
+    | { kind: 'project'; project: Project; workspaceId: string }
+    | { kind: 'file'; record: CanvasFileRecord; workspaceId: string }
     | null
   >(null)
   const [storageError, setStorageError] = useState(
@@ -327,7 +330,9 @@ function WorkspaceApp({
       false,
   )
   const [layout, setLayout] = useState(startup.layout)
-  const [sessions, setSessions] = useState(startup.sessions)
+  const [sessions, setSessions] = useState(() =>
+    initializeWorkspaceContents(startup.sessions, startup.workspace.projects),
+  )
   const [sessionStorageError, setSessionStorageError] = useState(false)
   const [initialLinkView, setInitialLinkView] = useState(
     linked?.initialView ?? restored?.snapshot.activeView,
@@ -339,6 +344,59 @@ function WorkspaceApp({
   const savedWorkspace = sessions.items.find(
     (item) => item.id === sessions.activeId,
   )!
+  const sessionStateRef = useRef(sessions)
+  const workspaceStateRef = useRef(workspace)
+  const projectStateRef = useRef(workspace.projects)
+  sessionStateRef.current = sessions
+  workspaceStateRef.current = workspace
+  projectStateRef.current = workspace.projects
+  const scopedStores = useRef(new Map<string, typeof baseFileStore>())
+  const scopeKey = savedWorkspace.id
+  const fileStore = (() => {
+    const existing = scopedStores.current.get(scopeKey)
+    if (existing) return existing
+    const created = createWorkspaceCanvasStore(
+      baseFileStore,
+      scopeKey,
+      (projectId) => {
+        const item = sessionStateRef.current.items.find(
+          (item) => item.id === scopeKey,
+        )
+        return (
+          !!item &&
+          (
+            item.projectIds ??
+            projectStateRef.current.map((project) => project.id)
+          ).includes(projectId)
+        )
+      },
+      (id) => {
+        const values = sessionStateRef.current.items.find(
+          (item) => item.id === scopeKey,
+        )?.filePresentations
+        return values && Object.hasOwn(values, id) ? values[id] : undefined
+      },
+    )
+    scopedStores.current.set(scopeKey, created)
+    return created
+  })()
+  useCanvasDraftProtection(fileStore)
+  useEffect(() => {
+    const protect = (event: BeforeUnloadEvent) => {
+      if (
+        [...scopedStores.current.values()].some((store) =>
+          [...projectDrafts(store).values()].some((files) =>
+            files.some((draft) => draft.dirty),
+          ),
+        )
+      ) {
+        event.preventDefault()
+        event.returnValue = ''
+      }
+    }
+    window.addEventListener('beforeunload', protect)
+    return () => window.removeEventListener('beforeunload', protect)
+  }, [])
   const [systemDark, setSystemDark] = useState(
     () => window.matchMedia?.('(prefers-color-scheme: dark)').matches ?? false,
   )
@@ -372,8 +430,8 @@ function WorkspaceApp({
     },
     [notify],
   )
-  const projects = workspace.projects
-  const activeProject = workspace.projects.find(
+  const projects = workspaceProjects(savedWorkspace, workspace.projects)
+  const activeProject = projects.find(
     (project) => project.id === workspace.lastProjectId,
   )
   const theme =
@@ -394,9 +452,10 @@ function WorkspaceApp({
   function enterProject(
     id: string,
     request?: Omit<WorkspaceOpenRequest, 'sequence'>,
+    source = workspace,
   ) {
     if (id !== workspace.lastProjectId) lastCapture.current = null
-    updateWorkspace(openProject(workspace, id))
+    updateWorkspace(openProject(source, id))
     setWorkspaceStarted(true)
     setHomeProjectId(id)
     setOpenRequest({ ...request, sequence: ++requestSequence.current })
@@ -408,6 +467,21 @@ function WorkspaceApp({
     })
   }
 
+  function importIntoWorkspace(
+    projectId: string | null,
+    request: Omit<WorkspaceOpenRequest, 'sequence'>,
+  ) {
+    if (projectId) {
+      enterProject(projectId, request)
+      return
+    }
+    try {
+      const next = createProject(workspace, 'Imported canvases')
+      enterProject(next.lastProjectId!, request, next)
+    } catch (failure) {
+      reportSaveFailure(failure)
+    }
+  }
   function updateWorkspace(next: WorkspaceState) {
     next = {
       ...next,
@@ -424,11 +498,24 @@ function WorkspaceApp({
       }),
     }
     setStorageError(!saveMetadata(next))
+    workspaceStateRef.current = next
     setWorkspace(next)
     updateSessions((current) =>
       updateSavedWorkspace(current, current.activeId, {
         preferences: next.preferences,
         projectId: next.lastProjectId,
+        projectIds: [
+          ...new Set([
+            ...(current.items.find((item) => item.id === current.activeId)
+              ?.projectIds ?? workspace.projects.map((project) => project.id)),
+            ...next.projects
+              .filter(
+                (project) =>
+                  !workspace.projects.some((old) => old.id === project.id),
+              )
+              .map((project) => project.id),
+          ]),
+        ],
       }),
     )
   }
@@ -438,6 +525,7 @@ function WorkspaceApp({
     setSessions((current) => {
       const next = change(current)
       if (JSON.stringify(next) === JSON.stringify(current)) return current
+      sessionStateRef.current = next
       setSessionStorageError(!saveSessions(next, current))
       return next
     })
@@ -452,8 +540,9 @@ function WorkspaceApp({
       lastOpenedAt: Date.now(),
     })
     setSessionStorageError(!saveSessions(next))
+    sessionStateRef.current = next
     setSessions(next)
-    const projectId = workspace.projects.some(
+    const projectId = workspaceProjects(saved, workspace.projects).some(
       (project) => project.id === saved.projectId,
     )
       ? saved.projectId
@@ -466,22 +555,26 @@ function WorkspaceApp({
     setStorageError(
       (!restored && !persistWorkspace(updated)) || !saveLayout(saved.layout),
     )
+    workspaceStateRef.current = updated
     setWorkspace(updated)
+    setCustomization(null)
     setLayout(saved.layout)
     setHomeProjectId(projectId)
     setOpenRequest(undefined)
-    setWorkspaceStarted(!!projectId)
-    setSection(projectId ? 'work' : 'home')
+    setWorkspaceStarted(false)
+    setSection('home')
   }
   function createNamedWorkspace(name: string) {
     const created = {
-      ...createSavedWorkspace(
-        workspace.preferences,
-        layout,
-        workspace.lastProjectId,
-        name,
-      ),
-      views: structuredClone(savedWorkspace.views),
+      ...createSavedWorkspace(workspace.preferences, layout, null, name),
+      projectIds: [],
+      projectPresentations: {},
+      filePresentations: {},
+      layout: {
+        ...layout,
+        homeView: { ...layout.homeView, openedProjectId: null },
+      },
+      views: {},
     }
     selectSavedWorkspace(created.id, addSavedWorkspace(sessions, created))
   }
@@ -498,6 +591,7 @@ function WorkspaceApp({
   }
   const captureLiveView = useCallback(
     (capture: WorkspaceViewCapture) => {
+      if (sessionStateRef.current.activeId !== savedWorkspace.id) return
       const previous = lastCapture.current
       for (const file of capture.files)
         cameras.current[file.id] = file.document.viewport
@@ -715,7 +809,20 @@ function WorkspaceApp({
           setSessions((previous) => {
             const items = saved.items.map((item) => {
               const local = previous.items.find((old) => old.id === item.id)
-              return local ? { ...local, name: item.name } : item
+              return local
+                ? {
+                    ...local,
+                    name: item.name,
+                    ...((item.updatedAt ?? 0) >= (local.updatedAt ?? 0)
+                      ? {
+                          projectIds: item.projectIds ?? local.projectIds,
+                          projectPresentations: item.projectPresentations,
+                          filePresentations: item.filePresentations,
+                          updatedAt: item.updatedAt,
+                        }
+                      : {}),
+                  }
+                : item
             })
             if (JSON.stringify(items) === JSON.stringify(previous.items))
               return previous
@@ -768,33 +875,66 @@ function WorkspaceApp({
     return { rootProjectId: rootId, projects: tree, files: [...files.values()] }
   }
   async function importProject(archive: ProjectArchive) {
-    if (projects.length + archive.projects.length > 100)
+    const destinationId = savedWorkspace.id
+    if (workspace.projects.length + archive.projects.length > 100)
       throw new Error(
         'This library can hold up to 100 projects. Import into a separate library or export existing projects first.',
       )
     if (
       archive.projects.some((project) =>
-        projects.some((existing) => existing.id === project.id),
+        workspace.projects.some((existing) => existing.id === project.id),
       )
     )
       throw new Error(
         'A project identifier is already in use. Import the file again to generate fresh identifiers.',
       )
     for (const file of archive.files)
-      if ((await fileStore.get(file.projectId, file.id)).value)
+      if ((await baseFileStore.get(file.projectId, file.id)).value)
         throw new Error(
           'A canvas identifier is already in use. No existing file was replaced.',
         )
     // Publish project metadata only after every new file has been saved.
-    for (const file of archive.files) await fileStore.save(file)
-    updateWorkspace({
-      ...workspace,
-      projects: [...projects, ...archive.projects],
-      lastProjectId: archive.rootProjectId,
-    })
-    setHomeProjectId(archive.rootProjectId)
-    setWorkspaceStarted(false)
-    setSection('home')
+    for (const file of archive.files) await baseFileStore.save(file)
+    const current = workspaceStateRef.current
+    if (
+      current.projects.length + archive.projects.length > 100 ||
+      archive.projects.some((project) =>
+        current.projects.some((existing) => existing.id === project.id),
+      )
+    )
+      throw new Error(
+        'The project library changed during import. Import the project again to generate fresh identifiers.',
+      )
+    if (
+      !sessionStateRef.current.items.some((item) => item.id === destinationId)
+    )
+      throw new Error('The destination workspace is no longer available.')
+    const active = sessionStateRef.current.activeId === destinationId
+    const next = {
+      ...current,
+      projects: [...current.projects, ...archive.projects],
+      lastProjectId: active ? archive.rootProjectId : current.lastProjectId,
+    }
+    setStorageError(!saveMetadata(next, current))
+    workspaceStateRef.current = next
+    setWorkspace(next)
+    updateSessions((state) =>
+      updateSavedWorkspace(state, destinationId, {
+        projectId: archive.rootProjectId,
+        projectIds: [
+          ...new Set([
+            ...(state.items.find((item) => item.id === destinationId)
+              ?.projectIds ?? []),
+            ...archive.projects.map((project) => project.id),
+          ]),
+        ],
+      }),
+    )
+    if (active) {
+      setHomeProjectId(archive.rootProjectId)
+      setWorkspaceStarted(false)
+      setSection('home')
+    }
   }
   const projectTransfer = (
     <ProjectTransfer
@@ -827,15 +967,57 @@ function WorkspaceApp({
           }),
         )
       }}
-      onImport={(imported: SavedWorkspace) =>
-        selectSavedWorkspace(imported.id, addSavedWorkspace(sessions, imported))
-      }
+      onImport={(imported: SavedWorkspace) => {
+        const projectIds = imported.projectIds ?? []
+        const item = {
+          ...imported,
+          projectIds,
+          projectId: projectIds.includes(imported.projectId ?? '')
+            ? imported.projectId
+            : null,
+        }
+        selectSavedWorkspace(item.id, addSavedWorkspace(sessions, item))
+      }}
     />
   )
+  const [resuming, setResuming] = useState(false)
+  async function resumeLatestModified() {
+    if (resuming) return
+    setResuming(true)
+    try {
+      const scope = savedWorkspace.id
+      const loaded = await Promise.all(
+        projects.map(async (project) => {
+          const result = await fileStore.list(project.id)
+          const records = new Map(result.value.map((file) => [file.id, file]))
+          for (const draft of projectDrafts(fileStore).get(project.id) ?? [])
+            records.set(draft.record.id, draft.record)
+          return [...records.values()]
+        }),
+      )
+      if (sessionStateRef.current.activeId !== scope) return
+      const latest = loaded
+        .flat()
+        .sort(
+          (a, b) =>
+            b.updatedAt - a.updatedAt ||
+            b.lastOpenedAt - a.lastOpenedAt ||
+            a.id.localeCompare(b.id),
+        )[0]
+      const projectId =
+        latest?.projectId ?? activeProject?.id ?? projects[0]?.id
+      if (projectId)
+        enterProject(projectId, latest ? { fileId: latest.id } : undefined)
+      else setSection('home')
+    } catch (failure) {
+      reportSaveFailure(failure)
+    } finally {
+      setResuming(false)
+    }
+  }
   function navigate(next: Section) {
-    if (next === 'work' && (homeProjectId ?? workspace.lastProjectId))
-      enterProject((homeProjectId ?? workspace.lastProjectId)!)
-    else setSection(next === 'work' ? 'home' : next)
+    if (next === 'work') void resumeLatestModified()
+    else setSection(next)
     setSearch('')
   }
   function submitProject(name: string, parentId?: string | null) {
@@ -884,69 +1066,63 @@ function WorkspaceApp({
     updateLayout({ ...layout, filesOpen: true, leftPanel })
   }
   async function openFileAppearance(projectId: string, fileId: string) {
+    const workspaceId = savedWorkspace.id
     try {
       const result = await fileStore.get(projectId, fileId)
+      if (sessionStateRef.current.activeId !== workspaceId) return
       if (!result.value)
         throw new Error(
           'This canvas is unavailable. Reopen its project and try again.',
         )
-      setCustomization({ kind: 'file', record: result.value })
+      setCustomization({ kind: 'file', record: result.value, workspaceId })
     } catch (failure) {
       reportSaveFailure(failure)
     }
   }
   async function saveItemAppearance(value: ItemPresentation) {
-    if (!customization) return
-    if (customization.kind === 'project') {
-      updateWorkspace({
-        ...workspace,
-        projects: projects.map((project) =>
-          project.id === customization.project.id
-            ? {
-                ...project,
-                presentation: normalizeItemPresentation(value, 'folder'),
-              }
-            : project,
-        ),
-      })
-      notify('Project appearance saved.', 'success')
+    if (
+      !customization ||
+      sessionStateRef.current.activeId !== customization.workspaceId
+    )
       return
-    }
-    const record = customization.record
-    const result = await fileStore.save({
-      ...record,
-      document: { ...record.document, presentation: value },
-      updatedAt: Math.max(Date.now(), record.updatedAt + 1),
+    const id =
+      customization.kind === 'project'
+        ? customization.project.id
+        : customization.record.id
+    const field =
+      customization.kind === 'project'
+        ? 'projectPresentations'
+        : 'filePresentations'
+    const normalized = normalizeItemPresentation(
+      value,
+      customization.kind === 'project' ? 'folder' : 'canvas',
+    )
+    updateSessions((current) => {
+      const selected = current.items.find(
+        (item) => item.id === customization.workspaceId,
+      )!
+      return updateSavedWorkspace(current, customization.workspaceId, {
+        [field]: { ...selected[field], [id]: normalized },
+      })
     })
-    if (result.persistence === 'session' && result.error)
-      throw new Error(result.error)
-    const drafts = projectDrafts(fileStore).get(record.projectId)
-    if (drafts) {
-      const patched = drafts.map((draft) =>
-        draft.record.id === record.id
-          ? {
-              ...draft,
-              savedDocument: { ...draft.savedDocument, presentation: value },
-              record: {
-                ...draft.record,
-                ...result.value,
-                document: { ...draft.record.document, presentation: value },
-              },
-            }
-          : draft,
-      )
-      projectDrafts(fileStore).set(record.projectId, patched)
-      await recoveryFor(fileStore)
-        .replace(record.projectId, patched)
-        .catch(() => undefined)
-    }
-    window.dispatchEvent(
-      new CustomEvent('canvas-live-library-updated', {
-        detail: { projectId: record.projectId, fileId: record.id },
-      }),
+    requestAnimationFrame(() =>
+      window.dispatchEvent(
+        new CustomEvent('canvas-live-library-updated', {
+          detail: {
+            workspaceId: savedWorkspace.id,
+            projectId:
+              customization.kind === 'file'
+                ? customization.record.projectId
+                : id,
+            fileId: customization.kind === 'file' ? id : undefined,
+          },
+        }),
+      ),
     )
     notify(
-      'Canvas appearance saved. Open drawing edits stay unsaved.',
+      customization.kind === 'project'
+        ? 'Project appearance saved for this workspace.'
+        : 'Canvas appearance saved for this workspace. Open drawing edits stay unsaved.',
       'success',
     )
   }
@@ -1130,9 +1306,10 @@ function WorkspaceApp({
                 Canvas <strong>Live</strong>
               </span>
             </a>
-            {activeProject && (
+            {projects.length > 0 && (
               <button
                 className="resume-work-button"
+                disabled={resuming}
                 aria-label="Work"
                 title="Resume workspace"
                 onClick={() => navigate('work')}
@@ -1260,7 +1437,11 @@ function WorkspaceApp({
                 })
               }}
               onCustomizeProject={(project) =>
-                setCustomization({ kind: 'project', project })
+                setCustomization({
+                  kind: 'project',
+                  project,
+                  workspaceId: savedWorkspace.id,
+                })
               }
               onCustomizeFile={(projectId, fileId) => {
                 void openFileAppearance(projectId, fileId)
@@ -1295,9 +1476,9 @@ function WorkspaceApp({
               }
               onOpenFile={(id, fileId) => enterProject(id, { fileId })}
               onNewCanvas={(id) => enterProject(id, { action: 'create' })}
-              onImport={(id, imports) => enterProject(id, { imports })}
+              onImport={(id, imports) => importIntoWorkspace(id, { imports })}
               onLocalImport={(id, localImports) =>
-                enterProject(id, { localImports })
+                importIntoWorkspace(id, { localImports })
               }
             />
           )}

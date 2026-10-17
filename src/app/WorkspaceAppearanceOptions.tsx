@@ -287,7 +287,7 @@ export default function WorkspaceAppearanceOptions({
           </button>
         </div>
         <p className="option-description">
-          Local PNG, JPEG, WebP or GIF, up to 2 MB. Images stay on this device.
+          Local PNG, JPEG, WebP or GIF, up to 20 MB. Images stay on this device.
         </p>
         {error && (
           <p className="personalization-error" role="alert">

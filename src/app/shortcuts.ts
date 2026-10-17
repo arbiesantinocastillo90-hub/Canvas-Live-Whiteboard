@@ -14,6 +14,8 @@ export const shortcutActions = [
   ['canvas.toggleProperties', 'Toggle Properties', 'Panels', 'Mod+Alt+I'],
   ['file.new', 'New canvas', 'Files', 'Mod+Alt+N'],
   ['file.import', 'Import CLF', 'Files', 'Mod+Alt+O'],
+  ['file.rename', 'Rename current canvas', 'Files', ''],
+  ['file.saveOptions', 'Open Save options', 'Files', ''],
   ['file.save', 'Save current canvas', 'Files', 'Mod+S'],
   ['file.saveAs', 'Save canvas as local file', 'Files', 'Mod+Shift+S'],
   ['file.export', 'Export current canvas', 'Files', 'Mod+Shift+E'],

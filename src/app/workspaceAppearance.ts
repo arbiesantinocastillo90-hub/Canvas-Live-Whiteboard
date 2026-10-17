@@ -165,9 +165,10 @@ export function workspaceBackgroundStyle(
   const item = normalizeWorkspaceAppearance(value)
   const image =
     typeof imageURL === 'string' &&
-    (/^data:image\/(png|jpeg|webp|gif);base64,[A-Za-z\d+/]+=*$/u.test(
-      imageURL,
-    ) ||
+    (/^\/__canvas_live_library\/assets\/[a-f\d]{64}$/u.test(imageURL) ||
+      /^data:image\/(png|jpeg|webp|gif);base64,[A-Za-z\d+/]+=*$/u.test(
+        imageURL,
+      ) ||
       /^blob:https?:\/\/(127\.0\.0\.1|localhost)(:\d+)?\/[a-z\d-]+$/iu.test(
         imageURL,
       ))

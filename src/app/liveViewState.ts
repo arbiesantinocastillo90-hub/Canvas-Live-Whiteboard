@@ -336,17 +336,23 @@ export async function resolveLiveView(
         }
       : project
   })
+  const membership =
+    canonical.projectIds ?? projects.map((project) => project.id)
   const projectId = projects.some(
-    (project) => project.id === captured.projectId,
+    (project) =>
+      project.id === captured.projectId && membership.includes(project.id),
   )
     ? captured.projectId
     : null
-  const projectIds = new Set(projects.map((project) => project.id))
+  const projectIds = new Set(membership)
   const layout = options.rememberPanels
     ? captured.workspace.layout
     : canonical.layout
   const active = {
     ...captured.workspace,
+    projectIds: membership,
+    projectPresentations: canonical.projectPresentations,
+    filePresentations: canonical.filePresentations,
     name: canonical.name,
     projectId,
     layout,

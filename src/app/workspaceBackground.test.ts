@@ -53,7 +53,10 @@ function browser() {
         objectStore: () => ({
           put: (value: unknown, key: string) => {
             queueMicrotask(() => {
-              values.set(key, structuredClone(value))
+              values.set(
+                key,
+                value instanceof Blob ? value : structuredClone(value),
+              )
               transaction.oncomplete?.()
             })
           },
@@ -94,6 +97,10 @@ function browser() {
 }
 beforeEach(() => {
   vi.stubGlobal('crypto', webcrypto)
+  vi.stubGlobal('URL', {
+    createObjectURL: vi.fn(() => 'blob:http://localhost/background-id'),
+    revokeObjectURL: vi.fn(),
+  })
 })
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -123,7 +130,7 @@ describe('local image assets', () => {
     }).save(blob())
     expect(
       await createBackgroundAssetStore({ client, indexedDB: factory }).read(id),
-    ).toMatch(/^data:image\/gif;base64,/u)
+    ).toBe('blob:http://localhost/background-id')
   })
   it('does not attach images when no durable store is available', async () => {
     const store = createBackgroundAssetStore({
@@ -146,10 +153,10 @@ describe('local image assets', () => {
   it('rejects empty, oversize, SVG and mismatched raster files before persistence', async () => {
     const { client } = library()
     const store = createBackgroundAssetStore({ client, indexedDB: null })
-    await expect(store.save(new Blob([]))).rejects.toThrow('2 MB')
+    await expect(store.save(new Blob([]))).rejects.toThrow('20 MB')
     await expect(
       store.save(new Blob([new Uint8Array(BACKGROUND_MAX_BYTES + 1)])),
-    ).rejects.toThrow('2 MB')
+    ).rejects.toThrow('20 MB')
     await expect(
       store.save(
         new Blob(['<svg onload="alert(1)"/>'], { type: 'image/svg+xml' }),
@@ -178,6 +185,90 @@ describe('local image assets', () => {
       validateBackgroundAsset(asset, 'a'.repeat(64)),
     ).rejects.toThrow('invalid')
     await expect(store.read('../../file')).rejects.toThrow('identifier')
+  })
+  it('uses binary uploads up to 20 MiB and immutable native URLs without repeated reads', async () => {
+    const { client } = library()
+    const fetcher = vi.fn(async () => new Response('{}', { status: 200 }))
+    const store = createBackgroundAssetStore({
+      client,
+      fetch: fetcher,
+      nativeAssets: true,
+    })
+    const bytes = new Uint8Array(BACKGROUND_MAX_BYTES)
+    bytes.set(gif)
+    const id = await store.save(new Blob([bytes], { type: 'image/gif' }))
+    expect(fetcher).toHaveBeenCalledOnce()
+    const [url, request] = fetcher.mock.calls[0] as unknown as [
+      string,
+      RequestInit,
+    ]
+    expect(url).toBe(`/__canvas_live_library/assets/${id}`)
+    expect((request.body as Blob).size).toBe(BACKGROUND_MAX_BYTES)
+    expect(request.method).toBe('PUT')
+    expect(await store.read(id)).toBe(url)
+    expect(await store.read(id)).toBe(url)
+    expect(client.read).not.toHaveBeenCalled()
+    expect(client.transform).not.toHaveBeenCalled()
+    expect(fetcher).toHaveBeenCalledOnce()
+  })
+  it('deduplicates concurrent browser reads and revokes only unused cached images', async () => {
+    const client = { available: false } as LocalLibraryClient
+    const { factory } = browser()
+    const id = await createBackgroundAssetStore({
+      client,
+      indexedDB: factory,
+    }).save(blob())
+    const store = createBackgroundAssetStore({ client, indexedDB: factory })
+    store.retain(id)
+    const [first, second] = await Promise.all([store.read(id), store.read(id)])
+    expect(first).toBe(second)
+    expect(await store.read(id)).toBe(first)
+    expect(URL.createObjectURL).toHaveBeenCalledTimes(2)
+    expect(URL.revokeObjectURL).not.toHaveBeenCalled()
+    store.release(id)
+  })
+  it('bounds cached browser URLs while retaining backgrounds that are currently visible', async () => {
+    let sequence = 0
+    vi.mocked(URL.createObjectURL).mockImplementation(
+      () => `blob:http://localhost/image-${sequence++}`,
+    )
+    const { factory } = browser()
+    const store = createBackgroundAssetStore({
+      client: { available: false } as LocalLibraryClient,
+      indexedDB: factory,
+    })
+    const first = await store.save(blob())
+    store.retain(first)
+    const visible = await store.read(first)
+    for (let index = 0; index < 34; index++) {
+      const bytes = new Uint8Array(gif.length + 1)
+      bytes.set(gif)
+      bytes[gif.length] = index
+      await store.save(new Blob([bytes], { type: 'image/gif' }))
+    }
+    expect(URL.revokeObjectURL).toHaveBeenCalled()
+    expect(vi.mocked(URL.revokeObjectURL).mock.calls.flat()).not.toContain(
+      visible,
+    )
+    expect(await store.read(first)).toBe(visible)
+    store.release(first)
+  })
+  it('migrates old browser data URLs to durable Blob storage once', async () => {
+    const { client, saved } = library()
+    const id = await createBackgroundAssetStore({
+      client,
+      indexedDB: null,
+    }).save(blob())
+    const { factory, values } = browser()
+    values.set(id, saved.get(libraryKey('settings', `asset-${id}`)))
+    const store = createBackgroundAssetStore({
+      client: { available: false } as LocalLibraryClient,
+      indexedDB: factory,
+    })
+    expect(await store.read(id)).toBe('blob:http://localhost/background-id')
+    expect(values.get(id)).toBeInstanceOf(Blob)
+    expect(await store.read(id)).toBe('blob:http://localhost/background-id')
+    expect(URL.createObjectURL).toHaveBeenCalledOnce()
   })
   it('recognizes only supported raster magic bytes, including either GIF version', () => {
     expect(imageMime(gif)).toBe('image/gif')

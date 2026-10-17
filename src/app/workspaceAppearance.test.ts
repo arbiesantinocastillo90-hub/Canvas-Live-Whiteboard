@@ -99,6 +99,22 @@ describe('bounded workspace personalization', () => {
       '--home-gradient': 'linear-gradient(90deg, #102030, #405060)',
     })
   })
+  it('allows only exact immutable local asset routes with no CSS or remote URL injection', () => {
+    const route = '/__canvas_live_library/assets/' + 'a'.repeat(64)
+    expect(workspaceBackgroundStyle({}, route)).toMatchObject({
+      '--home-background-image': `url("${route}")`,
+    })
+    for (const url of [
+      route + '?q=x',
+      route + '/extra',
+      '//evil.test/image.gif',
+      '/__canvas_live_library/assets/../../file',
+      'blob:https://evil.test/token',
+    ])
+      expect(workspaceBackgroundStyle({}, url)).toMatchObject({
+        '--home-background-image': 'none',
+      })
+  })
   it('uses only whitelisted local fonts and independent inner and outline colors', () => {
     expect(
       workspaceTitleStyle({

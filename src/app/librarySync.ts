@@ -1,3 +1,4 @@
+import { initializeWorkspaceContents } from './workspaceContents'
 import { canvasFileStore } from './canvasFiles'
 import { loadLayout, persistLayout } from './layout'
 import {
@@ -214,13 +215,27 @@ export function syncSessionChanges(
   if (!localLibrary.available) return Promise.resolve()
   const relevant = (value: WorkspaceSessions) =>
     JSON.stringify(
-      value.items.map(({ id, name, preferences, layout, lastOpenedAt }) => ({
-        id,
-        name,
-        preferences,
-        layout,
-        lastOpenedAt,
-      })),
+      value.items.map(
+        ({
+          id,
+          name,
+          preferences,
+          layout,
+          lastOpenedAt,
+          projectIds,
+          projectPresentations,
+          filePresentations,
+        }) => ({
+          id,
+          name,
+          preferences,
+          layout,
+          lastOpenedAt,
+          projectIds,
+          projectPresentations,
+          filePresentations,
+        }),
+      ),
     )
   if (relevant(before) === relevant(after)) return Promise.resolve()
   return localLibrary
@@ -239,6 +254,40 @@ export function syncSessionChanges(
               items[index].lastOpenedAt ?? 0,
               item.lastOpenedAt ?? 0,
             )
+          if (
+            JSON.stringify(previous.projectIds) !==
+            JSON.stringify(item.projectIds)
+          ) {
+            const removed = new Set(
+              (previous.projectIds ?? []).filter(
+                (id) => !item.projectIds?.includes(id),
+              ),
+            )
+            patch.projectIds = [
+              ...new Set([
+                ...(
+                  items[index].projectIds ??
+                  previous.projectIds ??
+                  []
+                ).filter((id) => !removed.has(id)),
+                ...(item.projectIds ?? []),
+              ]),
+            ]
+          }
+          for (const key of [
+            'projectPresentations',
+            'filePresentations',
+          ] as const) {
+            const merged = mergeLocalFields(
+              items[index][key] ?? {},
+              previous[key] ?? {},
+              item[key] ?? {},
+            )
+            if (
+              JSON.stringify(merged) !== JSON.stringify(items[index][key] ?? {})
+            )
+              Object.assign(patch, { [key]: merged })
+          }
           for (const key of ['preferences', 'layout'] as const) {
             const merged = mergeLocalFields(
               items[index][key],
@@ -316,7 +365,11 @@ export async function bootstrapLocalLibrary(): Promise<{
     const sessions = await localLibrary.transform<WorkspaceSessions>(
       SESSIONS_LIBRARY_KEY,
       (remote) => {
-        if (remote === null) return browserSessions
+        if (remote === null)
+          return initializeWorkspaceContents(
+            browserSessions,
+            workspace.projects,
+          )
         const existing = requireLibrarySessions(remote)
         const extras = browserSessionsPresent
           ? browserSessions.items.filter(
@@ -325,7 +378,10 @@ export async function bootstrapLocalLibrary(): Promise<{
           : []
         if (existing.items.length + extras.length > 100)
           throw new Error('The combined library exceeds 100 workspaces.')
-        return { ...existing, items: [...existing.items, ...extras] }
+        return initializeWorkspaceContents(
+          { ...existing, items: [...existing.items, ...extras] },
+          workspace.projects,
+        )
       },
     )
     const saved = requireLibrarySessions(sessions.value)

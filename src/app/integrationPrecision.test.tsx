@@ -8,7 +8,6 @@ import {
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import App from './App'
 import { canvasFileStore, createCanvasFileRecord } from './canvasFiles'
-import { projectDrafts } from './canvasDrafts'
 import { createCanvasDocument } from './lcanvas'
 import { createElement } from './canvasOperations'
 import { DEFAULT_LAYOUT, LAYOUT_STORAGE_KEY } from './layout'
@@ -185,7 +184,7 @@ describe('workspace customization integration', () => {
   })
 
   it('saves canvas card appearance without saving or discarding a dirty drawing and retains undo', async () => {
-    const { projectId, fileId } = await seed()
+    const { projectId, fileId, first } = await seed()
     const save = canvasFileStore.save.bind(canvasFileStore)
     vi.spyOn(canvasFileStore, 'save').mockImplementation(async (record) => {
       const result = await save(record)
@@ -224,19 +223,22 @@ describe('workspace customization integration', () => {
     )
     const stored = (await canvasFileStore.get(projectId, fileId)).value!
     expect(stored.document.elements).toHaveLength(1)
-    expect(stored.document.presentation).toMatchObject({
+    expect(stored.document.presentation).toBeUndefined()
+    expect(
+      savedSessions().items.find((item) => item.id === first.id)
+        ?.filePresentations?.[fileId],
+    ).toMatchObject({
       icon: 'star',
       color: '#FF0000',
       description: 'A recognizable board',
     })
-    await waitFor(() =>
-      expect(
-        projectDrafts(canvasFileStore)
-          .get(projectId)
-          ?.find((draft) => draft.record.id === fileId)?.record.document
-          .elements,
-      ).toHaveLength(2),
-    )
+    expect(
+      within(
+        await screen.findByRole('button', {
+          name: 'Open canvas Precision canvas in Precision project',
+        }),
+      ).getByLabelText('Unsaved changes'),
+    ).toBeInTheDocument()
     fireEvent.click(
       await screen.findByRole('button', {
         name: 'Open canvas Precision canvas in Precision project',
@@ -247,7 +249,8 @@ describe('workspace customization integration', () => {
     await screen.findByLabelText('Precision canvas: 1 visible objects')
     fireEvent.click(screen.getByRole('button', { name: 'Redo' }))
     await screen.findByLabelText('Precision canvas: 2 visible objects')
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Save options' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Save now' }))
     await waitFor(async () =>
       expect(
         (await canvasFileStore.get(projectId, fileId)).value?.document.elements,
@@ -256,6 +259,10 @@ describe('workspace customization integration', () => {
     expect(
       (await canvasFileStore.get(projectId, fileId)).value?.document
         .presentation?.description,
+    ).toBeUndefined()
+    expect(
+      savedSessions().items.find((item) => item.id === first.id)
+        ?.filePresentations?.[fileId]?.description,
     ).toBe('A recognizable board')
   })
 })

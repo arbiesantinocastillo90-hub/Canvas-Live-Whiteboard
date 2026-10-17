@@ -1,7 +1,13 @@
 import { useEffect, useId, useRef, useState, type ChangeEvent } from 'react'
 import Icon from './Icon'
 import PresentationIcon from './PresentationIcon'
-import { normalizeWorkspaceAppearance } from './workspaceAppearance'
+import {
+  normalizeWorkspaceAppearance,
+  workspaceBackgroundStyle,
+  workspaceTitleStyle,
+} from './workspaceAppearance'
+import { useWorkspaceBackground } from './workspaceBackground'
+import { resolveAppearanceVariables } from './appearance'
 import {
   DEFAULT_WORKSPACE_VIEW,
   normalizeWorkspaceLibraryView,
@@ -16,6 +22,92 @@ import {
   type WorkspaceSessions,
 } from './workspaceSessions'
 import './workspace-sessions.css'
+
+function WorkspaceCard({
+  item,
+  selected,
+  page,
+  onSelect,
+}: {
+  item: SavedWorkspace
+  selected: boolean
+  page: boolean
+  onSelect: (id: string) => void
+}) {
+  const appearance = normalizeWorkspaceAppearance(
+    item.preferences.homeAppearance,
+  )
+  const ref = useRef<HTMLButtonElement>(null)
+  const [visible, setVisible] = useState(
+    typeof IntersectionObserver === 'undefined',
+  )
+  useEffect(() => {
+    if (!page || typeof IntersectionObserver === 'undefined') return
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          setVisible(true)
+          observer.disconnect()
+        }
+      },
+      { rootMargin: '240px' },
+    )
+    if (ref.current) observer.observe(ref.current)
+    return () => observer.disconnect()
+  }, [page])
+  const image = useWorkspaceBackground(
+    page && visible ? appearance.backgroundAssetId : null,
+  )
+  const mode = item.preferences.mode === 'light' ? 'light' : 'dark'
+  return (
+    <button
+      ref={ref}
+      className={`canvas-file ${page ? 'workspace-card' : ''}`}
+      aria-pressed={selected}
+      title={item.name}
+      onClick={() => onSelect(item.id)}
+      style={
+        page
+          ? {
+              ...resolveAppearanceVariables(item.preferences, mode),
+              ...workspaceBackgroundStyle(appearance, image),
+            }
+          : undefined
+      }
+    >
+      {page && (
+        <>
+          <span className="workspace-background-image" aria-hidden="true" />
+          <span className="workspace-background-gradient" aria-hidden="true" />
+        </>
+      )}
+      <PresentationIcon
+        name={appearance.icon}
+        color={appearance.iconColor ?? undefined}
+        fill={appearance.iconFill ?? undefined}
+        strokeWidth={appearance.iconStrokeWidth}
+      />
+      <span className="workspace-card-text">
+        <strong
+          style={
+            page
+              ? {
+                  ...workspaceTitleStyle(appearance),
+                  fontSize: 'clamp(16px, 1.6vw, 23px)',
+                }
+              : undefined
+          }
+        >
+          {item.name}
+        </strong>
+        {page && appearance.tagline && <small>{appearance.tagline}</small>}
+        {page && appearance.description && (
+          <small>{appearance.description}</small>
+        )}
+      </span>
+    </button>
+  )
+}
 
 export default function WorkspacesPanel({
   state,
@@ -201,33 +293,15 @@ export default function WorkspacesPanel({
         </>
       )}
       <div className="saved-workspace-list">
-        {(variant === 'page' ? visible : state.items).map((item) => {
-          const appearance = normalizeWorkspaceAppearance(
-            item.preferences.homeAppearance,
-          )
-          return (
-            <button
-              key={item.id}
-              className="canvas-file"
-              aria-pressed={item.id === state.activeId}
-              title={item.name}
-              onClick={() => onSelect(item.id)}
-            >
-              <PresentationIcon
-                name={appearance.icon}
-                color={appearance.iconColor ?? undefined}
-                fill={appearance.iconFill ?? undefined}
-                strokeWidth={appearance.iconStrokeWidth}
-              />
-              <span>
-                <strong>{item.name}</strong>
-                {variant === 'page' && appearance.description && (
-                  <small>{appearance.description}</small>
-                )}
-              </span>
-            </button>
-          )
-        })}
+        {(variant === 'page' ? visible : state.items).map((item) => (
+          <WorkspaceCard
+            key={item.id}
+            item={item}
+            selected={item.id === state.activeId}
+            page={variant === 'page'}
+            onSelect={onSelect}
+          />
+        ))}
       </div>
       <div
         ref={management}

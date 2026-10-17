@@ -65,6 +65,35 @@ function Invoke-LibraryPut([Uri]$url, [string]$key, $value, [long]$revision) {
     $body = ConvertTo-Json -InputObject $value -Depth 32 -Compress
     return Invoke-LibraryRequest $url ('/__canvas_live_library/' + [Uri]::EscapeDataString($key)) 'PUT' @('Content-Type: application/json', ('If-Match: ' + $revision), ('Content-Length: ' + [Text.Encoding]::UTF8.GetByteCount($body)), ('Origin: ' + $url.GetLeftPart([UriPartial]::Authority))) $body
 }
+function Invoke-BinaryAsset([Uri]$url, [string]$id, [string]$method = 'GET', [byte[]]$bytes = $null, [string]$mime = 'image/gif', [string]$etag = '') {
+    $request = [Net.HttpWebRequest]::Create([Uri]::new($url, '/__canvas_live_library/assets/' + $id))
+    $request.Method = $method
+    $request.Proxy = $null
+    $request.KeepAlive = $false
+    $request.Timeout = 60000
+    $request.ReadWriteTimeout = 60000
+    if ($etag) { $request.Headers['If-None-Match'] = $etag }
+    if ($method -eq 'PUT') {
+        $request.ContentType = $mime
+        $request.ContentLength = $bytes.Length
+        $write = $request.GetRequestStream()
+        try { $write.Write($bytes, 0, $bytes.Length) } finally { $write.Dispose() }
+    }
+    try { $response = $request.GetResponse() }
+    catch [Net.WebException] { if ($_.Exception.Response) { $response = $_.Exception.Response } else { throw } }
+    try {
+        $memory = New-Object IO.MemoryStream
+        $read = $response.GetResponseStream()
+        try { $read.CopyTo($memory); $body = $memory.ToArray() } finally { $read.Dispose(); $memory.Dispose() }
+        return @{ Status = [int]$response.StatusCode; Bytes = $body; Type = $response.ContentType; Cache = $response.Headers['Cache-Control']; ETag = $response.Headers['ETag'] }
+    }
+    finally { $response.Dispose() }
+}
+function Image-Hash([byte[]]$bytes) {
+    $imageHasher = [Security.Cryptography.SHA256]::Create()
+    try { return [BitConverter]::ToString($imageHasher.ComputeHash($bytes)).Replace('-', '').ToLowerInvariant() }
+    finally { $imageHasher.Dispose() }
+}
 function Start-OwnedLauncher {
     $process = Start-Process -FilePath $taskExecutable -ArgumentList '--no-browser' -WorkingDirectory $taskPackage -WindowStyle Hidden -PassThru
     $script:taskProcess = $process
@@ -202,10 +231,53 @@ try {
     Assert-Library ($assetRead.Status -eq 200 -and $assetRead.Json.revision -eq 1 -and $assetRead.Json.value.mime -eq $asset.mime -and $assetRead.Json.value.dataURL -eq $asset.dataURL) 'A direct background asset read returns its complete unchanged image payload'
     $staleAsset = Invoke-LibraryPut $url $assetKey @{ mime = 'image/gif'; dataURL = 'Rejected stale fixture' } 0
     Assert-Library ($staleAsset.Status -eq 409 -and (Get-FileHash -LiteralPath $assetPath -Algorithm SHA256).Hash -eq $beforeSettingsAssetHash) 'Stale image writes cannot replace durable asset bytes'
+    $gifBytes = [Convert]::FromBase64String($asset.dataURL.Substring($asset.dataURL.IndexOf(',') + 1))
+    $legacyId = Image-Hash $gifBytes
+    $legacyKey = 'settings:' + [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes('asset-' + $legacyId)).TrimEnd('=').Replace('+', '-').Replace('/', '_')
+    $legacyWritten = Invoke-LibraryPut $url $legacyKey $asset 0
+    $legacyBinary = Invoke-BinaryAsset $url $legacyId
+    Assert-Library ($legacyWritten.Status -eq 200 -and $legacyBinary.Status -eq 200 -and (Image-Hash $legacyBinary.Bytes) -eq $legacyId) 'An existing JSON background migrates to identical binary image bytes on first use'
+    Assert-Library ($legacyBinary.Type -eq 'image/gif' -and $legacyBinary.Cache.Contains('immutable') -and $legacyBinary.ETag -eq ('"' + $legacyId + '"')) 'Native images have exact raster MIME and immutable content-addressed cache headers'
+    $unchangedImage = Invoke-BinaryAsset $url $legacyId 'GET' $null 'image/gif' $legacyBinary.ETag
+    Assert-Library ($unchangedImage.Status -eq 304 -and $unchangedImage.Bytes.Length -eq 0) 'An image cache revalidation returns 304 with no image transfer'
+    $largeImage = New-Object byte[] (20 * 1024 * 1024)
+    [Array]::Copy($gifBytes, 0, $largeImage, 0, $gifBytes.Length - 1)
+    $cursor = $gifBytes.Length - 1
+    while ($largeImage.Length - $cursor -gt 4) {
+        $remaining = $largeImage.Length - $cursor - 1
+        $count = [Math]::Min(255, $remaining - 4)
+        if ($count -lt 1) { break }
+        $largeImage[$cursor++] = 33; $largeImage[$cursor++] = 254; $largeImage[$cursor++] = $count
+        $cursor += $count; $largeImage[$cursor++] = 0
+    }
+    $largeImage[$cursor] = 59
+    $largeId = Image-Hash $largeImage
+    $beforeBinaryLibraryHash = (Get-FileHash -LiteralPath $libraryPath -Algorithm SHA256).Hash
+    $largeWritten = Invoke-BinaryAsset $url $largeId 'PUT' $largeImage
+    Assert-Library ($largeWritten.Status -eq 200) 'A full 20 MiB GIF payload saves through the bounded binary endpoint'
+    $largeRead = Invoke-BinaryAsset $url $largeId
+    Assert-Library ($largeRead.Status -eq 200 -and $largeRead.Bytes.Length -eq $largeImage.Length -and (Image-Hash $largeRead.Bytes) -eq $largeId) 'The full 20 MiB image reads back with exactly matching byte count and hash'
+    Assert-Library ((Get-FileHash -LiteralPath $libraryPath -Algorithm SHA256).Hash -eq $beforeBinaryLibraryHash) 'A large image upload never rewrites canonical document metadata'
+    $badId = Invoke-BinaryAsset $url ('f' * 64) 'PUT' $gifBytes
+    $badMime = Invoke-BinaryAsset $url $legacyId 'PUT' $gifBytes 'image/png'
+    Assert-Library ($badId.Status -eq 400 -and $badMime.Status -eq 400) 'Binary uploads reject identifier mismatches and MIME mismatches'
+    $binaryOversized = Invoke-LibraryRequest $url ('/__canvas_live_library/assets/' + $largeId) 'PUT' @('Content-Type: image/gif', 'Content-Length: 20971521') ''
+    Assert-Library ($binaryOversized.Status -eq 413) 'Binary uploads above 20 MiB are rejected before reading a body'
+    $binaryTraversal = Invoke-LibraryRequest $url '/__canvas_live_library/assets/..%2F..%2Fsecret'
+    $binaryForeign = Invoke-LibraryRequest $url ('/__canvas_live_library/assets/' + $legacyId) 'GET' @('Origin: https://foreign.example')
+    Assert-Library ($binaryTraversal.Status -eq 400 -and $binaryForeign.Status -eq 403) 'Binary assets refuse traversal identifiers and foreign origins'
+    $binaryPath = Join-Path $taskPackage ('data/appearance/' + $largeId + '.image')
+    $beforeCoreImageHash = (Get-FileHash -LiteralPath $binaryPath -Algorithm SHA256).Hash
+    $nextSettings = Invoke-LibraryPut $url $settingsKey @{ exactEnabled = $false; latestEnabled = $true } 1
+    $indexAfterBinary = Invoke-LibraryRequest $url
+    Assert-Library ($nextSettings.Status -eq 200 -and $indexAfterBinary.Body.Length -lt 5000 -and (Get-FileHash -LiteralPath $binaryPath -Algorithm SHA256).Hash -eq $beforeCoreImageHash) 'Frequent metadata updates and polling retain a small index and leave large image bytes untouched'
     Stop-OwnedLauncher
     $url = Start-OwnedLauncher
     $assetReopened = Invoke-LibraryRequest $url $assetTarget
     $reopenedWithoutAssets = Invoke-LibraryRequest $url
+    $binaryReopened = Invoke-BinaryAsset $url $largeId
+    Assert-Library ($binaryReopened.Status -eq 200 -and $binaryReopened.Bytes.Length -eq 20 * 1024 * 1024 -and (Image-Hash $binaryReopened.Bytes) -eq $largeId) 'Restart durably preserves full 20 MiB binary backgrounds independently of the library index'
+
     $durableAsset = ConvertFrom-Json -InputObject (Get-Content -LiteralPath $assetPath -Raw)
     Assert-Library ($assetReopened.Status -eq 200 -and $assetReopened.Json.revision -eq 1 -and $assetReopened.Json.value.dataURL -eq $asset.dataURL -and $durableAsset.value.dataURL -eq $asset.dataURL -and $null -eq $reopenedWithoutAssets.Json.entries.PSObject.Properties[$assetKey]) 'Restart retains the full asset on disk and by direct key while the polling index stays small'
     Stop-OwnedLauncher

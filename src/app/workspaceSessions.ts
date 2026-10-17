@@ -1,5 +1,9 @@
 import { DEFAULT_LAYOUT, parseLayout, type WorkspaceLayout } from './layout'
 import { parseWorkspace, type Preferences } from './workspace'
+import {
+  normalizeItemPresentation,
+  type ItemPresentation,
+} from './itemPresentation'
 
 export type TabPresentation = {
   id: string
@@ -20,6 +24,9 @@ export type ProjectViewSession = {
   editorSession: { tool: string; activeLayerId: string | null } | null
 }
 export type SavedWorkspace = {
+  projectIds?: string[]
+  projectPresentations?: Record<string, ItemPresentation>
+  filePresentations?: Record<string, ItemPresentation>
   createdAt?: number
   updatedAt?: number
   lastOpenedAt?: number
@@ -191,6 +198,14 @@ function validDate(value: unknown): value is number {
 }
 function normalizeSavedWorkspace(value: unknown): SavedWorkspace | null {
   if (!record(value) || !validId(value.id)) return null
+  if (
+    value.projectIds !== undefined &&
+    (!Array.isArray(value.projectIds) ||
+      value.projectIds.length > 100 ||
+      !value.projectIds.every(validId) ||
+      new Set(value.projectIds).size !== value.projectIds.length)
+  )
+    return null
   try {
     const preferences = parseWorkspace(
       JSON.stringify({
@@ -206,6 +221,40 @@ function normalizeSavedWorkspace(value: unknown): SavedWorkspace | null {
         if (validId(id)) views[id] = normalizeProjectView(view)
     return {
       id: value.id,
+      ...(Array.isArray(value.projectIds)
+        ? {
+            projectIds: [...new Set(value.projectIds.filter(validId))].slice(
+              0,
+              100,
+            ),
+          }
+        : {}),
+      ...(record(value.projectPresentations)
+        ? {
+            projectPresentations: Object.fromEntries(
+              Object.entries(value.projectPresentations)
+                .filter(([id]) => validId(id))
+                .slice(0, 100)
+                .map(([id, presentation]) => [
+                  id,
+                  normalizeItemPresentation(presentation, 'folder'),
+                ]),
+            ),
+          }
+        : {}),
+      ...(record(value.filePresentations)
+        ? {
+            filePresentations: Object.fromEntries(
+              Object.entries(value.filePresentations)
+                .filter(([id]) => validId(id))
+                .slice(0, 1000)
+                .map(([id, presentation]) => [
+                  id,
+                  normalizeItemPresentation(presentation, 'canvas'),
+                ]),
+            ),
+          }
+        : {}),
       ...(validDate(value.createdAt) ? { createdAt: value.createdAt } : {}),
       ...(validDate(value.updatedAt) ? { updatedAt: value.updatedAt } : {}),
       ...(validDate(value.lastOpenedAt)

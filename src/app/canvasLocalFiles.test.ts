@@ -4,6 +4,10 @@ import {
   chooseLocalCanvasFiles,
   chooseLocalCanvasSave,
   createLocalCanvasFiles,
+  boundedAutosaveInterval,
+  DEFAULT_AUTOSAVE_INTERVAL_MS,
+  isMissingLocalCanvas,
+  LocalCanvasMissingError,
   supportsLocalCanvasOpen,
   supportsLocalCanvasSave,
   writeLocalCanvas,
@@ -45,6 +49,63 @@ function localHandle(name = 'Canvas.lcanvas') {
 afterEach(() => vi.unstubAllGlobals())
 
 describe('physical local LCANVAS files', () => {
+  it('bounds autosave intervals and keeps older bindings compatible', async () => {
+    expect(boundedAutosaveInterval(undefined)).toBe(
+      DEFAULT_AUTOSAVE_INTERVAL_MS,
+    )
+    expect(boundedAutosaveInterval(Number.NaN)).toBe(
+      DEFAULT_AUTOSAVE_INTERVAL_MS,
+    )
+    expect(boundedAutosaveInterval(100)).toBe(500)
+    expect(boundedAutosaveInterval(4_000_000)).toBe(3_600_000)
+    const local = createLocalCanvasFiles(null)
+    const { handle } = localHandle()
+    await local.set('project', 'file', {
+      handle,
+      autoSave: true,
+      autoSaveIntervalMs: 5000,
+      savedDocument: createCanvasDocument('Saved'),
+    })
+    expect((await local.get('project', 'file'))?.autoSaveIntervalMs).toBe(5000)
+    await local.set('project', 'old', {
+      handle,
+      autoSave: true,
+      savedDocument: createCanvasDocument('Saved'),
+    })
+    expect(
+      boundedAutosaveInterval(
+        (await local.get('project', 'old'))?.autoSaveIntervalMs,
+      ),
+    ).toBe(900)
+  })
+
+  it('detects a moved or deleted file before opening a writer and never recreates it silently', async () => {
+    const { handle } = localHandle()
+    vi.mocked(handle.getFile).mockRejectedValue(
+      new DOMException('Gone', 'NotFoundError'),
+    )
+    const saving = writeLocalCanvas(
+      handle,
+      createCanvasDocument('Draft'),
+      createCanvasDocument('Original'),
+    )
+    await expect(saving).rejects.toBeInstanceOf(LocalCanvasMissingError)
+    expect(handle.createWritable).not.toHaveBeenCalled()
+    expect(
+      isMissingLocalCanvas(new DOMException('Gone', 'NotFoundError')),
+    ).toBe(true)
+    expect(isMissingLocalCanvas(new Error('Disk full'))).toBe(false)
+  })
+
+  it('also identifies a destination deleted between validation and writer creation', async () => {
+    const { handle } = localHandle()
+    vi.mocked(handle.createWritable).mockRejectedValue(
+      new DOMException('Gone', 'NotFoundError'),
+    )
+    await expect(
+      writeLocalCanvas(handle, createCanvasDocument('Draft')),
+    ).rejects.toBeInstanceOf(LocalCanvasMissingError)
+  })
   it('opens and saves through restricted native pickers and distinguishes cancellation', async () => {
     const { handle } = localHandle()
     const save = vi.fn(async () => handle)

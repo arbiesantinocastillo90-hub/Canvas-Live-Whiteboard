@@ -4,6 +4,7 @@ import Icon from './Icon'
 import {
   createSessionNotifications,
   NotificationsContext,
+  NOTIFICATION_REMINDER_MINUTES,
   useSessionNotifications,
 } from './notificationSession'
 import './notifications.css'
@@ -31,6 +32,28 @@ function BellIcon() {
     >
       <path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4" />
     </svg>
+  )
+}
+
+function RemindLater({ onSelect }: { onSelect: (minutes: number) => void }) {
+  return (
+    <select
+      className="notification-reminder"
+      aria-label="Remind me later"
+      value=""
+      onChange={(event) => {
+        if (event.target.value) onSelect(Number(event.target.value))
+      }}
+    >
+      <option value="">Remind me later</option>
+      {NOTIFICATION_REMINDER_MINUTES.map((minutes) => (
+        <option key={minutes} value={minutes}>
+          {minutes < 60
+            ? `${minutes} minutes`
+            : `${minutes / 60} ${minutes === 60 ? 'hour' : 'hours'}`}
+        </option>
+      ))}
+    </select>
   )
 }
 
@@ -196,6 +219,30 @@ export function NotificationBell({
                             minute: '2-digit',
                           })}
                         </time>
+                        {item.remindAt !== null && (
+                          <span className="notification-reminder-due">
+                            Reminder set for{' '}
+                            {new Date(item.remindAt).toLocaleTimeString([], {
+                              hour: '2-digit',
+                              minute: '2-digit',
+                            })}
+                          </span>
+                        )}
+                        <div className="notification-item-actions">
+                          <RemindLater
+                            onSelect={(minutes) =>
+                              store.remindLater(scopeId, item.id, minutes)
+                            }
+                          />
+                          <button
+                            className="icon-button"
+                            aria-label={`Remove notification: ${item.message}`}
+                            title="Remove notification"
+                            onClick={() => store.dismiss(scopeId, item.id)}
+                          >
+                            <Icon name="close" />
+                          </button>
+                        </div>
                       </li>
                     ))}
                   </ol>
@@ -216,7 +263,14 @@ export function NotificationBell({
                   currentToast.kind === 'error' ? 'assertive' : 'polite'
                 }
               >
-                <span>{currentToast.message}</span>
+                <div className="notification-toast-content">
+                  <span>{currentToast.message}</span>
+                  <RemindLater
+                    onSelect={(minutes) =>
+                      store.remindLater(scopeId, toast.id, minutes)
+                    }
+                  />
+                </div>
                 <button
                   className="icon-button"
                   aria-label="Dismiss notification"

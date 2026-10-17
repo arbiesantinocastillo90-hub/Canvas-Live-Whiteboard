@@ -2,7 +2,7 @@
 
 - **.CLF** is a Canvas Live canvas file: shapes, text, areas, layers, connections, camera, and optional card appearance. Save as and downloaded copies use this extension. Its validated JSON payload remains `LCANVAS`, version 2, so the existing document and MCP operations stay compatible.
 - **.CLP** is a portable project container: the chosen project, its descendant projects, their metadata and appearance, and every included canvas document. Export captures the current documents, including available unsaved drafts. It does not include workspace layout, browser permissions, local file handles, or AI connection credentials. The JSON envelope is `CanvasLiveProject`, version 1.
-- **.CLW** is a saved UI workspace: appearance, canvas control preferences, panel layout, Home and workspace-library perspectives, project references, and tab/editor context. It keeps the existing `CanvasLiveWorkspace`, version 1, payload. It does not contain canvas documents or background image bytes; use .CLP or .CLF to back up document contents.
+- **.CLW** is a saved workspace: explicit project membership, workspace-specific project and canvas presentation overrides, appearance, canvas control preferences, panel layout, Home and workspace-library perspectives, and tab/editor context. It keeps the existing `CanvasLiveWorkspace`, version 1, payload. It does not contain canvas documents or background image bytes; use .CLP or .CLF to back up document contents.
 
 The optional `.CLF` document `presentation` object stores a built-in icon name,
 accent color, card fill, card outline and plain-text description. Colors are
@@ -10,7 +10,28 @@ validated hex values or automatic theme defaults. Existing files without this
 field keep their default presentation. Project records in `.CLP` may carry the
 same presentation fields and a modification timestamp used for sorting. Changing
 these decorations does not change the objects inside a canvas or its project
-parent relationships.
+parent relationships. Within the app, a workspace can override this imported
+appearance without changing the document's canonical presentation or another
+workspace's override. Exporting `.CLF` or `.CLP` includes the active workspace's
+appearance, so it can serve as an imported default elsewhere.
+
+A `.CLW` may contain `projectIds`, `projectPresentations` and
+`filePresentations`. `projectIds` defines the workspace's included projects; the
+two presentation maps key validated item styles by project or canvas identifier.
+An explicit empty list means an empty workspace. Older workspaces already saved
+locally without membership receive the existing visible project identifiers
+once, preserving their library. A newly imported legacy `.CLW` without membership
+instead starts empty with its saved settings. Explicit imported membership keeps
+valid local references. New workspaces always receive an empty list and empty
+override maps. Creating or importing a project or canvas adds it only to the selected
+workspace. Importing a standalone `.CLF` into an empty workspace creates an
+**Imported canvases** container after a valid file has been chosen. Cancelling the
+picker creates nothing.
+
+Membership records are references into the local library, not copies of canvas
+contents or physical file permissions. Export `.CLP` or `.CLF` separately when
+moving document contents to another installation. See
+[Workspace contents and independent appearance](WORKSPACE_ISOLATION.md).
 
 Workspace preferences in `.CLW` include the workspace identity, description,
 title and icon styles, background color and gradient, and an optional SHA-256

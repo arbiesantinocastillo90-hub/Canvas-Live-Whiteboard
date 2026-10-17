@@ -13,6 +13,8 @@ internal sealed class LocalLibrary
     private const int MaxBody = 16 * 1024 * 1024;
     private const int MaxLibrary = 128 * 1024 * 1024;
     private readonly object gate = new object();
+    private readonly object assetGate = new object();
+    private const int MaxImage = 20 * 1024 * 1024;
     private readonly string folder;
     private readonly JavaScriptSerializer json = new JavaScriptSerializer { MaxJsonLength = MaxLibrary, RecursionLimit = 64 };
     private Dictionary<string, object> entries;
@@ -74,7 +76,7 @@ internal sealed class LocalLibrary
         string path = AssetPath(key); Ordinary(path);
         if (!File.Exists(path)) return null;
         if (new FileInfo(path).Length > 4 * 1024 * 1024) throw new IOException("The local image exceeds its size limit.");
-        var entry = json.DeserializeObject(File.ReadAllText(path, Encoding.UTF8)) as Dictionary<string, object>;
+        var entry = new JavaScriptSerializer { MaxJsonLength = MaxLibrary, RecursionLimit = 64 }.DeserializeObject(File.ReadAllText(path, Encoding.UTF8)) as Dictionary<string, object>;
         if (entry == null || !entry.ContainsKey("revision") || !entry.ContainsKey("value") || !(entry["value"] is Dictionary<string, object>) || Convert.ToInt64(entry["revision"], CultureInfo.InvariantCulture) < 1) throw new IOException("The local image is invalid; its file was retained.");
         return entry;
     }
@@ -93,6 +95,99 @@ internal sealed class LocalLibrary
             if (File.Exists(target)) File.Replace(temporary, target, null); else File.Move(temporary, target);
         }
         finally { if (File.Exists(temporary)) File.Delete(temporary); }
+    }
+    private static string RasterMime(byte[] bytes)
+    {
+        if (bytes.Length >= 24 && bytes[0] == 137 && bytes[1] == 80 && bytes[2] == 78 && bytes[3] == 71 && bytes[4] == 13 && bytes[5] == 10 && bytes[6] == 26 && bytes[7] == 10) return "image/png";
+        if (bytes.Length >= 14 && bytes[0] == 71 && bytes[1] == 73 && bytes[2] == 70 && bytes[3] == 56 && (bytes[4] == 55 || bytes[4] == 57) && bytes[5] == 97) return "image/gif";
+        if (bytes.Length >= 4 && bytes[0] == 255 && bytes[1] == 216 && bytes[2] == 255 && bytes[bytes.Length - 2] == 255 && bytes[bytes.Length - 1] == 217) return "image/jpeg";
+        if (bytes.Length >= 16 && bytes[0] == 82 && bytes[1] == 73 && bytes[2] == 70 && bytes[3] == 70 && bytes[8] == 87 && bytes[9] == 69 && bytes[10] == 66 && bytes[11] == 80) return "image/webp";
+        throw new ArgumentException("Only PNG, JPEG, WebP and GIF images are supported.");
+    }
+    private static string ImageHash(byte[] bytes)
+    {
+        using (SHA256 hash = SHA256.Create()) return BitConverter.ToString(hash.ComputeHash(bytes)).Replace("-", "").ToLowerInvariant();
+    }
+    private string BinaryAssetPath(string id) { return Path.Combine(folder, "appearance", id + ".image"); }
+    private void PersistBinary(string id, byte[] bytes)
+    {
+        string target = BinaryAssetPath(id), directory = Path.GetDirectoryName(target);
+        Ordinary(directory); Ordinary(target);
+        Directory.CreateDirectory(directory);
+        if (File.Exists(target)) return;
+        int count = 0;
+        foreach (string ignored in Directory.EnumerateFiles(directory, "*.image")) if (++count >= 1000) throw new IOException("The local image library is full.");
+        string temporary = Path.Combine(directory, "image-" + Guid.NewGuid().ToString("N") + ".tmp");
+        try
+        {
+            using (var file = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None, 65536, FileOptions.WriteThrough)) { file.Write(bytes, 0, bytes.Length); file.Flush(true); }
+            File.Move(temporary, target);
+        }
+        finally { if (File.Exists(temporary)) File.Delete(temporary); }
+    }
+    private bool ServeBinary(Stream stream, string method, string path, Dictionary<string, string> headers, string origin)
+    {
+        const string prefix = "/__canvas_live_library/assets/";
+        if (!path.StartsWith(prefix, StringComparison.Ordinal)) return false;
+        // Asset transfers never hold the frequently polled document-library lock.
+        var serializer = new JavaScriptSerializer { MaxJsonLength = MaxLibrary, RecursionLimit = 64 };
+        string id = path.Substring(prefix.Length), source;
+        if (!Regex.IsMatch(id, "^[a-f0-9]{64}$")) { Reply(stream, 400, "Bad Request", new { error = "Invalid image identifier." }, serializer); return true; }
+        if ((headers.TryGetValue("Origin", out source) && source != origin) || (headers.TryGetValue("Sec-Fetch-Site", out source) && source == "cross-site"))
+        { Reply(stream, 403, "Forbidden", new { error = "Only Canvas Live can access its local images." }, serializer); return true; }
+        if (method == "PUT")
+        {
+            string rawLength, contentType; int length;
+            if (headers.ContainsKey("Transfer-Encoding") || !headers.TryGetValue("Content-Length", out rawLength) || !Int32.TryParse(rawLength, NumberStyles.None, CultureInfo.InvariantCulture, out length) || length < 1 || length > MaxImage)
+            { Reply(stream, 413, "Payload Too Large", new { error = "Choose an image of 20 MB or smaller." }, serializer); return true; }
+            byte[] bytes = new byte[length];
+            for (int read = 0; read < length;) { int count = stream.Read(bytes, read, length - read); if (count == 0) throw new IOException("The image was incomplete."); read += count; }
+            string mime = RasterMime(bytes);
+            if (!headers.TryGetValue("Content-Type", out contentType) || contentType != mime || ImageHash(bytes) != id)
+            { Reply(stream, 400, "Bad Request", new { error = "The image contents do not match their identifier or type." }, serializer); return true; }
+            lock (assetGate) { PersistBinary(id, bytes); }
+            Reply(stream, 200, "OK", new { assetId = id }, serializer); return true;
+        }
+        if (method != "GET") { Reply(stream, 405, "Method Not Allowed", new { error = "Use GET or PUT." }, serializer); return true; }
+        string target = BinaryAssetPath(id); Ordinary(target);
+        if (!File.Exists(target))
+        {
+            lock (assetGate)
+            {
+                // Read old installations' JSON assets once, then serve the binary file.
+                string key = "settings:" + Convert.ToBase64String(Encoding.UTF8.GetBytes("asset-" + id)).TrimEnd('=').Replace('+', '-').Replace('/', '_');
+                var entry = ReadAsset(key);
+                var value = entry == null ? null : entry["value"] as Dictionary<string, object>;
+                object raw;
+                if (value == null || !value.TryGetValue("dataURL", out raw) || !(raw is string))
+                { Reply(stream, 404, "Not Found", new { error = "The image is unavailable on this device." }, serializer); return true; }
+                string data = (string)raw; int separator = data.IndexOf(',');
+                if (separator < 0 || !data.StartsWith("data:image/", StringComparison.Ordinal)) throw new ArgumentException("Invalid saved image.");
+                byte[] bytes = Convert.FromBase64String(data.Substring(separator + 1));
+                if (bytes.Length > MaxImage || data.Substring(0, separator) != "data:" + RasterMime(bytes) + ";base64" || ImageHash(bytes) != id) throw new ArgumentException("Invalid saved image.");
+                PersistBinary(id, bytes);
+            }
+        }
+        using (var file = new FileStream(target, FileMode.Open, FileAccess.Read, FileShare.Read, 65536, FileOptions.SequentialScan))
+        {
+            if (file.Length < 1 || file.Length > MaxImage) throw new IOException("Invalid saved image size.");
+            // Inspect the bounded image header; JPEG also has an end marker.
+            byte[] signature = new byte[(int)Math.Min(file.Length, 24)]; file.Read(signature, 0, signature.Length);
+            string mime;
+            if (signature.Length >= 4 && signature[0] == 255 && signature[1] == 216 && signature[2] == 255)
+            {
+                file.Position = file.Length - 2; int a = file.ReadByte(), b = file.ReadByte();
+                if (a != 255 || b != 217) throw new ArgumentException("Invalid saved image.");
+                mime = "image/jpeg";
+            }
+            else mime = RasterMime(signature);
+            string match;
+            bool unchanged = headers.TryGetValue("If-None-Match", out match) && match == "\"" + id + "\"";
+            string header = "HTTP/1.1 " + (unchanged ? "304 Not Modified" : "200 OK") + "\r\nContent-Type: " + mime + "\r\nContent-Length: " + (unchanged ? 0 : file.Length) + "\r\nConnection: close\r\nCache-Control: private, max-age=31536000, immutable\r\nETag: \"" + id + "\"\r\nX-Content-Type-Options: nosniff\r\n\r\n";
+            byte[] head = Encoding.ASCII.GetBytes(header); stream.Write(head, 0, head.Length);
+            if (!unchanged) { file.Position = 0; file.CopyTo(stream, 65536); }
+        }
+        return true;
     }
     private static void Reply(Stream stream, int code, string reason, object value, JavaScriptSerializer serializer)
     {
@@ -115,6 +210,7 @@ internal sealed class LocalLibrary
                 if (headers.ContainsKey(name)) { Reply(stream, 400, "Bad Request", new { error = "Duplicate request header." }, json); return true; }
                 headers[name] = lines[i].Substring(separator + 1).Trim();
             }
+            if (ServeBinary(stream, method, path, headers, origin)) return true;
             // Drain ordinary bounded PUT bodies before rejecting headers or revisions.
             // Closing a socket with unread bytes can reset it and hide the JSON error.
             byte[] bytes = null;

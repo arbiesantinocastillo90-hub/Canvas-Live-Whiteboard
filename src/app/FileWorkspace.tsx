@@ -39,6 +39,9 @@ import {
   chooseLocalCanvasFiles,
   chooseLocalCanvasSave,
   allowLocalWrite,
+  boundedAutosaveInterval,
+  DEFAULT_AUTOSAVE_INTERVAL_MS,
+  isMissingLocalCanvas,
   localFilesFor,
   supportsLocalCanvasOpen,
   supportsLocalCanvasSave,
@@ -54,9 +57,15 @@ import { useSessionNotifications } from './notificationSession'
 import { DEFAULT_LINK_OPTIONS, type LinkOptions } from './liveViewLinks'
 import { localLibrary, sharedCanvasFileStore } from './localLibrary'
 import {
+  baseCanvasStore,
+  canvasStoreWorkspace,
+  scopedCanvasRecord,
+} from './canvasStoreScope'
+import {
   canvasFileStore,
   createCanvasFileRecord,
   type CanvasFileRecord,
+  type CanvasFileStore,
 } from './canvasFiles'
 import {
   canvasExportFilename,
@@ -71,6 +80,7 @@ import type { Preferences, Project } from './workspace'
 import './file-workspace.css'
 import { formatCanvasZoom } from './canvasControls'
 import CanvasTabs from './CanvasTabs'
+import CanvasSavePanel, { type CanvasSaveSettings } from './CanvasSavePanel'
 import {
   normalizeProjectView,
   type ProjectViewSession,
@@ -111,6 +121,26 @@ function sameContent(left: CanvasDocument, right: CanvasDocument) {
     JSON.stringify({ ...left, viewport: undefined }) ===
     JSON.stringify({ ...right, viewport: undefined })
   )
+}
+function scopeDraft(store: CanvasFileStore, draft: Entry): Entry {
+  return {
+    ...draft,
+    record: scopedCanvasRecord(store, draft.record),
+    savedDocument: scopedCanvasRecord(store, {
+      ...draft.record,
+      document: draft.savedDocument,
+    }).document,
+  }
+}
+function boundBaseline(
+  store: CanvasFileStore,
+  record: CanvasFileRecord,
+  binding: LocalCanvasBinding,
+): CanvasDocument {
+  return scopedCanvasRecord(store, {
+    ...record,
+    document: binding.savedDocument,
+  }).document
 }
 
 function openingTimestamp(entries: Entry[]) {
@@ -249,6 +279,25 @@ export default function FileWorkspace({
   const [savingIds, setSavingIds] = useState(new Set<string>())
   const [permissionIds, setPermissionIds] = useState(new Set<string>())
   const [failedSaveIds, setFailedSaveIds] = useState(new Set<string>())
+  const [missingFileIds, setMissingFileIds] = useState(new Set<string>())
+  const [savePanelOpen, setSavePanelOpen] = useState(false)
+  const savePanelButton = useRef<HTMLButtonElement>(null)
+  const closeSavePanel = useCallback(() => setSavePanelOpen(false), [])
+  const [unboundSaveSettings, setUnboundSaveSettings] = useState(
+    new Map<string, CanvasSaveSettings>(),
+  )
+  const unboundSettingsRef = useRef(unboundSaveSettings)
+  const autosaveTimers = useRef(
+    new Map<
+      string,
+      {
+        timer: ReturnType<typeof setTimeout>
+        document: CanvasDocument
+        interval: number
+        target: LocalCanvasBinding | undefined
+      }
+    >(),
+  )
   const entriesRef = useRef<Entry[]>([])
   const remoteConflicts = useRef(new Map<string, string>())
   const bindingsRef = useRef(localBindings)
@@ -306,19 +355,34 @@ export default function FileWorkspace({
   useCanvasDraftProtection(store)
   const active = entries.find((entry) => entry.record.id === activeId)
   const sharedStoreActive =
-    store === sharedCanvasFileStore && localLibrary.available
+    baseCanvasStore(store) === sharedCanvasFileStore && localLibrary.available
   const localBinding = activeId ? localBindings.get(activeId) : undefined
+  const activeSaveSettings: CanvasSaveSettings = localBinding
+    ? {
+        autoSave: localBinding.autoSave,
+        intervalMs: boundedAutosaveInterval(localBinding.autoSaveIntervalMs),
+      }
+    : (activeId && unboundSaveSettings.get(activeId)) || {
+        autoSave: !sharedStoreActive,
+        intervalMs: DEFAULT_AUTOSAVE_INTERVAL_MS,
+      }
+  const saveDestination = localBinding
+    ? localBinding.handle.name
+    : sharedStoreActive
+      ? 'Canvas Live local library'
+      : 'No local file selected'
   const localDirty = Boolean(
     active &&
     localBinding &&
     !(sharedStoreActive ? sameContent : sameDocument)(
       active.record.document,
-      localBinding.savedDocument,
+      boundBaseline(store, active.record, localBinding),
     ),
   )
   useLayoutEffect(() => {
     entriesRef.current = entries
     bindingsRef.current = localBindings
+    unboundSettingsRef.current = unboundSaveSettings
     workspaceActiveRef.current = workspaceActive
   })
   const editorController = useRef<{
@@ -624,6 +688,22 @@ export default function FileWorkspace({
             enabled: !loading && !busy && !focused,
           },
           {
+            id: 'file.rename',
+            label: 'Rename current canvas',
+            category: 'Files',
+            execute: () => {
+              if (activeId) setPrompt({ kind: 'rename', id: activeId })
+            },
+            enabled: Boolean(active) && !busy,
+          },
+          {
+            id: 'file.saveOptions',
+            label: 'Open Save options',
+            category: 'Files',
+            execute: () => setSavePanelOpen((current) => !current),
+            enabled: !loading,
+          },
+          {
             id: 'file.saveAs',
             label: 'Save canvas as local file',
             category: 'Files',
@@ -783,7 +863,12 @@ export default function FileWorkspace({
           0,
           ...files.map((file) => file.lastOpenedAt),
         )
-        const cachedDrafts = projectDrafts(store).get(project.id) ?? []
+        const scopedRecovery = recoveredDrafts.map((draft) =>
+          scopeDraft(store, draft),
+        )
+        const cachedDrafts = (projectDrafts(store).get(project.id) ?? []).map(
+          (draft) => scopeDraft(store, draft),
+        )
         const savedEntries = files.map((record) => {
           const draft = cachedDrafts.find(
             (entry) => entry.record.id === record.id && entry.dirty,
@@ -819,7 +904,7 @@ export default function FileWorkspace({
               ),
           ),
         )
-        let restored = mergeRecoveredDrafts(savedEntries, recoveredDrafts)
+        let restored = mergeRecoveredDrafts(savedEntries, scopedRecovery)
         const remembered = await Promise.all(
           restored.map(async (entry) => {
             try {
@@ -848,12 +933,15 @@ export default function FileWorkspace({
             return local && !entry.dirty && !sharedStoreActive
               ? {
                   ...entry,
-                  record: { ...entry.record, document: local.savedDocument },
-                  savedDocument: local.savedDocument,
+                  record: scopedCanvasRecord(store, {
+                    ...entry.record,
+                    document: local.savedDocument,
+                  }),
+                  savedDocument: boundBaseline(store, entry.record, local),
                 }
               : entry
           }),
-          recoveredDrafts,
+          scopedRecovery,
         )
         if (sharedStoreActive)
           restored = restored.map((entry) => {
@@ -887,8 +975,10 @@ export default function FileWorkspace({
       .catch(async (failure: unknown) => {
         if (cancelled) return
         const cached = mergeRecoveredDrafts(
-          projectDrafts(store).get(project.id) ?? [],
-          await recovered,
+          (projectDrafts(store).get(project.id) ?? []).map((draft) =>
+            scopeDraft(store, draft),
+          ),
+          (await recovered).map((draft) => scopeDraft(store, draft)),
         )
         if (cancelled) return
         setEntries(cached)
@@ -1086,9 +1176,18 @@ export default function FileWorkspace({
     let active = true
     const update = (event: Event) => {
       const detail = (
-        event as CustomEvent<{ projectId?: string; fileId?: string }>
+        event as CustomEvent<{
+          projectId?: string
+          fileId?: string
+          workspaceId?: string
+        }>
       ).detail
       if (detail?.projectId !== project.id || !detail.fileId) return
+      if (
+        detail.workspaceId &&
+        detail.workspaceId !== canvasStoreWorkspace(store)
+      )
+        return
       void store
         .get(project.id, detail.fileId)
         .then((result) => {
@@ -1324,7 +1423,11 @@ export default function FileWorkspace({
           (prior &&
             !sameDocument(
               prior.record.document,
-              bindingsRef.current.get(prior.record.id)!.savedDocument,
+              boundBaseline(
+                store,
+                prior.record,
+                bindingsRef.current.get(prior.record.id)!,
+              ),
             ))
         ) {
           openFile(prior, true)
@@ -1356,6 +1459,9 @@ export default function FileWorkspace({
         const bound = {
           handle: source.handle,
           autoSave: bindingsRef.current.get(record.id)?.autoSave ?? true,
+          autoSaveIntervalMs: boundedAutosaveInterval(
+            bindingsRef.current.get(record.id)?.autoSaveIntervalMs,
+          ),
           savedDocument: document,
         }
         await localFilesFor(store)
@@ -1621,6 +1727,10 @@ export default function FileWorkspace({
       const nextBinding = {
         ...target,
         autoSave: bindingsRef.current.get(id)?.autoSave ?? target.autoSave,
+        autoSaveIntervalMs: boundedAutosaveInterval(
+          bindingsRef.current.get(id)?.autoSaveIntervalMs ??
+            target.autoSaveIntervalMs,
+        ),
         savedDocument: snapshot.document,
       }
       bindingsRef.current = new Map(bindingsRef.current).set(id, nextBinding)
@@ -1632,6 +1742,11 @@ export default function FileWorkspace({
           return next
         })
         setPermissionIds((current) => {
+          const next = new Set(current)
+          next.delete(id)
+          return next
+        })
+        setMissingFileIds((current) => {
           const next = new Set(current)
           next.delete(id)
           return next
@@ -1663,9 +1778,66 @@ export default function FileWorkspace({
     }
   }
 
+  async function saveLibraryFile(id: string) {
+    const previous = pendingFileSaves.current.get(id)
+    const task = (async () => {
+      await previous?.catch(() => undefined)
+      const snapshot = currentSnapshot(id)
+      if (!snapshot) return
+      const result = await store.save(snapshot)
+      rememberSaved(result.value, result.persistence)
+      if (alive.current) {
+        setFailedSaveIds((current) => {
+          const next = new Set(current)
+          next.delete(id)
+          return next
+        })
+        setPermissionIds((current) => {
+          const next = new Set(current)
+          next.delete(id)
+          return next
+        })
+        if (result.error) setNotice(result.error)
+      }
+    })()
+    pendingFileSaves.current.set(id, task)
+    if (alive.current) setSavingIds((current) => new Set(current).add(id))
+    try {
+      await task
+    } finally {
+      if (pendingFileSaves.current.get(id) === task) {
+        pendingFileSaves.current.delete(id)
+        if (alive.current)
+          setSavingIds((current) => {
+            const next = new Set(current)
+            next.delete(id)
+            return next
+          })
+      }
+    }
+  }
+
+  function reportSaveFailure(id: string, failure: unknown, automatic = false) {
+    if (!alive.current) return
+    if (isMissingLocalCanvas(failure)) {
+      setMissingFileIds((current) => new Set(current).add(id))
+      setEntries((current) =>
+        current.map((entry) =>
+          entry.record.id === id ? { ...entry, dirty: true } : entry,
+        ),
+      )
+      setError(
+        'The local file was moved or deleted. Open Save options and choose a new location; your edits are still here.',
+      )
+    } else setError(message(failure))
+    setFailedSaveIds((current) => new Set(current).add(id))
+    if (automatic) setPermissionIds((current) => new Set(current).add(id))
+  }
+
   async function saveFile(saveAs = false) {
     if (!activeId || busy || manualSaving.current) return
     const id = activeId
+    const chooseNewLocation = saveAs || missingFileIds.has(id)
     manualSaving.current = true
     setBusy(true)
     setError(null)
@@ -1673,21 +1845,21 @@ export default function FileWorkspace({
     try {
       if (editorController.current?.fileId === id)
         editorController.current.controller.flushDraft?.()
-      if (sharedStoreActive && !saveAs && remoteConflicts.current.has(id))
+      if (
+        sharedStoreActive &&
+        !chooseNewLocation &&
+        remoteConflicts.current.has(id)
+      )
         throw new Error(
           'This canvas changed in another view. Export your local edits before reopening the latest file.',
         )
       const existing = bindingsRef.current.get(id)
-      if (sharedStoreActive && !saveAs && !existing) {
-        const snapshot = currentSnapshot(id)
-        if (!snapshot) return
-        const result = await store.save(snapshot)
-        rememberSaved(result.value, result.persistence)
-        if (alive.current)
-          setNotice(result.error ?? 'Saved to the local library.')
+      if (sharedStoreActive && !chooseNewLocation && !existing) {
+        await saveLibraryFile(id)
+        if (alive.current) setNotice('Saved to the local library.')
         return
       }
-      if (!supportsLocalCanvasSave() && saveAs && existing) {
+      if (!supportsLocalCanvasSave() && chooseNewLocation && existing) {
         exportFile()
         return
       }
@@ -1703,7 +1875,7 @@ export default function FileWorkspace({
         return
       }
       let target = existing
-      if (saveAs || !target) {
+      if (chooseNewLocation || !target) {
         // Invoke the picker directly from the user's click, before any other awaited work.
         const chosen = await chooseLocalCanvasSave(
           active?.record.document.name ?? 'Canvas',
@@ -1722,51 +1894,114 @@ export default function FileWorkspace({
         }
         target = {
           handle: chosen,
-          autoSave: existing?.autoSave ?? true,
+          autoSave:
+            existing?.autoSave ??
+            unboundSettingsRef.current.get(id)?.autoSave ??
+            true,
+          autoSaveIntervalMs: boundedAutosaveInterval(
+            existing?.autoSaveIntervalMs ??
+              unboundSettingsRef.current.get(id)?.intervalMs,
+          ),
           savedDocument: active!.record.document,
         }
       }
-      await saveBoundFile(id, target, saveAs || !existing, true)
+      await saveBoundFile(id, target, chooseNewLocation || !existing, true)
     } catch (failure) {
-      if (alive.current) {
-        setError(message(failure))
-        setFailedSaveIds((current) => new Set(current).add(id))
-      }
+      reportSaveFailure(id, failure)
     } finally {
       manualSaving.current = false
       if (alive.current) setBusy(false)
     }
   }
 
-  const autosaveCurrent = useEffectEvent(() => {
+  const autosaveCurrent = useEffectEvent((id: string) => {
     if (manualSaving.current || !workspaceActiveRef.current) return
-    for (const entry of entriesRef.current) {
-      const id = entry.record.id
-      const target = bindingsRef.current.get(id)
-      if (
-        !target?.autoSave ||
-        permissionIds.has(id) ||
-        pendingFileSaves.current.has(id) ||
-        (sharedStoreActive ? sameContent : sameDocument)(
-          entry.record.document,
-          target.savedDocument,
-        )
-      )
-        continue
-      void saveBoundFile(id, target, false, false).catch((failure: unknown) => {
-        if (alive.current) {
-          setError(message(failure))
-          setFailedSaveIds((current) => new Set(current).add(id))
-          // A denied write or external conflict waits for explicit Save rather than retrying forever.
-          setPermissionIds((current) => new Set(current).add(id))
+    const entry = entriesRef.current.find((item) => item.record.id === id)
+    if (!entry) return
+    const target = bindingsRef.current.get(id)
+    const settings = target
+      ? {
+          autoSave: target.autoSave,
+          intervalMs: boundedAutosaveInterval(target.autoSaveIntervalMs),
         }
-      })
-    }
+      : (unboundSettingsRef.current.get(id) ?? {
+          autoSave: !sharedStoreActive,
+          intervalMs: DEFAULT_AUTOSAVE_INTERVAL_MS,
+        })
+    if (
+      !settings.autoSave ||
+      permissionIds.has(id) ||
+      missingFileIds.has(id) ||
+      pendingFileSaves.current.has(id) ||
+      (!target && (!sharedStoreActive || remoteConflicts.current.has(id))) ||
+      (sharedStoreActive ? sameContent : sameDocument)(
+        entry.record.document,
+        target
+          ? boundBaseline(store, entry.record, target)
+          : entry.savedDocument,
+      )
+    )
+      return
+    const save = target
+      ? saveBoundFile(id, target, false, false)
+      : saveLibraryFile(id)
+    void save.catch((failure: unknown) => reportSaveFailure(id, failure, true))
   })
   useEffect(() => {
-    if (loading || !workspaceActive || busy) return
-    const timer = setTimeout(() => autosaveCurrent(), 900)
-    return () => clearTimeout(timer)
+    const wanted = new Set<string>()
+    if (!loading && workspaceActive && !busy)
+      for (const entry of entries) {
+        const id = entry.record.id
+        const target = localBindings.get(id)
+        const settings = target
+          ? {
+              autoSave: target.autoSave,
+              intervalMs: boundedAutosaveInterval(target.autoSaveIntervalMs),
+            }
+          : (unboundSaveSettings.get(id) ?? {
+              autoSave: !sharedStoreActive,
+              intervalMs: DEFAULT_AUTOSAVE_INTERVAL_MS,
+            })
+        if (
+          !settings.autoSave ||
+          permissionIds.has(id) ||
+          missingFileIds.has(id) ||
+          pendingFileSaves.current.has(id) ||
+          (!target &&
+            (!sharedStoreActive || remoteConflicts.current.has(id))) ||
+          (sharedStoreActive ? sameContent : sameDocument)(
+            entry.record.document,
+            target
+              ? boundBaseline(store, entry.record, target)
+              : entry.savedDocument,
+          )
+        )
+          continue
+        wanted.add(id)
+        const current = autosaveTimers.current.get(id)
+        if (
+          current?.document === entry.record.document &&
+          current.interval === settings.intervalMs &&
+          current.target === target
+        )
+          continue
+        if (current) clearTimeout(current.timer)
+        const timer = setTimeout(() => {
+          autosaveTimers.current.delete(id)
+          autosaveCurrent(id)
+        }, settings.intervalMs)
+        autosaveTimers.current.set(id, {
+          timer,
+          document: entry.record.document,
+          interval: settings.intervalMs,
+          target,
+        })
+      }
+    for (const [id, scheduled] of autosaveTimers.current)
+      if (!wanted.has(id)) {
+        clearTimeout(scheduled.timer)
+        autosaveTimers.current.delete(id)
+      }
   }, [
     entries,
     localBindings,
@@ -1775,14 +2010,39 @@ export default function FileWorkspace({
     workspaceActive,
     busy,
     savingIds,
+    unboundSaveSettings,
+    missingFileIds,
+    sharedStoreActive,
+    store,
   ])
+  useEffect(
+    () => () => {
+      for (const scheduled of autosaveTimers.current.values())
+        clearTimeout(scheduled.timer)
+      autosaveTimers.current.clear()
+    },
+    [],
+  )
 
-  async function toggleLocalAutosave() {
+  async function changeSaveSettings(settings: CanvasSaveSettings) {
     if (!activeId) return
     const id = activeId
     const previous = bindingsRef.current.get(id)
-    if (!previous) return
-    const next = { ...previous, autoSave: !previous.autoSave }
+    const normalized = {
+      autoSave: settings.autoSave,
+      intervalMs: boundedAutosaveInterval(settings.intervalMs),
+    }
+    if (!previous) {
+      const next = new Map(unboundSettingsRef.current).set(id, normalized)
+      unboundSettingsRef.current = next
+      setUnboundSaveSettings(next)
+      return
+    }
+    const next = {
+      ...previous,
+      autoSave: normalized.autoSave,
+      autoSaveIntervalMs: normalized.intervalMs,
+    }
     bindingsRef.current = new Map(bindingsRef.current).set(id, next)
     setLocalBindings((current) => new Map(current).set(id, next))
     try {
@@ -1791,6 +2051,24 @@ export default function FileWorkspace({
       if (alive.current) setNotice(message(failure))
     }
   }
+  useEffect(() => {
+    if (!savePanelOpen || !activeId || !localBinding) return
+    const id = activeId
+    let cancelled = false
+    void localBinding.handle.getFile().catch((failure: unknown) => {
+      if (!cancelled && alive.current && isMissingLocalCanvas(failure)) {
+        setMissingFileIds((current) => new Set(current).add(id))
+        setEntries((current) =>
+          current.map((entry) =>
+            entry.record.id === id ? { ...entry, dirty: true } : entry,
+          ),
+        )
+      }
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [savePanelOpen, activeId, localBinding])
 
   function exportFile() {
     if (!activeId) return
@@ -2159,67 +2437,26 @@ export default function FileWorkspace({
               />
             </div>
             <div className="workspace-tab-actions">
-              {!focused && (
-                <button
-                  className="icon-button"
-                  aria-label="New canvas"
-                  title="New canvas"
-                  disabled={loading || busy}
-                  onClick={() => setPrompt({ kind: 'create' })}
-                >
-                  <Icon name="plus" />
-                </button>
-              )}
               <button
+                ref={savePanelButton}
                 className="icon-button"
-                aria-label="Rename canvas"
-                title="Rename canvas"
-                disabled={!active}
-                onClick={() =>
-                  active && setPrompt({ kind: 'rename', id: active.record.id })
+                aria-label="Save options"
+                aria-haspopup="dialog"
+                aria-expanded={savePanelOpen}
+                title={
+                  activeId && missingFileIds.has(activeId)
+                    ? 'Save options · Choose a replacement location'
+                    : 'Save options · Ctrl+S to save'
                 }
+                disabled={loading}
+                data-save-needed={Boolean(
+                  activeId &&
+                  (missingFileIds.has(activeId) || permissionIds.has(activeId)),
+                )}
+                onClick={() => setSavePanelOpen((current) => !current)}
               >
-                <Icon name="edit" />
+                <Icon name="clock" />
               </button>
-              <button
-                className="icon-button"
-                disabled={!active || busy}
-                onClick={() => {
-                  void saveFile()
-                }}
-                aria-label="Save"
-                title="Save this canvas · Ctrl+S"
-              >
-                <Icon name="save" />
-              </button>
-              <button
-                className="icon-button"
-                disabled={!active || busy}
-                onClick={() => {
-                  void saveFile(true)
-                }}
-                aria-label="Save as"
-                title="Save as a local .CLF file · Ctrl+Shift+S"
-              >
-                <Icon name="files" />
-              </button>
-              {localBinding && (
-                <button
-                  className="icon-button"
-                  aria-label="Auto-save local file"
-                  aria-pressed={localBinding.autoSave}
-                  title={
-                    localBinding.autoSave
-                      ? 'Auto-save local file on · click to pause'
-                      : 'Auto-save local file off · click to enable'
-                  }
-                  onClick={() => {
-                    void toggleLocalAutosave()
-                  }}
-                >
-                  <Icon name="clock" />
-                </button>
-              )}
               {onCopyViewLink && (
                 <button
                   ref={linkButton}
@@ -2373,7 +2610,7 @@ export default function FileWorkspace({
             title={editorStatus?.instructions}
           >
             <span
-              className={`save-dot ${active?.dirty || localDirty ? 'unsaved' : ''}`}
+              className={`save-dot ${active?.dirty || localDirty || (activeId && missingFileIds.has(activeId)) ? 'unsaved' : ''}`}
             />
             <span
               title={
@@ -2397,17 +2634,19 @@ export default function FileWorkspace({
                     ? 'Unsaved changes'
                     : failedSaveIds.has(active.record.id)
                       ? 'Save failed'
-                      : permissionIds.has(active.record.id)
-                        ? 'File access needed'
-                        : localBinding
-                          ? 'Saved to file'
-                          : downloadedIds.has(active.record.id)
-                            ? 'Download copy requested'
-                            : active.persistence === 'browser'
-                              ? sharedStoreActive
-                                ? 'Local library'
-                                : 'Browser copy'
-                              : 'Session only'
+                      : missingFileIds.has(active.record.id)
+                        ? 'Choose save location'
+                        : permissionIds.has(active.record.id)
+                          ? 'File access needed'
+                          : localBinding
+                            ? 'Saved to file'
+                            : downloadedIds.has(active.record.id)
+                              ? 'Download copy requested'
+                              : active.persistence === 'browser'
+                                ? sharedStoreActive
+                                  ? 'Local library'
+                                  : 'Browser copy'
+                                : 'Session only'
                 : 'No canvas open'}
             </span>
             {bridge.status === 'sharing' && (
@@ -2522,6 +2761,30 @@ export default function FileWorkspace({
           }
           onClose={() => setPrompt(null)}
           onSubmit={submitFile}
+        />
+      )}
+      {savePanelOpen && (
+        <CanvasSavePanel
+          key={activeId ?? 'empty'}
+          anchor={savePanelButton}
+          settings={activeSaveSettings}
+          destination={saveDestination}
+          hasCanvas={Boolean(active)}
+          saving={busy || Boolean(activeId && savingIds.has(activeId))}
+          canChooseLocation={supportsLocalCanvasSave()}
+          needsLocation={Boolean(activeId && missingFileIds.has(activeId))}
+          needsPermission={Boolean(activeId && permissionIds.has(activeId))}
+          onChange={(settings) => {
+            void changeSaveSettings(settings)
+          }}
+          onSave={() => {
+            void saveFile()
+          }}
+          onChooseLocation={() => {
+            void saveFile(true)
+          }}
+          onDownload={exportFile}
+          onClose={closeSavePanel}
         />
       )}
       {viewLink && (

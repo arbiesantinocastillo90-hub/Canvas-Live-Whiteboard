@@ -3,6 +3,7 @@ import {
   useEffectEvent,
   useId,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   type CSSProperties,
@@ -76,6 +77,8 @@ import './canvas-viewer.css'
 import './canvas-editor.css'
 import './smart-text.css'
 import CanvasRulers from './CanvasRulers'
+import CanvasBackdrop from './CanvasBackdrop'
+import { useCanvasDeck } from './canvasDeck'
 import {
   DEFAULT_CANVAS_CONTROLS,
   formatCanvasZoom,
@@ -160,6 +163,9 @@ type Gesture = {
   handle?: ResizeHandle
   bounds?: Box | null
   selectionBefore: string[]
+  copyOnDrag?: boolean
+  copyDocument?: CanvasDocument
+  copyIds?: string[]
 }
 
 const resizeHandles: {
@@ -501,6 +507,7 @@ export default function CanvasEditor({
   const currentHistory = useRef(history)
   const notified = useRef(document)
   const stage = useRef<HTMLDivElement>(null)
+  const deckGeometry = useCanvasDeck(stage, active && dockMode)
   const gesture = useRef<Gesture | null>(null)
   const pointerSample = useRef<PointerSample | null>(null)
   const pointerFrame = useRef<number | null>(null)
@@ -969,6 +976,7 @@ export default function CanvasEditor({
     kind: Gesture['kind'],
     ids: string[] = [],
     handle?: ResizeHandle,
+    copyOnDrag = false,
   ) {
     if (!active || gesture.current || !stage.current) return
     if (inlineEditRef.current) finishTextEdit()
@@ -986,6 +994,7 @@ export default function CanvasEditor({
       handle,
       bounds: selectionBounds(currentHistory.current.present, ids),
       selectionBefore: selectedIds,
+      copyOnDrag,
     }
     stage.current.focus({ preventScroll: true })
     stage.current.setPointerCapture?.(event.pointerId)
@@ -1090,13 +1099,15 @@ export default function CanvasEditor({
         )
         return candidate?.type !== 'connection'
       }),
+      undefined,
+      event.ctrlKey || event.metaKey,
     )
   }
 
   function applyPointerSample(sample: PointerSample) {
     const active = gesture.current
     if (!active) return
-    const original = active.history.present
+    let original = active.history.present
     const dx = sample.x - active.x
     const dy = sample.y - active.y
     safely(() => {
@@ -1130,7 +1141,20 @@ export default function CanvasEditor({
       }
       if (active.kind !== 'pan' && Math.abs(dx) + Math.abs(dy) < 3) {
         showHistory(active.history, false)
+        if (active.copyDocument) setSelectedIds(active.selectionBefore)
         return
+      }
+      if (active.copyOnDrag) {
+        if (!active.copyDocument) {
+          const copy = duplicateSelection(original, active.ids, {
+            layerId: activeLayerId,
+            offset: 0,
+          })
+          active.copyDocument = copy.document
+          active.copyIds = copy.selectedIds
+        }
+        original = active.copyDocument
+        setSelectedIds(active.copyIds!)
       }
       let present: CanvasDocument
       const delta = {
@@ -1150,7 +1174,12 @@ export default function CanvasEditor({
                 controls.gridSpacing,
               )
             : delta
-        present = moveSelection(original, active.ids, moved.x, moved.y)
+        present = moveSelection(
+          original,
+          active.copyIds ?? active.ids,
+          moved.x,
+          moved.y,
+        )
       } else {
         if (!active.bounds || !active.handle) return
         const resized = snap
@@ -1230,7 +1259,8 @@ export default function CanvasEditor({
       if (pointerFrame.current !== null)
         cancelAnimationFrame(pointerFrame.current)
       pointerFrame.current = null
-      if (active.kind === 'marquee') setSelectedIds(active.selectionBefore)
+      if (active.kind === 'marquee' || active.copyOnDrag)
+        setSelectedIds(active.selectionBefore)
     } else flushPointer()
     gesture.current = null
     setMarquee(null)
@@ -1258,7 +1288,8 @@ export default function CanvasEditor({
       pointerFrame.current = null
       gesture.current = null
       showHistory(current.history, false)
-      if (current.kind === 'marquee') setSelectedIds(current.selectionBefore)
+      if (current.kind === 'marquee' || current.copyOnDrag)
+        setSelectedIds(current.selectionBefore)
       setMarquee(null)
       setDragging(false)
       setGestureKind('')
@@ -1424,13 +1455,14 @@ export default function CanvasEditor({
     temporaryPan.current = false
     setSpaceHeld(false)
     if (gesture.current) {
-      const previous = gesture.current.history
+      const previous = gesture.current
       gesture.current = null
       pointerSample.current = null
       if (pointerFrame.current !== null)
         cancelAnimationFrame(pointerFrame.current)
       pointerFrame.current = null
-      showHistory(previous, false)
+      showHistory(previous.history, false)
+      if (previous.copyOnDrag) setSelectedIds(previous.selectionBefore)
       setDragging(false)
       setGestureKind('')
       setMarquee(null)
@@ -1633,8 +1665,13 @@ export default function CanvasEditor({
       const current = currentHistory.current.present
       const raw = createCanvasClipboard(current, selectedIds)
       if (!raw) return
-      event.clipboardData.setData(CANVAS_CLIPBOARD_MIME, raw)
+      // Plain text is the portable fallback when a browser rejects custom MIME.
       event.clipboardData.setData('text/plain', raw)
+      try {
+        event.clipboardData.setData(CANVAS_CLIPBOARD_MIME, raw)
+      } catch {
+        // The validated text envelope still carries every object relationship.
+      }
       event.preventDefault()
       if (cut)
         commit(removeSelection(current, selectionIds(current, selectedIds)))
@@ -2206,6 +2243,189 @@ export default function CanvasEditor({
       )}
     </div>
   )
+  const hasDeck = Boolean(deckGeometry)
+  const backdropElements = board.elements
+  const backdropLayers = board.layers
+  const editingId = inlineEdit?.id
+  const { autoGrowShapes, fitTextToShape, minTextSize } = textOptions
+  const backdropObjects = useMemo(() => {
+    if (!hasDeck) return null
+    // Geometry arrays stay identical during camera navigation. Reusing the
+    // children means pan/zoom only updates the outer transform and grid.
+    const document: CanvasDocument = {
+      format: 'LCANVAS',
+      version: 2,
+      name: 'Backdrop',
+      viewport: { x: 0, y: 0, zoom: 1 },
+      layers: backdropLayers,
+      elements: backdropElements,
+    }
+    const options = { autoGrowShapes, fitTextToShape, minTextSize }
+    return orderedVisibleElements(document).map((element, index) => (
+      <EditorObject
+        key={element.id}
+        document={document}
+        element={element}
+        prefix={`${prefix}-backdrop-${index}`}
+        editing={editingId === element.id}
+        textOptions={options}
+      />
+    ))
+  }, [
+    hasDeck,
+    backdropElements,
+    backdropLayers,
+    editingId,
+    prefix,
+    autoGrowShapes,
+    fitTextToShape,
+    minTextSize,
+  ])
+  const viewRail = (
+    <div
+      className={`canvas-view-rail${deckGeometry ? ' canvas-deck-rail' : ''}`}
+      style={
+        deckGeometry
+          ? ({
+              '--deck-rail-right': `${deckGeometry.railRight}px`,
+            } as CSSProperties)
+          : undefined
+      }
+      role="toolbar"
+      aria-label="Canvas controls"
+    >
+      {dockMode && (
+        <button
+          type="button"
+          aria-label="Open right panel"
+          aria-expanded={toolsOpen || inspectorOpen || aiOpen}
+          title="Tools, properties and AI"
+          data-dock-trigger={dockSide}
+          onPointerEnter={(event) => {
+            if (event.pointerType === 'mouse') onToolsOpenChange?.(true)
+          }}
+          onClick={() => onToolsOpenChange?.(true)}
+        >
+          <ToolIcon>
+            <rect x="3" y="4" width="18" height="16" rx="2" />
+            <path d="M15 4v16" />
+          </ToolIcon>
+        </button>
+      )}
+      <button
+        type="button"
+        aria-label="Undo"
+        title="Undo edit (Ctrl+Z)"
+        disabled={!history.past.length || dragging}
+        onClick={() =>
+          runCanvas(() =>
+            showHistory(undoEditorContentHistory(currentHistory.current)),
+          )
+        }
+      >
+        <ToolIcon>
+          <path d="m8 6-5 5 5 5M3 11h10a7 7 0 0 1 7 7" />
+        </ToolIcon>
+      </button>
+      <button
+        type="button"
+        aria-label="Reset view"
+        title="Fit visible objects (0)"
+        disabled={dragging}
+        onClick={resetView}
+      >
+        <ToolIcon>
+          <path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5" />
+          <rect x="8" y="8" width="8" height="8" rx="1" />
+        </ToolIcon>
+      </button>
+      <button
+        type="button"
+        aria-label="Redo"
+        title="Redo edit (Ctrl+Shift+Z)"
+        disabled={!history.future.length || dragging}
+        onClick={() =>
+          runCanvas(() =>
+            showHistory(redoEditorContentHistory(currentHistory.current)),
+          )
+        }
+      >
+        <ToolIcon>
+          <path d="m16 6 5 5-5 5m5-5H11a7 7 0 0 0-7 7" />
+        </ToolIcon>
+      </button>
+      <span className="canvas-rail-divider" />
+      <button
+        type="button"
+        aria-label="Zoom in"
+        title="Zoom in (+)"
+        disabled={view.zoom >= MAX_ZOOM || dragging}
+        onClick={() => changeZoom(1.2)}
+      >
+        <ToolIcon>
+          <path d="M12 5v14M5 12h14" />
+        </ToolIcon>
+      </button>
+      <button
+        type="button"
+        aria-label="Zoom out"
+        title="Zoom out (−)"
+        disabled={view.zoom <= MIN_ZOOM || dragging}
+        onClick={() => changeZoom(1 / 1.2)}
+      >
+        <ToolIcon>
+          <path d="M5 12h14" />
+        </ToolIcon>
+      </button>
+      {onToggleFocus && (
+        <>
+          <span className="canvas-rail-divider" />
+          <button
+            type="button"
+            aria-label={focusMode ? 'Exit full screen' : 'Full screen canvas'}
+            aria-pressed={focusMode}
+            title={focusMode ? 'Exit full screen' : 'Focus on this canvas'}
+            onClick={() => {
+              if (!focusMode && propertiesOpen === undefined)
+                setInspectorOpen(false)
+              onToggleFocus()
+            }}
+          >
+            <ToolIcon>
+              {focusMode ? (
+                <path d="M3 8h5V3m8 0v5h5M8 21v-5H3m18 0h-5v5" />
+              ) : (
+                <path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5" />
+              )}
+            </ToolIcon>
+          </button>
+        </>
+      )}
+      <span className="canvas-rail-spacer" />
+      {!dockMode && (
+        <button
+          type="button"
+          className={aiOpen ? 'canvas-ai-toggle active' : 'canvas-ai-toggle'}
+          aria-label={
+            aiOpen ? 'Close AI workspace panel' : 'Open AI workspace panel'
+          }
+          aria-expanded={aiOpen}
+          aria-controls="workspace-ai-panel"
+          data-dock-trigger={dockMode ? dockSide : undefined}
+          title="Workspace AI / MCP"
+          onClick={() => {
+            setInspectorOpen(false)
+            onToggleAI()
+          }}
+        >
+          <ToolIcon>
+            <rect x="4" y="7" width="16" height="13" rx="4" />
+            <path d="M12 7V3m-2 0h4M8 12h.01M16 12h.01M9 16h6" />
+          </ToolIcon>
+        </button>
+      )}
+    </div>
+  )
   return (
     <section
       className={`canvas-editor${inspectorOpen ? ' has-inspector' : ''}`}
@@ -2216,6 +2436,18 @@ export default function CanvasEditor({
       onCut={(event) => clipboardCopy(event, true)}
       onPaste={clipboardPaste}
     >
+      {deckGeometry && (
+        <CanvasBackdrop
+          geometry={deckGeometry}
+          viewport={view}
+          grid={grid}
+          gridSize={
+            controls.gridSpacing * (view.zoom < 0.5 ? 5 : 1) * view.zoom
+          }
+        >
+          {backdropObjects}
+        </CanvasBackdrop>
+      )}
       {!dockMode && drawingTools}
       {dockMode &&
         dockHost &&
@@ -2530,142 +2762,7 @@ export default function CanvasEditor({
           </div>
         )}
       </div>
-      <div
-        className="canvas-view-rail"
-        role="toolbar"
-        aria-label="Canvas controls"
-      >
-        {dockMode && (
-          <button
-            type="button"
-            aria-label="Open right panel"
-            aria-expanded={toolsOpen || inspectorOpen || aiOpen}
-            title="Tools, properties and AI"
-            data-dock-trigger={dockSide}
-            onPointerEnter={(event) => {
-              if (event.pointerType === 'mouse') onToolsOpenChange?.(true)
-            }}
-            onClick={() => onToolsOpenChange?.(true)}
-          >
-            <ToolIcon>
-              <rect x="3" y="4" width="18" height="16" rx="2" />
-              <path d="M15 4v16" />
-            </ToolIcon>
-          </button>
-        )}
-        <button
-          type="button"
-          aria-label="Undo"
-          title="Undo edit (Ctrl+Z)"
-          disabled={!history.past.length || dragging}
-          onClick={() =>
-            runCanvas(() =>
-              showHistory(undoEditorContentHistory(currentHistory.current)),
-            )
-          }
-        >
-          <ToolIcon>
-            <path d="m8 6-5 5 5 5M3 11h10a7 7 0 0 1 7 7" />
-          </ToolIcon>
-        </button>
-        <button
-          type="button"
-          aria-label="Reset view"
-          title="Fit visible objects (0)"
-          disabled={dragging}
-          onClick={resetView}
-        >
-          <ToolIcon>
-            <path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5" />
-            <rect x="8" y="8" width="8" height="8" rx="1" />
-          </ToolIcon>
-        </button>
-        <button
-          type="button"
-          aria-label="Redo"
-          title="Redo edit (Ctrl+Shift+Z)"
-          disabled={!history.future.length || dragging}
-          onClick={() =>
-            runCanvas(() =>
-              showHistory(redoEditorContentHistory(currentHistory.current)),
-            )
-          }
-        >
-          <ToolIcon>
-            <path d="m16 6 5 5-5 5m5-5H11a7 7 0 0 0-7 7" />
-          </ToolIcon>
-        </button>
-        <span className="canvas-rail-divider" />
-        <button
-          type="button"
-          aria-label="Zoom in"
-          title="Zoom in (+)"
-          disabled={view.zoom >= MAX_ZOOM || dragging}
-          onClick={() => changeZoom(1.2)}
-        >
-          <ToolIcon>
-            <path d="M12 5v14M5 12h14" />
-          </ToolIcon>
-        </button>
-        <button
-          type="button"
-          aria-label="Zoom out"
-          title="Zoom out (−)"
-          disabled={view.zoom <= MIN_ZOOM || dragging}
-          onClick={() => changeZoom(1 / 1.2)}
-        >
-          <ToolIcon>
-            <path d="M5 12h14" />
-          </ToolIcon>
-        </button>
-        {onToggleFocus && (
-          <>
-            <span className="canvas-rail-divider" />
-            <button
-              type="button"
-              aria-label={focusMode ? 'Exit full screen' : 'Full screen canvas'}
-              aria-pressed={focusMode}
-              title={focusMode ? 'Exit full screen' : 'Focus on this canvas'}
-              onClick={() => {
-                if (!focusMode && propertiesOpen === undefined)
-                  setInspectorOpen(false)
-                onToggleFocus()
-              }}
-            >
-              <ToolIcon>
-                {focusMode ? (
-                  <path d="M3 8h5V3m8 0v5h5M8 21v-5H3m18 0h-5v5" />
-                ) : (
-                  <path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5" />
-                )}
-              </ToolIcon>
-            </button>
-          </>
-        )}
-        <span className="canvas-rail-spacer" />
-        {!dockMode && (
-          <button
-            type="button"
-            className={aiOpen ? 'canvas-ai-toggle active' : 'canvas-ai-toggle'}
-            aria-label={
-              aiOpen ? 'Close AI workspace panel' : 'Open AI workspace panel'
-            }
-            aria-expanded={aiOpen}
-            aria-controls="workspace-ai-panel"
-            data-dock-trigger={dockMode ? dockSide : undefined}
-            title="Workspace AI / MCP"
-            onClick={() => {
-              setInspectorOpen(false)
-              onToggleAI()
-            }}
-          >
-            <ToolIcon>
-              <rect x="4" y="7" width="16" height="13" rx="4" />
-              <path d="M12 7V3m-2 0h4M8 12h.01M16 12h.01M9 16h6" />
-            </ToolIcon>
-          </button>
-        )}
-      </div>
+      {deckGeometry ? createPortal(viewRail, deckGeometry.host) : viewRail}
       {statusInFooter ? (
         <p id={`${prefix}-instructions`} hidden>
           {instructions}

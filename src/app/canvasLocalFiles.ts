@@ -1,5 +1,6 @@
 import { canvasFileStore, type CanvasFileStore } from './canvasFiles'
 import { sharedCanvasFileStore } from './localLibrary'
+import { baseCanvasStore } from './canvasStoreScope'
 import {
   canvasExportFilename,
   parseLCANVAS,
@@ -31,7 +32,36 @@ export type LocalCanvasImport = { file: File; handle: LocalCanvasHandle }
 export type LocalCanvasBinding = {
   handle: LocalCanvasHandle
   autoSave: boolean
+  autoSaveIntervalMs?: number
   savedDocument: CanvasDocument
+}
+export const DEFAULT_AUTOSAVE_INTERVAL_MS = 900
+export const MIN_AUTOSAVE_INTERVAL_MS = 500
+export const MAX_AUTOSAVE_INTERVAL_MS = 60 * 60 * 1000
+export function boundedAutosaveInterval(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value)
+    ? Math.max(
+        MIN_AUTOSAVE_INTERVAL_MS,
+        Math.min(MAX_AUTOSAVE_INTERVAL_MS, Math.round(value)),
+      )
+    : DEFAULT_AUTOSAVE_INTERVAL_MS
+}
+export class LocalCanvasMissingError extends Error {
+  constructor() {
+    super(
+      'This local file was moved or deleted. Choose a new save location to keep your changes.',
+    )
+    this.name = 'LocalCanvasMissingError'
+  }
+}
+export function isMissingLocalCanvas(error: unknown): boolean {
+  return (
+    error instanceof LocalCanvasMissingError ||
+    (!!error &&
+      typeof error === 'object' &&
+      'name' in error &&
+      error.name === 'NotFoundError')
+  )
 }
 export type LocalCanvasFiles = {
   get: (projectId: string, fileId: string) => Promise<LocalCanvasBinding | null>
@@ -174,23 +204,28 @@ export async function writeLocalCanvas(
   const next = (writes.get(handle) ?? Promise.resolve())
     .catch(() => undefined)
     .then(async () => {
-      if (expected) {
-        const file = await handle.getFile()
-        if (
-          file.size > 10 * 1024 * 1024 ||
-          JSON.stringify(parseLCANVAS(await file.text())) !==
-            JSON.stringify(expected)
-        )
-          throw new Error(
-            'This local file changed outside Canvas Live. Open it again, or use Save as to keep your edits in a separate file.',
-          )
-      }
-      const writable = await handle.createWritable()
       try {
-        await writable.write(raw)
-        await writable.close()
+        if (expected) {
+          const file = await handle.getFile()
+          if (
+            file.size > 10 * 1024 * 1024 ||
+            JSON.stringify(parseLCANVAS(await file.text())) !==
+              JSON.stringify(expected)
+          )
+            throw new Error(
+              'This local file changed outside Canvas Live. Open it again, or use Save as to keep your edits in a separate file.',
+            )
+        }
+        const writable = await handle.createWritable()
+        try {
+          await writable.write(raw)
+          await writable.close()
+        } catch (error) {
+          await writable.abort?.().catch(() => undefined)
+          throw error
+        }
       } catch (error) {
-        await writable.abort?.().catch(() => undefined)
+        if (isMissingLocalCanvas(error)) throw new LocalCanvasMissingError()
         throw error
       }
     })
@@ -221,6 +256,11 @@ function binding(value: unknown): LocalCanvasBinding {
   return {
     handle: requireHandle(value.handle),
     autoSave: value.autoSave,
+    ...('autoSaveIntervalMs' in value
+      ? {
+          autoSaveIntervalMs: boundedAutosaveInterval(value.autoSaveIntervalMs),
+        }
+      : {}),
     savedDocument: validateCanvasDocument(value.savedDocument),
   }
 }
@@ -324,6 +364,8 @@ export function createLocalCanvasFiles(
 
 const bindings = new WeakMap<CanvasFileStore, LocalCanvasFiles>()
 export function localFilesFor(store: CanvasFileStore = canvasFileStore) {
+  const base = baseCanvasStore(store)
+  if (base !== store) return localFilesFor(base)
   if (store === sharedCanvasFileStore) return localFilesFor(canvasFileStore)
   let local = bindings.get(store)
   if (!local) {

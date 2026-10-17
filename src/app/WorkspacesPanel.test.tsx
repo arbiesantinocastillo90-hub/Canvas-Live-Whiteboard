@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { DEFAULT_LAYOUT } from './layout'
 import { DEFAULT_PREFERENCES } from './workspace'
 import WorkspacesPanel from './WorkspacesPanel'
+import { backgroundAssets } from './workspaceBackground'
 import {
   createSavedWorkspace,
   serializeSavedWorkspace,
@@ -121,6 +122,68 @@ describe('workspace file controls', () => {
         (item) => item.textContent,
       ),
     ).toEqual(['Studio', 'Archive'])
+  })
+
+  it('scopes each card to its own colors and reused background image reference', async () => {
+    const read = vi
+      .spyOn(backgroundAssets, 'read')
+      .mockResolvedValue('/__canvas_live_library/assets/' + 'b'.repeat(64))
+    const first = createSavedWorkspace(
+      {
+        ...DEFAULT_PREFERENCES,
+        accent: '#FF0000',
+        homeAppearance: {
+          ...DEFAULT_PREFERENCES.homeAppearance,
+          backgroundColor: '#123456',
+          backgroundAssetId: 'b'.repeat(64),
+        },
+      },
+      DEFAULT_LAYOUT,
+      null,
+      'Red studio',
+      'red',
+    )
+    const second = createSavedWorkspace(
+      {
+        ...DEFAULT_PREFERENCES,
+        accent: '#00FF00',
+        homeAppearance: {
+          ...DEFAULT_PREFERENCES.homeAppearance,
+          backgroundColor: '#654321',
+        },
+      },
+      DEFAULT_LAYOUT,
+      null,
+      'Green studio',
+      'green',
+    )
+    render(
+      <WorkspacesPanel
+        variant="page"
+        state={{ version: 1, activeId: 'red', items: [first, second] }}
+        onSelect={vi.fn()}
+        onCreate={vi.fn()}
+        onRename={vi.fn()}
+        onImport={vi.fn()}
+      />,
+    )
+    const red = screen.getByRole('button', { name: 'Red studio' }),
+      green = screen.getByRole('button', { name: 'Green studio' })
+    expect(red.style.getPropertyValue('--accent')).toBe('#FF0000')
+    expect(green.style.getPropertyValue('--accent')).toBe('#00FF00')
+    expect(red.style.getPropertyValue('--home-background-color')).toBe(
+      '#123456',
+    )
+    expect(green.style.getPropertyValue('--home-background-color')).toBe(
+      '#654321',
+    )
+    await waitFor(() =>
+      expect(red.style.getPropertyValue('--home-background-image')).toContain(
+        '/__canvas_live_library/assets/',
+      ),
+    )
+    expect(green.style.getPropertyValue('--home-background-image')).toBe('none')
+    expect(read).toHaveBeenCalledWith('b'.repeat(64))
   })
 
   it('publishes workspace perspective changes without changing the workspace document', () => {

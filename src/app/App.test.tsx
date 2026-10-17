@@ -8,6 +8,8 @@ import {
 } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import App from './App'
+import { canvasFileStore, createCanvasFileRecord } from './canvasFiles'
+import { createCanvasDocument } from './lcanvas'
 import { STORAGE_KEY, createProject, EMPTY_STATE } from './workspace'
 import { DEFAULT_LAYOUT, LAYOUT_STORAGE_KEY } from './layout'
 import { SHORTCUT_STORAGE_KEY } from './shortcuts'
@@ -100,7 +102,7 @@ describe('workspace navigation and appearance', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Work' }))
     await screen.findByLabelText('Editing canvas: 1 visible objects')
     expect(screen.getByText('Unsaved changes')).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    fireEvent.keyDown(document.body, { key: 's', code: 'KeyS', ctrlKey: true })
     await waitFor(() =>
       expect(screen.queryByText('Unsaved changes')).not.toBeInTheDocument(),
     )
@@ -133,7 +135,7 @@ describe('workspace navigation and appearance', () => {
       '.workspace-tab-bar',
     ) as HTMLElement
     expect(
-      within(focusHeader).getByRole('button', { name: 'Save' }),
+      within(focusHeader).getByRole('button', { name: 'Save options' }),
     ).toBeEnabled()
     expect(
       within(focusHeader).getByRole('button', { name: 'Export' }),
@@ -144,7 +146,9 @@ describe('workspace navigation and appearance', () => {
       'inert',
     )
     expect(fullScreen).toHaveFocus()
-    fireEvent.click(screen.getByRole('button', { name: 'Open left panel' }))
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Open left panel' }),
+    )
     expect(
       screen.getByRole('complementary', { name: 'Project files' }),
     ).toBeInTheDocument()
@@ -180,17 +184,30 @@ describe('workspace navigation and appearance', () => {
     const view = render(<App />)
     createNamedProject('Roadmap')
     createNamedProject('Garden')
+    const roadmap = JSON.parse(
+      localStorage.getItem(STORAGE_KEY)!,
+    ).projects.find((project: { name: string }) => project.name === 'Roadmap')
+    await canvasFileStore.save(
+      createCanvasFileRecord(
+        roadmap.id,
+        createCanvasDocument('Roadmap drawing'),
+      ),
+    )
     fireEvent.click(
       screen.getByRole('button', { name: 'Open project Roadmap' }),
     )
     fireEvent.click(await screen.findByRole('button', { name: 'Work' }))
-    fireEvent.click(screen.getByRole('button', { name: 'Open left panel' }))
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Open left panel' }),
+    )
     expect(
       screen.getByRole('heading', { name: 'Roadmap', level: 2 }),
     ).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Options' }))
     fireEvent.click(await screen.findByRole('button', { name: 'Work' }))
-    fireEvent.click(screen.getByRole('button', { name: 'Open left panel' }))
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Open left panel' }),
+    )
     expect(
       screen.getByRole('heading', { name: 'Roadmap', level: 2 }),
     ).toBeInTheDocument()
@@ -206,7 +223,9 @@ describe('workspace navigation and appearance', () => {
     )
     const resume = screen.queryByRole('button', { name: 'Work' })
     if (resume) fireEvent.click(resume)
-    fireEvent.click(screen.getByRole('button', { name: 'Open left panel' }))
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Open left panel' }),
+    )
     expect(
       screen.getByRole('heading', { name: 'New roadmap', level: 2 }),
     ).toBeInTheDocument()
@@ -217,11 +236,13 @@ describe('workspace navigation and appearance', () => {
     const view = render(<App />)
     await createEditableCanvas()
     fireEvent.click(screen.getByRole('button', { name: 'Add rectangle' }))
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    fireEvent.keyDown(document.body, { key: 's', code: 'KeyS', ctrlKey: true })
     await waitFor(() =>
       expect(screen.queryByText('Unsaved changes')).toBeNull(),
     )
-    fireEvent.click(screen.getByRole('button', { name: 'Open left panel' }))
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Open left panel' }),
+    )
     fireEvent.keyDown(
       screen.getByRole('separator', { name: 'Resize left panel' }),
       { key: 'End' },
@@ -350,7 +371,9 @@ describe('workspace navigation and appearance', () => {
     createNamedProject('Roadmap')
     createNamedProject('Garden')
     fireEvent.click(await screen.findByRole('button', { name: 'Work' }))
-    fireEvent.click(screen.getByRole('button', { name: 'Open left panel' }))
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Open left panel' }),
+    )
     fireEvent.click(screen.getByRole('tab', { name: 'Projects' }))
     fireEvent.change(
       screen.getByRole('searchbox', { name: 'Search projects' }),
@@ -390,7 +413,9 @@ describe('workspace navigation and appearance', () => {
     view.unmount()
     render(<App />)
     fireEvent.click(await screen.findByRole('button', { name: 'Work' }))
-    fireEvent.click(screen.getByRole('button', { name: 'Open left panel' }))
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Open left panel' }),
+    )
     expect(
       screen.getByRole('heading', { name: 'My project', level: 2 }),
     ).toBeInTheDocument()
@@ -473,7 +498,9 @@ describe('workspace navigation and appearance', () => {
       'Your browser could not remember these changes',
     )
     fireEvent.click(await screen.findByRole('button', { name: 'Work' }))
-    fireEvent.click(screen.getByRole('button', { name: 'Open left panel' }))
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Open left panel' }),
+    )
     expect(
       screen.getByRole('heading', { name: 'Session project', level: 2 }),
     ).toBeInTheDocument()

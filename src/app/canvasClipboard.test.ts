@@ -86,6 +86,38 @@ function envelope(document: unknown, patch: Record<string, unknown> = {}) {
 }
 
 describe('bounded canvas clipboard', () => {
+  it('accepts Windows clipboard line endings and the strict JSON MIME envelope', () => {
+    const raw = createCanvasClipboard(board(), ['area'])!
+    const expected = parseCanvasClipboard(raw)
+    expect(parseCanvasClipboard(raw.replaceAll('\n', '\r\n'))).toEqual(expected)
+    expect(parseCanvasClipboard('\uFEFF' + raw)).toEqual(expected)
+    const json = raw.slice(CANVAS_CLIPBOARD_PREFIX.length)
+    expect(isCanvasClipboard(json)).toBe(true)
+    expect(parseCanvasClipboard(json)).toEqual(expected)
+    expect(isCanvasClipboard('{"hello":"ordinary JSON text"}')).toBe(false)
+  })
+
+  it('accepts a validated legacy LCANVAS v1 document in a clipboard envelope', () => {
+    const raw = createCanvasClipboard(board(), ['one'])!
+    const payload = JSON.parse(raw.slice(CANVAS_CLIPBOARD_PREFIX.length))
+    payload.document.version = 1
+    delete payload.document.layers
+    for (const item of payload.document.elements) {
+      delete item.layerId
+      delete item.areaId
+      delete item.text
+      delete item.fontSize
+      delete item.textLayout
+      delete item.strokeWidth
+      delete item.dashed
+      delete item.cornerRadius
+      delete item.opacity
+    }
+    const imported = parseCanvasClipboard(JSON.stringify(payload))
+    expect(imported.version).toBe(2)
+    expect(imported.elements).toHaveLength(1)
+  })
+
   it('copies an area with its members and internal links, excluding external endpoints', () => {
     const source = board()
     const before = serializeLCANVAS(source)

@@ -1,0 +1,97 @@
+.workspace-tab-actions [data-save-needed='true'] {
+  color: var(--accent);
+}
+.canvas-save-panel {
+  position: absolute;
+  z-index: 145;
+  top: calc(var(--tab-bar-height, 40px) + 6px);
+  right: 8px;
+  width: min(310px, calc(100% - 16px));
+  max-height: calc(100dvh - var(--tab-bar-height, 40px) - 24px);
+  overflow: auto;
+  display: grid;
+  gap: 13px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--ink);
+  box-shadow: 0 10px 32px #0004;
+  font-size: 12px;
+  animation: workspace-enter var(--motion-duration, 180ms)
+    var(--motion-easing, ease-out) both;
+}
+.canvas-save-panel-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.canvas-save-panel-heading h2 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+.canvas-save-panel-heading .icon-button {
+  width: 25px;
+  height: 25px;
+  padding: 5px;
+}
+.canvas-save-panel-heading .icon {
+  width: 15px;
+  height: 15px;
+}
+.canvas-save-destination {
+  margin: 0;
+  padding: 9px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  color: var(--muted);
+  background: var(--well);
+  overflow-wrap: anywhere;
+}
+.canvas-save-toggle,
+.canvas-save-interval {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+.canvas-save-toggle input {
+  margin: 0;
+  accent-color: var(--accent);
+}
+.canvas-save-interval {
+  justify-content: space-between;
+}
+.canvas-save-interval input {
+  width: 88px;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  color: var(--ink);
+  background: var(--well);
+  font: inherit;
+}
+.canvas-save-warning {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.5;
+}
+.canvas-save-panel-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+.canvas-save-panel-actions .button {
+  padding: 7px 9px;
+  min-height: 31px;
+  font-size: 11px;
+}
+.app-shell[data-motion='reduced'] .canvas-save-panel {
+  animation: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .canvas-save-panel {
+    animation: none;
+  }
+}

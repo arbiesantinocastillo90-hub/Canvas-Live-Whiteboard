@@ -164,14 +164,14 @@ describe('session notification history and transient messages', () => {
     )
   })
 
-  it('closes on outside pointer presses, keeps file focus untouched, and preserves repeated events', () => {
+  it('closes on outside pointer presses, keeps file focus untouched, and merges repeated events', () => {
     render(<Session />)
     fireEvent.click(screen.getByRole('button', { name: 'Send success' }))
     fireEvent.click(screen.getByRole('button', { name: 'Send success' }))
     fireEvent.click(screen.getByRole('button', { name: 'Notifications' }))
     expect(
       within(screen.getByRole('dialog')).getAllByRole('listitem'),
-    ).toHaveLength(2)
+    ).toHaveLength(1)
     fireEvent.pointerDown(document.body)
     expect(screen.queryByRole('dialog')).toBeNull()
     expect(
@@ -190,5 +190,93 @@ describe('session notification history and transient messages', () => {
     expect(screen.queryByRole('status')).toBeNull()
     act(() => vi.advanceTimersByTime(4000))
     expect(screen.getByRole('alert')).toHaveAttribute('data-closing', 'true')
+  })
+
+  it('refreshes a recurring toast and removes a history entry so a recurrence can be added again', () => {
+    vi.useFakeTimers()
+    render(<Session />)
+    fireEvent.click(screen.getByRole('button', { name: 'Send error' }))
+    act(() => vi.advanceTimersByTime(4000))
+    fireEvent.click(screen.getByRole('button', { name: 'Send error' }))
+    act(() => vi.advanceTimersByTime(4000))
+    expect(screen.getByRole('alert')).toHaveAttribute('data-closing', 'false')
+    expect(screen.getByLabelText('1 unread notifications')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Notifications' }))
+    const history = screen.getByRole('dialog')
+    expect(within(history).getAllByRole('listitem')).toHaveLength(1)
+    fireEvent.click(
+      within(history).getByRole('button', {
+        name: 'Remove notification: Could not save this file',
+      }),
+    )
+    expect(history).toHaveTextContent('No notifications this session.')
+    fireEvent.click(screen.getByRole('button', { name: 'Close notifications' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Send error' }))
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      'Could not save this file',
+    )
+    expect(screen.getByLabelText('1 unread notifications')).toBeInTheDocument()
+  })
+
+  it.each([5, 10, 20, 30, 60, 120])(
+    'snoozes a recurring notification for %s minutes without adding copies',
+    (minutes) => {
+      vi.useFakeTimers()
+      render(<Session />)
+      fireEvent.click(screen.getByRole('button', { name: 'Send error' }))
+      fireEvent.change(
+        screen.getByRole('combobox', { name: 'Remind me later' }),
+        {
+          target: { value: String(minutes) },
+        },
+      )
+      expect(screen.queryByRole('alert')).toBeNull()
+      expect(screen.queryByLabelText('1 unread notifications')).toBeNull()
+      fireEvent.click(screen.getByRole('button', { name: 'Send error' }))
+      expect(screen.queryByRole('alert')).toBeNull()
+      act(() => vi.advanceTimersByTime(minutes * 60_000 - 1))
+      expect(screen.queryByRole('alert')).toBeNull()
+      act(() => vi.advanceTimersByTime(1))
+      expect(screen.getByRole('alert')).toHaveTextContent(
+        'Could not save this file',
+      )
+      expect(
+        screen.getByLabelText('1 unread notifications'),
+      ).toBeInTheDocument()
+      fireEvent.click(screen.getByRole('button', { name: 'Notifications' }))
+      expect(
+        within(screen.getByRole('dialog')).getAllByRole('listitem'),
+      ).toHaveLength(1)
+    },
+  )
+
+  it('allows reminders in history and cancels them when an entry is removed', () => {
+    vi.useFakeTimers()
+    render(<Session />)
+    fireEvent.click(screen.getByRole('button', { name: 'Send error' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Notifications' }))
+    const history = screen.getByRole('dialog')
+    fireEvent.change(within(history).getByRole('combobox'), {
+      target: { value: '5' },
+    })
+    expect(history).toHaveTextContent('Reminder set for')
+    fireEvent.click(
+      within(history).getByRole('button', {
+        name: 'Remove notification: Could not save this file',
+      }),
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Close notifications' }))
+    act(() => vi.advanceTimersByTime(5 * 60_000))
+    expect(screen.queryByRole('alert')).toBeNull()
+  })
+
+  it('cleans pending reminder and toast timers when the session unmounts', () => {
+    vi.useFakeTimers()
+    const view = render(<Session />)
+    fireEvent.click(screen.getByRole('button', { name: 'Send error' }))
+    fireEvent.change(screen.getByRole('combobox'), { target: { value: '120' } })
+    expect(vi.getTimerCount()).toBeGreaterThan(0)
+    view.unmount()
+    expect(vi.getTimerCount()).toBe(0)
   })
 })

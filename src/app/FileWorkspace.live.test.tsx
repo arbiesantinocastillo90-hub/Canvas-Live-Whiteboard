@@ -89,17 +89,54 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
+function save() {
+  if (!screen.queryByRole('dialog', { name: 'Save options' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Save options' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Save now' }))
+}
+
 describe('live local-library canvas updates', () => {
+  it('autosaves the native library only after it is enabled and honors the chosen interval with fresh revisions', async () => {
+    await mount()
+    fireEvent.click(screen.getByRole('button', { name: 'Save options' }))
+    expect(screen.getByRole('checkbox', { name: 'Autosave' })).not.toBeChecked()
+    expect(screen.getByLabelText('Save destination')).toHaveTextContent(
+      'Canvas Live local library',
+    )
+    fireEvent.change(
+      screen.getByRole('spinbutton', { name: 'Autosave interval in seconds' }),
+      { target: { value: '5' } },
+    )
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Autosave' }))
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    fireEvent.click(screen.getByRole('button', { name: 'Add rectangle' }))
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(4999)
+    })
+    expect(native.store.save).not.toHaveBeenCalled()
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1)
+    })
+    expect(saved.document.elements).toHaveLength(1)
+    fireEvent.click(screen.getByRole('button', { name: 'Add rectangle' }))
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5000)
+    })
+    expect(saved.document.elements).toHaveLength(2)
+    expect(
+      native.store.save.mock.calls.map(([record]) => record[revision]),
+    ).toEqual([1, 2])
+  })
   it('saves consecutive edits using each acknowledged revision', async () => {
     await mount()
     fireEvent.click(screen.getByRole('button', { name: 'Add rectangle' }))
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    save()
     await waitFor(() => expect(native.store.save).toHaveBeenCalledTimes(1))
     await waitFor(() =>
-      expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled(),
+      expect(screen.getByRole('button', { name: 'Save now' })).toBeEnabled(),
     )
     fireEvent.click(screen.getByRole('button', { name: 'Add rectangle' }))
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    save()
     await waitFor(() => expect(native.store.save).toHaveBeenCalledTimes(2))
     await waitFor(() => expect(saved.document.elements).toHaveLength(2))
     expect(
@@ -167,7 +204,7 @@ describe('live local-library canvas updates', () => {
     expect(
       screen.getByRole('button', { name: /^rectangle/ }),
     ).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    save()
     expect(screen.getByRole('alert')).toHaveTextContent(
       'changed in another view',
     )

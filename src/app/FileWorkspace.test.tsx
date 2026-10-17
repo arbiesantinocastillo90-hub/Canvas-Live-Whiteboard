@@ -21,6 +21,10 @@ import {
   serializeLCANVAS,
 } from './lcanvas'
 import { DEFAULT_PREFERENCES, type Project } from './workspace'
+import {
+  WorkspaceCommandsProvider,
+  WorkspaceOverlays,
+} from './WorkspaceCommands'
 
 const project: Project = {
   id: 'project-a',
@@ -46,21 +50,33 @@ function upload(name: string, raw: string) {
 
 async function mount(store: CanvasFileStore, activeProject = project) {
   const view = render(
-    <FileWorkspace
-      key={activeProject.id}
-      project={activeProject}
-      preferences={DEFAULT_PREFERENCES}
-      onRenameProject={vi.fn()}
-      store={store}
-    />,
+    <WorkspaceCommandsProvider>
+      <FileWorkspace
+        key={activeProject.id}
+        project={activeProject}
+        preferences={DEFAULT_PREFERENCES}
+        onRenameProject={vi.fn()}
+        store={store}
+      />
+      <WorkspaceOverlays />
+    </WorkspaceCommandsProvider>,
   )
   await waitFor(() =>
-    expect(
-      screen.getAllByRole('button', { name: 'New canvas' })[0],
-    ).toBeEnabled(),
+    expect(screen.getByRole('button', { name: 'Save options' })).toBeEnabled(),
   )
   fireEvent.click(screen.getByRole('button', { name: 'Open file panel' }))
   return view
+}
+function save() {
+  if (!screen.queryByRole('dialog', { name: 'Save options' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Save options' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Save now' }))
+}
+function renameCanvas() {
+  fireEvent.keyDown(document.body, { key: 'p', code: 'KeyP', ctrlKey: true })
+  fireEvent.click(
+    screen.getByRole('option', { name: /^Rename current canvas/ }),
+  )
 }
 
 async function create(name: string) {
@@ -250,7 +266,7 @@ describe('LCANVAS project workspace', () => {
     expect(
       screen.getByText(/Browser storage is unavailable/),
     ).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: 'Rename canvas' }))
+    renameCanvas()
     fireEvent.change(screen.getByLabelText('Canvas name'), {
       target: { value: 'Updated ideas' },
     })
@@ -466,7 +482,7 @@ describe('LCANVAS project workspace', () => {
     expect(screen.queryByText('Unsaved changes')).not.toBeInTheDocument()
     expect(screen.getByLabelText('Canvas zoom')).toHaveTextContent('100%')
     fireEvent.click(screen.getByRole('button', { name: 'Zoom out' }))
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    save()
     await waitFor(() =>
       expect(screen.queryByText('Unsaved changes')).not.toBeInTheDocument(),
     )
@@ -550,7 +566,7 @@ describe('LCANVAS project workspace', () => {
       target: { value: 'First milestone' },
     })
     fireEvent.click(screen.getByRole('button', { name: 'Apply properties' }))
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    save()
     await waitFor(() =>
       expect(screen.queryByText('Unsaved changes')).not.toBeInTheDocument(),
     )
@@ -587,7 +603,7 @@ describe('LCANVAS project workspace', () => {
     expect(
       (await store.get(project.id, 'first')).value?.document.elements,
     ).toHaveLength(0)
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    save()
     await waitFor(() =>
       expect(screen.queryByText('Unsaved changes')).not.toBeInTheDocument(),
     )

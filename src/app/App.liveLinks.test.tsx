@@ -95,7 +95,14 @@ async function fixture() {
   return { projectId, workspaceId, alphaId, betaId, alpha, beta }
 }
 async function openWork() {
-  fireEvent.click(screen.getByRole('button', { name: 'Work' }))
+  fireEvent.click(
+    await screen.findByRole('button', { name: 'Browse project Live project' }),
+  )
+  fireEvent.click(
+    await screen.findByRole('button', {
+      name: 'Open canvas Alpha in Live project',
+    }),
+  )
   await screen.findByRole('region', { name: 'Alpha canvas view' })
 }
 async function copyLink(kind: 'exact' | 'latest') {
@@ -410,11 +417,10 @@ describe('live view links in the application', () => {
       name: 'rectangle Last valid unsaved project draft',
     })
     fireEvent.click(screen.getByRole('link', { name: 'Canvas Live home' }))
-    fireEvent.click(
-      await screen.findByRole('button', {
-        name: 'Browse project Live project',
-      }),
-    )
+    const projectCard = screen.queryByRole('button', {
+      name: 'Browse project Live project',
+    })
+    if (projectCard) fireEvent.click(projectCard)
     await screen.findByRole('button', {
       name: 'Open canvas Alpha in Live project',
     })
