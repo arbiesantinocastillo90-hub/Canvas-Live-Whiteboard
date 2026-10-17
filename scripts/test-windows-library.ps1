@@ -177,6 +177,37 @@ try {
     Assert-Library ($reopened.Status -eq 200 -and $reopened.Json.revision -eq 2 -and $reopened.Json.value.document.name -eq 'Durable later edit') 'Stopping and restarting only the isolated process preserves the exact saved revision'
     $all = Invoke-LibraryRequest $url
     Assert-Library (@($all.Json.entries.PSObject.Properties).Count -eq 2) 'Restart preserves both the file and canonical metadata'
+    $assetName = 'asset-' + ('a' * 64)
+    $assetEncoded = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($assetName)).TrimEnd('=').Replace('+', '-').Replace('/', '_')
+    $assetKey = 'settings:' + $assetEncoded
+    $assetTarget = '/__canvas_live_library/' + [Uri]::EscapeDataString($assetKey)
+    $asset = @{ mime = 'image/gif'; dataURL = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7' }
+    $beforeAssetLibraryHash = (Get-FileHash -LiteralPath $libraryPath -Algorithm SHA256).Hash
+    $assetWritten = Invoke-LibraryPut $url $assetKey $asset 0
+    Assert-Library ($assetWritten.Status -eq 200 -and $assetWritten.Json.revision -eq 1) 'Local background asset is saved through its content-addressed settings key'
+    $assetHasher = [Security.Cryptography.SHA256]::Create()
+    try { $assetFileName = [BitConverter]::ToString($assetHasher.ComputeHash([Text.Encoding]::UTF8.GetBytes($assetKey))).Replace('-', '').ToLowerInvariant() + '.json' }
+    finally { $assetHasher.Dispose() }
+    $assetPath = Join-Path $taskPackage ('data/appearance/' + $assetFileName)
+    Assert-Library ((Test-Path -LiteralPath $assetPath) -and (Get-FileHash -LiteralPath $libraryPath -Algorithm SHA256).Hash -eq $beforeAssetLibraryHash) 'Saving an image writes its isolated asset file without rewriting the active document library'
+    $beforeSettingsAssetHash = (Get-FileHash -LiteralPath $assetPath -Algorithm SHA256).Hash
+    $settingsKey = 'settings:bGlua3M'
+    $settingsWritten = Invoke-LibraryPut $url $settingsKey @{ exactEnabled = $true; latestEnabled = $true } 0
+    Assert-Library ($settingsWritten.Status -eq 200) 'Regular settings remain independent of bulky background assets'
+    Assert-Library ((Get-FileHash -LiteralPath $assetPath -Algorithm SHA256).Hash -eq $beforeSettingsAssetHash) 'Updating small workspace settings does not rewrite background image bytes'
+    $withoutAssets = Invoke-LibraryRequest $url
+    Assert-Library ($withoutAssets.Status -eq 200 -and $null -eq $withoutAssets.Json.entries.PSObject.Properties[$assetKey] -and !$withoutAssets.Body.Contains($asset.dataURL)) 'Polling the library index omits background image entries and their bytes'
+    Assert-Library (@($withoutAssets.Json.entries.PSObject.Properties).Count -eq 3 -and $withoutAssets.Json.entries.PSObject.Properties[$fileKey] -and $withoutAssets.Json.entries.PSObject.Properties[$metaKey] -and $withoutAssets.Json.entries.PSObject.Properties[$settingsKey]) 'Filtering background assets preserves canvas, metadata and ordinary settings entries'
+    $assetRead = Invoke-LibraryRequest $url $assetTarget
+    Assert-Library ($assetRead.Status -eq 200 -and $assetRead.Json.revision -eq 1 -and $assetRead.Json.value.mime -eq $asset.mime -and $assetRead.Json.value.dataURL -eq $asset.dataURL) 'A direct background asset read returns its complete unchanged image payload'
+    $staleAsset = Invoke-LibraryPut $url $assetKey @{ mime = 'image/gif'; dataURL = 'Rejected stale fixture' } 0
+    Assert-Library ($staleAsset.Status -eq 409 -and (Get-FileHash -LiteralPath $assetPath -Algorithm SHA256).Hash -eq $beforeSettingsAssetHash) 'Stale image writes cannot replace durable asset bytes'
+    Stop-OwnedLauncher
+    $url = Start-OwnedLauncher
+    $assetReopened = Invoke-LibraryRequest $url $assetTarget
+    $reopenedWithoutAssets = Invoke-LibraryRequest $url
+    $durableAsset = ConvertFrom-Json -InputObject (Get-Content -LiteralPath $assetPath -Raw)
+    Assert-Library ($assetReopened.Status -eq 200 -and $assetReopened.Json.revision -eq 1 -and $assetReopened.Json.value.dataURL -eq $asset.dataURL -and $durableAsset.value.dataURL -eq $asset.dataURL -and $null -eq $reopenedWithoutAssets.Json.entries.PSObject.Properties[$assetKey]) 'Restart retains the full asset on disk and by direct key while the polling index stays small'
     Stop-OwnedLauncher
     $dataPath = Assert-OwnPath (Join-Path $taskPackage 'data')
     $retainedData = Assert-OwnPath (Join-Path $taskPackage 'data-retained')

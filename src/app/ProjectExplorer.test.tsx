@@ -151,13 +151,12 @@ describe('project organizer', () => {
     const onRecentsCollapsedChange = vi.fn()
     const props = { projects, onOpen: vi.fn(), onRecentsCollapsedChange }
     const view = render(<ProjectExplorer {...props} recentsCollapsed={false} />)
-    fireEvent.click(screen.getByRole('button', { name: 'Recent' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Recent projects' }))
     expect(onRecentsCollapsedChange).toHaveBeenCalledWith(true)
     view.rerender(<ProjectExplorer {...props} recentsCollapsed />)
-    expect(screen.getByRole('button', { name: 'Recent' })).toHaveAttribute(
-      'aria-expanded',
-      'false',
-    )
+    expect(
+      screen.getByRole('button', { name: 'Recent projects' }),
+    ).toHaveAttribute('aria-expanded', 'false')
     expect(
       screen.queryByRole('button', { name: 'Select recent project Savings' }),
     ).toBeNull()

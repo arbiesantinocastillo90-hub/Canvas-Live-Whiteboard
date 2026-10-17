@@ -511,3 +511,212 @@
   transition: none;
   transform: none;
 }
+.home-page {
+  position: relative;
+  isolation: isolate;
+  width: 100%;
+  max-width: none;
+  background: var(--home-background-color, var(--bg));
+  padding-inline: max(24px, calc((100% - 1256px) / 2));
+}
+.home-background,
+.home-gradient {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  border-radius: inherit;
+}
+.home-background {
+  z-index: -2;
+  background-image: var(--home-background-image, none);
+  background-size: var(--home-background-size, cover);
+  background-position: var(--home-background-position, center);
+  background-repeat: var(--home-background-repeat, no-repeat);
+  opacity: var(--home-background-opacity, 0.45);
+}
+.home-gradient {
+  z-index: -1;
+  background: var(--home-gradient, none);
+  opacity: var(--home-gradient-opacity, 0.65);
+}
+.home-workspace-header {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 16px;
+  min-width: 0;
+}
+.home-workspace-header .home-workspace-name {
+  flex: 1;
+  margin: 0;
+  min-width: min(100%, 180px);
+}
+.home-workspace-header .home-workspace-name .icon {
+  width: auto;
+  height: auto;
+}
+.home-perspective {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--rail);
+}
+.home-perspective .button {
+  min-height: 32px;
+  padding: 6px 12px;
+  background: transparent;
+  border-color: transparent;
+  font-size: 12px;
+}
+.home-perspective .button[aria-pressed='true'] {
+  background: var(--tint);
+  color: var(--accent-text);
+  border-color: var(--accent);
+}
+.home-heading-title,
+.home-library-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+.home-heading-title h1 {
+  min-width: 0;
+}
+.home-back {
+  transform: rotate(180deg);
+  flex-shrink: 0;
+}
+.home-actions {
+  flex-wrap: wrap;
+}
+.home-library-controls {
+  flex-wrap: wrap;
+  margin-bottom: 24px;
+}
+.home-library-controls .home-search {
+  flex: 1 1 220px;
+  width: auto;
+  margin: 0;
+}
+.library-order {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.library-order select {
+  max-width: 180px;
+  min-height: 36px;
+  padding: 7px 10px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--panel);
+  color: var(--ink);
+  font: inherit;
+}
+.home-hierarchy-section,
+.home-canvas-organizer section + section {
+  margin-top: 12px;
+}
+.home-main-hierarchy {
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--panel);
+}
+.home-main-hierarchy .project-tree-row {
+  padding-left: calc(var(--project-depth, 0) * 24px);
+}
+.home-main-hierarchy .project-open {
+  min-height: 44px;
+  font-size: 14px;
+}
+.home-card {
+  position: relative;
+  min-width: 0;
+  display: flex;
+}
+.home-card .home-file {
+  width: 100%;
+  border-color: var(--item-border, var(--line));
+  background: var(--item-fill, var(--panel));
+}
+.home-card .home-file:hover {
+  border-color: var(--item-color, var(--accent));
+}
+.home-file-name > svg {
+  flex-shrink: 0;
+}
+.canvas-thumbnail {
+  display: block;
+  width: 100%;
+  height: 100%;
+  padding: 10px;
+  overflow: hidden;
+}
+.home-project-preview {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  min-height: 94px;
+  padding: 24px 18px;
+  color: var(--item-color, var(--accent));
+  border-bottom: 1px solid var(--item-border, var(--line));
+  background: var(--well);
+}
+.home-project-preview > svg {
+  width: 36px;
+  height: 36px;
+  flex-shrink: 0;
+}
+.home-project-preview > span {
+  color: var(--muted);
+  font-size: 11px;
+}
+.home-card-description {
+  margin: 0 14px 10px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.home-card-customize {
+  position: absolute;
+  top: 7px;
+  right: 7px;
+  opacity: 0;
+  width: 28px;
+  height: 28px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  transition: opacity var(--motion-duration, 150ms);
+}
+.home-card:hover .home-card-customize,
+.home-card:focus-within .home-card-customize {
+  opacity: 1;
+}
+@media (hover: none) {
+  .home-card-customize {
+    opacity: 1;
+  }
+}
+@media (max-width: 760px) {
+  .home-page {
+    padding-inline: 16px;
+  }
+  .home-workspace-header {
+    gap: 12px;
+  }
+  .home-workspace-header .home-workspace-name {
+    flex-basis: 100%;
+  }
+}

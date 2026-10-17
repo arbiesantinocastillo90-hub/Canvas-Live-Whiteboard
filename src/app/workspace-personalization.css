@@ -1,0 +1,238 @@
+.workspace-identity {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  position: relative;
+  z-index: 1;
+}
+.workspace-identity[data-alignment='center'] {
+  justify-content: center;
+  text-align: center;
+}
+.workspace-identity-text {
+  min-width: 0;
+}
+.workspace-identity h2 {
+  margin: 0;
+  overflow-wrap: anywhere;
+  line-height: 1.25;
+}
+.workspace-identity .workspace-tagline {
+  margin: 5px 0 0;
+  color: var(--muted);
+}
+.workspace-identity .workspace-description {
+  margin: 7px 0 0;
+  color: var(--ink);
+  font-size: 0.9rem;
+  line-height: 1.5;
+  max-width: 75ch;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.workspace-appearance-options {
+  width: min(100%, 1040px);
+  margin-inline: auto;
+  padding: 0 24px 24px;
+  box-sizing: border-box;
+}
+.workspace-appearance-options > h2 {
+  font-size: 1.1rem;
+  margin: 20px 0;
+}
+.workspace-appearance-options .option-card {
+  margin: 20px 0;
+}
+.workspace-appearance-options .option-card > label,
+.workspace-appearance-options details > label {
+  display: grid;
+  gap: 7px;
+  margin-block: 14px;
+}
+.workspace-appearance-options input[type='text'],
+.workspace-appearance-options textarea,
+.workspace-appearance-options select,
+.item-appearance-dialog textarea {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+.workspace-appearance-options textarea,
+.item-appearance-dialog textarea {
+  resize: vertical;
+}
+.workspace-appearance-options details {
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+  margin-top: 18px;
+}
+.workspace-appearance-options summary {
+  cursor: pointer;
+  padding-bottom: 8px;
+}
+.workspace-appearance-preview {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 25px;
+  min-height: 100px;
+  background: var(--home-background-color, var(--bg));
+  display: flex;
+  align-items: center;
+}
+.workspace-appearance-preview .workspace-identity {
+  width: 100%;
+}
+.workspace-background-image,
+.workspace-background-gradient {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: -1;
+}
+.workspace-background-image {
+  background-image: var(--home-background-image, none);
+  background-size: var(--home-background-size, cover);
+  background-position: var(--home-background-position, center);
+  background-repeat: var(--home-background-repeat, no-repeat);
+  opacity: var(--home-background-opacity, 0.45);
+}
+.workspace-background-gradient {
+  background-image: var(--home-gradient, none);
+  opacity: var(--home-gradient-opacity, 0.65);
+}
+.personalization-icon-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(38px, 1fr));
+  gap: 6px;
+  margin: 14px 0;
+}
+.personalization-icon-grid .icon-button {
+  width: 100%;
+  height: 38px;
+}
+.personalization-icon-grid [aria-pressed='true'] {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  border: 1px solid var(--accent);
+}
+.personalization-color {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin: 14px 0;
+}
+.personalization-color > label {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.personalization-color input[type='color'],
+.personalization-gradient input[type='color'] {
+  width: 42px;
+  height: 30px;
+  padding: 2px;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+.personalization-range {
+  display: grid;
+  gap: 8px;
+  margin: 16px 0;
+}
+.personalization-range > span {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+}
+.personalization-range output {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.personalization-range input {
+  width: 100%;
+  accent-color: var(--accent);
+}
+.personalization-upload {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 16px;
+}
+.personalization-upload input[type='file'] {
+  display: none;
+}
+.workspace-appearance-options .personalization-checkbox {
+  display: flex !important;
+  align-items: center;
+  gap: 9px;
+}
+.personalization-checkbox input {
+  width: auto;
+  accent-color: var(--accent);
+}
+.personalization-gradient {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 24px;
+}
+.personalization-gradient > label {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.personalization-gradient[aria-disabled='true'] {
+  opacity: 0.55;
+}
+.personalization-error {
+  color: var(--danger, #ed717b);
+  overflow-wrap: anywhere;
+}
+.item-appearance-dialog {
+  width: min(460px, calc(100vw - 40px));
+  max-height: calc(100dvh - 48px);
+  overflow-y: auto;
+}
+.item-appearance-dialog > label {
+  display: grid;
+  gap: 8px;
+}
+.item-appearance-preview {
+  border: 1px solid var(--item-border);
+  background: var(--item-fill);
+  border-radius: 12px;
+  padding: 18px;
+  display: grid;
+  gap: 12px;
+  margin-bottom: 18px;
+}
+.item-appearance-preview strong {
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+.item-appearance-preview p {
+  font-size: 0.85rem;
+  color: var(--muted);
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.item-appearance-dialog .dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 20px;
+}
+@media (max-width: 600px) {
+  .workspace-appearance-options {
+    padding-inline: 14px;
+  }
+  .workspace-appearance-preview {
+    padding: 16px;
+  }
+}

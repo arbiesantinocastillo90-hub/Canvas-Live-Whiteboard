@@ -1,3 +1,17 @@
+import {
+  DEFAULT_CANVAS_CONTROLS,
+  normalizeCanvasControls,
+  type CanvasControlSettings,
+} from './canvasControls'
+import {
+  DEFAULT_WORKSPACE_APPEARANCE,
+  normalizeWorkspaceAppearance,
+  type WorkspaceAppearance,
+} from './workspaceAppearance'
+import {
+  normalizeItemPresentation,
+  type ItemPresentation,
+} from './itemPresentation'
 export type Preferences = {
   mode: 'system' | 'light' | 'dark'
   accent: string
@@ -19,6 +33,8 @@ export type Preferences = {
   autoGrowShapes: boolean
   fitTextToShape: boolean
   minTextSize: number
+  canvasControls: CanvasControlSettings
+  homeAppearance: WorkspaceAppearance
 }
 
 export type Project = {
@@ -26,6 +42,8 @@ export type Project = {
   name: string
   createdAt: number
   lastOpenedAt: number
+  updatedAt?: number
+  presentation?: ItemPresentation
   parentId?: string | null
   pinned?: boolean
   recentHidden?: boolean
@@ -63,6 +81,8 @@ export const DEFAULT_PREFERENCES: Preferences = {
   autoGrowShapes: true,
   fitTextToShape: true,
   minTextSize: 8,
+  canvasControls: { ...DEFAULT_CANVAS_CONTROLS },
+  homeAppearance: { ...DEFAULT_WORKSPACE_APPEARANCE },
 }
 
 export const EMPTY_STATE: WorkspaceState = {
@@ -162,6 +182,17 @@ function validateWorkspace(value: unknown): WorkspaceState | null {
       name,
       createdAt: item.createdAt,
       lastOpenedAt: item.lastOpenedAt,
+      ...(isTimestamp(item.updatedAt) && item.updatedAt >= item.createdAt
+        ? { updatedAt: item.updatedAt }
+        : {}),
+      ...(isRecord(item.presentation)
+        ? {
+            presentation: normalizeItemPresentation(
+              item.presentation,
+              'folder',
+            ),
+          }
+        : {}),
       ...(item.parentId === null || isId(item.parentId)
         ? { parentId: item.parentId }
         : {}),
@@ -249,6 +280,8 @@ function validateWorkspace(value: unknown): WorkspaceState | null {
         typeof preferences.fitTextToShape === 'boolean'
           ? preferences.fitTextToShape
           : DEFAULT_PREFERENCES.fitTextToShape,
+      canvasControls: normalizeCanvasControls(preferences.canvasControls),
+      homeAppearance: normalizeWorkspaceAppearance(preferences.homeAppearance),
       minTextSize:
         typeof preferences.minTextSize === 'number' &&
         Number.isFinite(preferences.minTextSize) &&

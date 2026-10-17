@@ -34,6 +34,7 @@ export default function ProjectExplorer({
   search = '',
   variant = 'home',
   count,
+  flat = false,
 }: {
   projects: Project[]
   selectedId?: string | null
@@ -49,6 +50,7 @@ export default function ProjectExplorer({
   search?: string
   variant?: 'home' | 'work'
   count?: (id: string) => number
+  flat?: boolean
 }) {
   const [localRecentsCollapsed, setLocalRecentsCollapsed] = useState(false)
   const [localAllCollapsed, setLocalAllCollapsed] = useState(false)
@@ -143,6 +145,7 @@ export default function ProjectExplorer({
             }}
           >
             <span aria-hidden="true">{collapsed ? '▸' : '▾'}</span>Recent
+            projects
           </button>
           <div id={`recent-projects-${variant}`} hidden={collapsed}>
             {recent.map((project) => shortcut(project, false))}
@@ -169,6 +172,7 @@ export default function ProjectExplorer({
           <div id={allProjectsId} hidden={allCollapsed}>
             {tree
               .filter(({ project }) => {
+                if (flat) return true
                 if (query) return true
                 let parent = project.parentId
                 const seen = new Set<string>()
@@ -182,14 +186,16 @@ export default function ProjectExplorer({
                 return true
               })
               .map(({ project, depth }) => {
-                const hasChildren = projects.some(
-                  (entry) => entry.parentId === project.id,
-                )
+                const hasChildren =
+                  !flat &&
+                  projects.some((entry) => entry.parentId === project.id)
                 return (
                   <div
                     className="project-tree-row"
                     key={project.id}
-                    style={{ '--project-depth': depth } as CSSProperties}
+                    style={
+                      { '--project-depth': flat ? 0 : depth } as CSSProperties
+                    }
                   >
                     {hasChildren ? (
                       <button

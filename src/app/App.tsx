@@ -6,6 +6,15 @@ import {
   type CSSProperties,
 } from 'react'
 import AppearanceOptions from './AppearanceOptions'
+import CanvasControlOptions from './CanvasControlOptions'
+import WorkspaceAppearanceOptions from './WorkspaceAppearanceOptions'
+import ItemAppearanceDialog from './ItemAppearanceDialog'
+import {
+  normalizeItemPresentation,
+  type ItemPresentation,
+} from './itemPresentation'
+import type { CanvasFileRecord } from './canvasFiles'
+import { recoveryFor } from './canvasRecovery'
 import { resolveAppearanceVariables } from './appearance'
 import FileWorkspace, {
   type WorkspaceOpenRequest,
@@ -300,6 +309,15 @@ function WorkspaceApp({
   )
   const [prompt, setPrompt] = useState<ProjectPrompt | null>(null)
   const [search, setSearch] = useState('')
+  const [createMenuOpen, setCreateMenuOpen] = useState(false)
+  const createMenu = useRef<HTMLDivElement>(null)
+  const createButton = useRef<HTMLButtonElement>(null)
+  const workspaceOptions = useRef<HTMLDivElement>(null)
+  const [customization, setCustomization] = useState<
+    | { kind: 'project'; project: Project }
+    | { kind: 'file'; record: CanvasFileRecord }
+    | null
+  >(null)
   const [storageError, setStorageError] = useState(
     restored?.storageError ?? false,
   )
@@ -391,6 +409,20 @@ function WorkspaceApp({
   }
 
   function updateWorkspace(next: WorkspaceState) {
+    next = {
+      ...next,
+      projects: next.projects.map((project) => {
+        const before = workspace.projects.find((item) => item.id === project.id)
+        const modified =
+          before &&
+          ['name', 'parentId', 'presentation'].some(
+            (field) =>
+              JSON.stringify(Reflect.get(before, field)) !==
+              JSON.stringify(Reflect.get(project, field)),
+          )
+        return modified ? { ...project, updatedAt: Date.now() } : project
+      }),
+    }
     setStorageError(!saveMetadata(next))
     setWorkspace(next)
     updateSessions((current) =>
@@ -416,7 +448,9 @@ function WorkspaceApp({
     lastCapture.current = null
     cameras.current = cameraHistory.current[id] ?? {}
     setInitialLinkView(undefined)
-    const next = { ...state, activeId: id }
+    const next = updateSavedWorkspace({ ...state, activeId: id }, id, {
+      lastOpenedAt: Date.now(),
+    })
     setSessionStorageError(!saveSessions(next))
     setSessions(next)
     const projectId = workspace.projects.some(
@@ -776,6 +810,11 @@ function WorkspaceApp({
   )
   const workspacesPanel = (
     <WorkspacesPanel
+      variant={section === 'workspaces' ? 'page' : 'compact'}
+      view={layout.workspaceView}
+      onViewChange={(workspaceView) =>
+        updateLayout({ ...layout, workspaceView })
+      }
       state={sessions}
       onSelect={selectSavedWorkspace}
       onCreate={createNamedWorkspace}
@@ -844,6 +883,87 @@ function WorkspaceApp({
     } else setSection('work')
     updateLayout({ ...layout, filesOpen: true, leftPanel })
   }
+  async function openFileAppearance(projectId: string, fileId: string) {
+    try {
+      const result = await fileStore.get(projectId, fileId)
+      if (!result.value)
+        throw new Error(
+          'This canvas is unavailable. Reopen its project and try again.',
+        )
+      setCustomization({ kind: 'file', record: result.value })
+    } catch (failure) {
+      reportSaveFailure(failure)
+    }
+  }
+  async function saveItemAppearance(value: ItemPresentation) {
+    if (!customization) return
+    if (customization.kind === 'project') {
+      updateWorkspace({
+        ...workspace,
+        projects: projects.map((project) =>
+          project.id === customization.project.id
+            ? {
+                ...project,
+                presentation: normalizeItemPresentation(value, 'folder'),
+              }
+            : project,
+        ),
+      })
+      notify('Project appearance saved.', 'success')
+      return
+    }
+    const record = customization.record
+    const result = await fileStore.save({
+      ...record,
+      document: { ...record.document, presentation: value },
+      updatedAt: Math.max(Date.now(), record.updatedAt + 1),
+    })
+    if (result.persistence === 'session' && result.error)
+      throw new Error(result.error)
+    const drafts = projectDrafts(fileStore).get(record.projectId)
+    if (drafts) {
+      const patched = drafts.map((draft) =>
+        draft.record.id === record.id
+          ? {
+              ...draft,
+              savedDocument: { ...draft.savedDocument, presentation: value },
+              record: {
+                ...draft.record,
+                ...result.value,
+                document: { ...draft.record.document, presentation: value },
+              },
+            }
+          : draft,
+      )
+      projectDrafts(fileStore).set(record.projectId, patched)
+      await recoveryFor(fileStore)
+        .replace(record.projectId, patched)
+        .catch(() => undefined)
+    }
+    window.dispatchEvent(
+      new CustomEvent('canvas-live-library-updated', {
+        detail: { projectId: record.projectId, fileId: record.id },
+      }),
+    )
+    notify(
+      'Canvas appearance saved. Open drawing edits stay unsaved.',
+      'success',
+    )
+  }
+  useEffect(() => {
+    if (!createMenuOpen) return
+    createMenu.current?.querySelector<HTMLButtonElement>('button')?.focus()
+    const close = (event: PointerEvent) => {
+      if (
+        event.target instanceof Node &&
+        !createMenu.current?.contains(event.target) &&
+        !createButton.current?.contains(event.target)
+      )
+        setCreateMenuOpen(false)
+    }
+    document.addEventListener('pointerdown', close)
+    return () => document.removeEventListener('pointerdown', close)
+  }, [createMenuOpen])
   useRegisterCommands([
     {
       id: 'app.home',
@@ -948,69 +1068,33 @@ function WorkspaceApp({
           <nav className="section-nav" aria-label="Main navigation">
             <button
               className="nav-item"
-              aria-label="Work"
-              title="Work"
-              aria-current={section === 'work' ? 'page' : undefined}
-              onClick={() => navigate('work')}
+              data-dock-trigger={layout.panelsSwapped ? 'right' : 'left'}
+              aria-label="Open left panel"
+              title="Files, Projects and Workspaces · Double-click to pin"
+              aria-expanded={layout.filesOpen}
+              aria-controls="project-files"
+              onPointerEnter={(event) => {
+                if (event.pointerType === 'mouse') openLeft(layout.leftPanel)
+              }}
+              onClick={() => openLeft(layout.leftPanel)}
+              onDoubleClick={() =>
+                updateLayout({
+                  ...layout,
+                  filesOpen: true,
+                  leftPinned: !layout.leftPinned,
+                })
+              }
             >
-              <Icon name="work" />
+              <Icon name="files" />
             </button>
-            {(['files', 'projects', 'workspaces'] as const).map((panel) => (
-              <button
-                key={panel}
-                className="nav-item"
-                data-dock-trigger={layout.panelsSwapped ? 'right' : 'left'}
-                aria-label={
-                  panel === 'files'
-                    ? 'Files'
-                    : panel === 'projects'
-                      ? 'Projects'
-                      : 'Workspaces'
-                }
-                title={
-                  panel === 'files'
-                    ? 'Files · double-click to pin'
-                    : panel === 'projects'
-                      ? 'Projects · double-click to pin'
-                      : 'Workspaces · double-click to pin'
-                }
-                aria-expanded={
-                  section === 'work' &&
-                  layout.filesOpen &&
-                  layout.leftPanel === panel
-                }
-                aria-controls="project-files"
-                onPointerEnter={(event) => {
-                  if (event.pointerType === 'mouse' && activeProject)
-                    openLeft(panel)
-                }}
-                onClick={() => openLeft(panel)}
-                onDoubleClick={() => {
-                  if (activeProject)
-                    updateLayout({
-                      ...layout,
-                      filesOpen: true,
-                      leftPanel: panel,
-                      leftPinned: !layout.leftPinned,
-                    })
-                }}
-              >
-                <Icon
-                  name={
-                    panel === 'files'
-                      ? 'files'
-                      : panel === 'projects'
-                        ? 'folder'
-                        : 'workspaces'
-                  }
-                />
-              </button>
-            ))}
             <button
+              ref={createButton}
               className="nav-item"
-              aria-label="Create a new project"
-              title="New project"
-              onClick={() => setPrompt({ kind: 'create' })}
+              aria-label="Create new"
+              title="Create project or canvas"
+              aria-haspopup="menu"
+              aria-expanded={createMenuOpen}
+              onClick={() => setCreateMenuOpen((open) => !open)}
             >
               <Icon name="plus" />
             </button>
@@ -1046,6 +1130,17 @@ function WorkspaceApp({
                 Canvas <strong>Live</strong>
               </span>
             </a>
+            {activeProject && (
+              <button
+                className="resume-work-button"
+                aria-label="Work"
+                title="Resume workspace"
+                onClick={() => navigate('work')}
+              >
+                <Icon name="work" />
+                Work
+              </button>
+            )}
             <nav aria-label="Main navigation">
               <button
                 className="nav-item"
@@ -1059,16 +1154,7 @@ function WorkspaceApp({
               >
                 Home
               </button>
-              {activeProject && (
-                <button
-                  className="nav-item"
-                  aria-label="Work"
-                  title="Resume workspace"
-                  onClick={() => navigate('work')}
-                >
-                  Work
-                </button>
-              )}
+
               <button
                 className="nav-item"
                 aria-label="Workspaces"
@@ -1077,6 +1163,7 @@ function WorkspaceApp({
                 onClick={() => navigate('workspaces')}
               >
                 <Icon name="workspaces" />
+                <span>Workspaces</span>
               </button>
               <button
                 className="nav-item"
@@ -1088,12 +1175,12 @@ function WorkspaceApp({
                 Options
               </button>
             </nav>
-            <WorkspaceLauncher />
+            <WorkspaceLauncher commands={false} />
           </header>
         )}
         <main id="main-content" tabIndex={-1}>
           {section === 'options' && (
-            <>
+            <div className="options-stack">
               <AppearanceOptions
                 preferences={workspace.preferences}
                 mode={theme}
@@ -1121,8 +1208,34 @@ function WorkspaceApp({
                 onChange={changeLinkOptions}
                 localStorageAvailable={!storageError}
               />
+              <CanvasControlOptions
+                value={workspace.preferences.canvasControls}
+                onChange={(canvasControls) =>
+                  updateWorkspace({
+                    ...workspace,
+                    preferences: { ...workspace.preferences, canvasControls },
+                  })
+                }
+              />
+              <div
+                ref={workspaceOptions}
+                className="workspace-appearance-target"
+                tabIndex={-1}
+              >
+                <WorkspaceAppearanceOptions
+                  key={savedWorkspace.id}
+                  workspaceName={savedWorkspace.name}
+                  value={workspace.preferences.homeAppearance}
+                  onChange={(homeAppearance) =>
+                    updateWorkspace({
+                      ...workspace,
+                      preferences: { ...workspace.preferences, homeAppearance },
+                    })
+                  }
+                />
+              </div>
               <HotkeyOptions />
-            </>
+            </div>
           )}
           {section === 'workspaces' && (
             <div className="outer-workspaces">{workspacesPanel}</div>
@@ -1131,6 +1244,27 @@ function WorkspaceApp({
             <HomePage
               store={fileStore}
               workspaceName={savedWorkspace.name}
+              workspaceAppearance={workspace.preferences.homeAppearance}
+              view={layout.homeView}
+              onViewChange={(homeView) => updateLayout({ ...layout, homeView })}
+              onCustomizeWorkspace={() => {
+                navigate('options')
+                requestAnimationFrame(() => {
+                  workspaceOptions.current?.scrollIntoView({
+                    block: 'start',
+                    behavior: workspace.preferences.reduceMotion
+                      ? 'instant'
+                      : 'smooth',
+                  })
+                  workspaceOptions.current?.focus({ preventScroll: true })
+                })
+              }}
+              onCustomizeProject={(project) =>
+                setCustomization({ kind: 'project', project })
+              }
+              onCustomizeFile={(projectId, fileId) => {
+                void openFileAppearance(projectId, fileId)
+              }}
               projectActions={projectTransfer}
               notificationScopeId={notificationScopeId}
               allProjectsCollapsed={layout.allProjectsCollapsed}
@@ -1303,6 +1437,87 @@ function WorkspaceApp({
             ))}
         </main>
       </div>
+      {createMenuOpen && (
+        <div
+          ref={createMenu}
+          className="create-item-menu"
+          role="menu"
+          aria-label="Create project or canvas"
+          onKeyDown={(event) => {
+            if (event.key === 'Escape') {
+              event.preventDefault()
+              setCreateMenuOpen(false)
+              createButton.current?.focus()
+            }
+            if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
+              event.preventDefault()
+              const items = Array.from(
+                createMenu.current?.querySelectorAll<HTMLButtonElement>(
+                  'button',
+                ) ?? [],
+              )
+              const index = items.indexOf(
+                document.activeElement as HTMLButtonElement,
+              )
+              items[
+                event.key === 'Home'
+                  ? 0
+                  : event.key === 'End'
+                    ? items.length - 1
+                    : (index +
+                        (event.key === 'ArrowDown' ? 1 : -1) +
+                        items.length) %
+                      items.length
+              ]?.focus()
+            }
+          }}
+        >
+          <button
+            role="menuitem"
+            onClick={() => {
+              setCreateMenuOpen(false)
+              setPrompt({ kind: 'create' })
+            }}
+          >
+            <Icon name="folder" />
+            New project
+          </button>
+          <button
+            role="menuitem"
+            disabled={!activeProject}
+            onClick={() => {
+              setCreateMenuOpen(false)
+              if (activeProject)
+                enterProject(activeProject.id, { action: 'create' })
+            }}
+          >
+            <Icon name="canvas" />
+            New canvas
+          </button>
+        </div>
+      )}
+      {customization && (
+        <ItemAppearanceDialog
+          key={
+            customization.kind === 'file'
+              ? customization.record.id
+              : customization.project.id
+          }
+          kind={customization.kind}
+          title={
+            customization.kind === 'file'
+              ? customization.record.document.name
+              : customization.project.name
+          }
+          value={
+            customization.kind === 'file'
+              ? customization.record.document.presentation
+              : customization.project.presentation
+          }
+          onSave={saveItemAppearance}
+          onClose={() => setCustomization(null)}
+        />
+      )}
       {prompt && (
         <ProjectDialog
           kind={prompt.kind}

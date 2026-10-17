@@ -1,3 +1,4 @@
+import { normalizeItemPresentation } from './itemPresentation'
 import { createCanvasFileRecord, type CanvasFileRecord } from './canvasFiles'
 import { validCanvasId } from './lcanvas'
 import type { Project } from './workspace'
@@ -82,6 +83,18 @@ function normalize(value: unknown, detachRoot = false): ProjectArchive {
       name: projectName(candidate.name),
       createdAt: candidate.createdAt,
       lastOpenedAt: candidate.lastOpenedAt,
+      ...(timestamp(candidate.updatedAt) &&
+      candidate.updatedAt >= candidate.createdAt
+        ? { updatedAt: candidate.updatedAt }
+        : {}),
+      ...(record(candidate.presentation)
+        ? {
+            presentation: normalizeItemPresentation(
+              candidate.presentation,
+              'folder',
+            ),
+          }
+        : {}),
       // Exporting a subproject creates a detached portable root.
       parentId:
         candidate.id === rootProjectId && detachRoot

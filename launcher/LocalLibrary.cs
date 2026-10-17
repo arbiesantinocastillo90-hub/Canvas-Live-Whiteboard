@@ -4,6 +4,7 @@ using System.Globalization;
 using System.IO;
 using System.Text;
 using System.Text.RegularExpressions;
+using System.Security.Cryptography;
 using System.Web.Script.Serialization;
 
 // Fixed local application storage only. Request data never becomes a file path.
@@ -60,6 +61,39 @@ internal sealed class LocalLibrary
         }
         finally { if (File.Exists(temporary)) File.Delete(temporary); }
     }
+    // Large immutable raster records live separately from rapidly changing view metadata.
+    private static bool IsAsset(string key) { return key.StartsWith("settings:YXNzZXQt", StringComparison.Ordinal); }
+    private string AssetPath(string key)
+    {
+        byte[] digest;
+        using (SHA256 hash = SHA256.Create()) digest = hash.ComputeHash(Encoding.UTF8.GetBytes(key));
+        return Path.Combine(folder, "appearance", BitConverter.ToString(digest).Replace("-", "").ToLowerInvariant() + ".json");
+    }
+    private Dictionary<string, object> ReadAsset(string key)
+    {
+        string path = AssetPath(key); Ordinary(path);
+        if (!File.Exists(path)) return null;
+        if (new FileInfo(path).Length > 4 * 1024 * 1024) throw new IOException("The local image exceeds its size limit.");
+        var entry = json.DeserializeObject(File.ReadAllText(path, Encoding.UTF8)) as Dictionary<string, object>;
+        if (entry == null || !entry.ContainsKey("revision") || !entry.ContainsKey("value") || !(entry["value"] is Dictionary<string, object>) || Convert.ToInt64(entry["revision"], CultureInfo.InvariantCulture) < 1) throw new IOException("The local image is invalid; its file was retained.");
+        return entry;
+    }
+    private void PersistAsset(string key, Dictionary<string, object> entry)
+    {
+        string target = AssetPath(key), directory = Path.GetDirectoryName(target);
+        Ordinary(directory); Ordinary(target);
+        Directory.CreateDirectory(directory);
+        if (!File.Exists(target) && Directory.GetFiles(directory, "*.json").Length >= 1000) throw new IOException("The local image library is full.");
+        byte[] bytes = new UTF8Encoding(false, true).GetBytes(json.Serialize(entry));
+        if (bytes.Length > 4 * 1024 * 1024) throw new IOException("The local image exceeds its size limit.");
+        string temporary = Path.Combine(directory, "image-" + Guid.NewGuid().ToString("N") + ".tmp");
+        try
+        {
+            using (var file = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None, 8192, FileOptions.WriteThrough)) { file.Write(bytes, 0, bytes.Length); file.Flush(true); }
+            if (File.Exists(target)) File.Replace(temporary, target, null); else File.Move(temporary, target);
+        }
+        finally { if (File.Exists(temporary)) File.Delete(temporary); }
+    }
     private static void Reply(Stream stream, int code, string reason, object value, JavaScriptSerializer serializer)
     {
         byte[] body = Encoding.UTF8.GetBytes(serializer.Serialize(value));
@@ -98,11 +132,15 @@ internal sealed class LocalLibrary
             lock (gate)
             {
                 Load();
-                if (method == "GET" && path == prefix) { Reply(stream, 200, "OK", new { version = 1, entries = entries }, json); return true; }
+                if (method == "GET" && path == prefix) {
+                    var index = new Dictionary<string, object>(StringComparer.Ordinal);
+                    foreach (var item in entries) if (!IsAsset(item.Key)) index[item.Key] = item.Value;
+                    Reply(stream, 200, "OK", new { version = 1, entries = index }, json); return true;
+                }
                 string key = path.Length > prefix.Length + 1 ? Uri.UnescapeDataString(path.Substring(prefix.Length + 1)) : "";
                 if (!Regex.IsMatch(key, "^(file|metadata|sessions|latest|view|settings):[A-Za-z0-9_-]{1,280}$")) { Reply(stream, 400, "Bad Request", new { error = "Invalid library identifier." }, json); return true; }
                 object existing;
-                var entry = entries.TryGetValue(key, out existing) ? existing as Dictionary<string, object> : null;
+                var entry = IsAsset(key) ? ReadAsset(key) : entries.TryGetValue(key, out existing) ? existing as Dictionary<string, object> : null;
                 long revision = entry == null ? 0 : Convert.ToInt64(entry["revision"], CultureInfo.InvariantCulture);
                 if (method == "GET") { Reply(stream, 200, "OK", entry ?? new Dictionary<string, object> { { "revision", 0 }, { "value", null } }, json); return true; }
                 if (method != "PUT") { Reply(stream, 405, "Method Not Allowed", new { error = "Use GET or PUT." }, json); return true; }
@@ -117,7 +155,8 @@ internal sealed class LocalLibrary
                 var updated = new Dictionary<string, object> { { "revision", revision + 1 }, { "value", value } };
                 var next = new Dictionary<string, object>(entries, StringComparer.Ordinal); next[key] = updated;
                 if (next.Count > 2000) throw new IOException("The local library has reached its item limit.");
-                Persist(next); entries = next;
+                if (IsAsset(key)) PersistAsset(key, updated);
+                else { Persist(next); entries = next; }
                 Reply(stream, 200, "OK", updated, json);
             }
         }

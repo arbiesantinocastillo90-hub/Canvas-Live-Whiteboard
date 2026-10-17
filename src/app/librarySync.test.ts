@@ -118,6 +118,46 @@ describe('merging changes into the shared local library', () => {
     expect(remote.projects[1].name).toBe('Project')
   })
 
+  it('preserves independent nested workspace appearance and precision choices', () => {
+    const before = metadata()
+    const remote = structuredClone(before)
+    remote.preferences.homeAppearance.tagline = 'Remote tagline'
+    remote.preferences.canvasControls.rulerUnit = 'cm'
+    const after = structuredClone(before)
+    after.preferences.homeAppearance.titleSize = 42
+    after.preferences.canvasControls.snapToGrid = true
+    const saved = mergeWorkspaceChanges(remote, before, after)
+    expect(saved.preferences.homeAppearance).toMatchObject({
+      tagline: 'Remote tagline',
+      titleSize: 42,
+    })
+    expect(saved.preferences.canvasControls).toMatchObject({
+      rulerUnit: 'cm',
+      snapToGrid: true,
+    })
+  })
+
+  it('merges nested Home views and appearance fields across native profiles', async () => {
+    const before = sessions()
+    const remote = structuredClone(before)
+    remote.items[0].layout.homeView.sort = 'modified'
+    remote.items[0].preferences.homeAppearance.tagline = 'Shared tagline'
+    const { entries } = nativeStore({ [SESSIONS_LIBRARY_KEY]: remote })
+    const after = structuredClone(before)
+    after.items[0].layout.homeView.display = 'hierarchy'
+    after.items[0].preferences.homeAppearance.titleSize = 48
+    await syncSessionChanges(before, after)
+    const saved = entries.get(SESSIONS_LIBRARY_KEY)?.value as WorkspaceSessions
+    expect(saved.items[0].layout.homeView).toMatchObject({
+      sort: 'modified',
+      display: 'hierarchy',
+    })
+    expect(saved.items[0].preferences.homeAppearance).toMatchObject({
+      tagline: 'Shared tagline',
+      titleSize: 48,
+    })
+  })
+
   it('changes a parent independently of a remotely renamed project', () => {
     const before = metadata()
     const remote = structuredClone(before)

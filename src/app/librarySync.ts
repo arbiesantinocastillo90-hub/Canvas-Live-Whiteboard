@@ -24,6 +24,20 @@ import {
 function record(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
 }
+/** Apply this view's changed fields without discarding independent nested choices. */
+function mergeLocalFields<T extends object>(remote: T, before: T, after: T): T {
+  const next = { ...remote }
+  for (const field of Object.keys(after)) {
+    const old = Reflect.get(before, field)
+    const value = Reflect.get(after, field)
+    const saved = Reflect.get(remote, field)
+    if (record(old) && record(value) && record(saved))
+      Object.assign(next, { [field]: mergeLocalFields(saved, old, value) })
+    else if (JSON.stringify(old) !== JSON.stringify(value))
+      Object.assign(next, { [field]: value })
+  }
+  return next
+}
 /** Canonical storage must never interpret damaged core data as a new empty library. */
 export function parseLibraryWorkspace(value: unknown): WorkspaceState | null {
   try {
@@ -96,7 +110,11 @@ export function parseLibrarySessions(value: unknown): WorkspaceSessions | null {
       for (const key of Object.keys(
         item.layout,
       ) as (keyof typeof parsed.layout)[])
-        if (key in parsed.layout && item.layout[key] !== parsed.layout[key])
+        if (
+          key in parsed.layout &&
+          JSON.stringify(item.layout[key]) !==
+            JSON.stringify(parsed.layout[key])
+        )
           throw new Error('Invalid workspace layout.')
       return parsed
     })
@@ -140,18 +158,22 @@ export function mergeWorkspaceChanges(
     if (index < 0) projects.push(project)
     else if (old) {
       const next = { ...projects[index] }
-      for (const field of ['name', 'parentId'] as const)
-        if (old[field] !== project[field])
+      for (const field of [
+        'name',
+        'parentId',
+        'presentation',
+        'updatedAt',
+      ] as const)
+        if (JSON.stringify(old[field]) !== JSON.stringify(project[field]))
           Object.assign(next, { [field]: project[field] })
       projects[index] = next
     }
   }
-  const preferences = { ...remote.preferences }
-  for (const field of Object.keys(
+  const preferences = mergeLocalFields(
+    remote.preferences,
+    before.preferences,
     after.preferences,
-  ) as (keyof typeof after.preferences)[])
-    if (before.preferences[field] !== after.preferences[field])
-      Object.assign(preferences, { [field]: after.preferences[field] })
+  )
   if (projects.length > 100)
     throw new Error('The local library already has 100 projects.')
   return requireLibraryWorkspace({ ...remote, preferences, projects })
@@ -163,11 +185,15 @@ export function syncWorkspaceChanges(
   if (!localLibrary.available) return Promise.resolve()
   const relevant = (value: WorkspaceState) =>
     JSON.stringify({
-      projects: value.projects.map(({ id, name, parentId }) => ({
-        id,
-        name,
-        parentId,
-      })),
+      projects: value.projects.map(
+        ({ id, name, parentId, presentation, updatedAt }) => ({
+          id,
+          name,
+          parentId,
+          presentation,
+          updatedAt,
+        }),
+      ),
       preferences: value.preferences,
     })
   if (relevant(before) === relevant(after)) return Promise.resolve()
@@ -188,11 +214,12 @@ export function syncSessionChanges(
   if (!localLibrary.available) return Promise.resolve()
   const relevant = (value: WorkspaceSessions) =>
     JSON.stringify(
-      value.items.map(({ id, name, preferences, layout }) => ({
+      value.items.map(({ id, name, preferences, layout, lastOpenedAt }) => ({
         id,
         name,
         preferences,
         layout,
+        lastOpenedAt,
       })),
     )
   if (relevant(before) === relevant(after)) return Promise.resolve()
@@ -207,21 +234,25 @@ export function syncSessionChanges(
         else if (previous) {
           const patch: Partial<SavedWorkspace> = {}
           if (previous.name !== item.name) patch.name = item.name
+          if (previous.lastOpenedAt !== item.lastOpenedAt)
+            patch.lastOpenedAt = Math.max(
+              items[index].lastOpenedAt ?? 0,
+              item.lastOpenedAt ?? 0,
+            )
           for (const key of ['preferences', 'layout'] as const) {
-            const merged = { ...items[index][key] }
-            let changed = false
-            for (const field of Object.keys(
+            const merged = mergeLocalFields(
+              items[index][key],
+              previous[key],
               item[key],
-            ) as (keyof typeof merged)[])
-              if (
-                JSON.stringify(previous[key][field]) !==
-                JSON.stringify(item[key][field])
-              ) {
-                Object.assign(merged, { [field]: item[key][field] })
-                changed = true
-              }
-            if (changed) Object.assign(patch, { [key]: merged })
+            )
+            if (JSON.stringify(merged) !== JSON.stringify(items[index][key]))
+              Object.assign(patch, { [key]: merged })
           }
+          if (Object.keys(patch).some((key) => key !== 'lastOpenedAt'))
+            patch.updatedAt = Math.max(
+              items[index].updatedAt ?? 0,
+              item.updatedAt ?? 0,
+            )
           items[index] = { ...items[index], ...patch }
         }
       }

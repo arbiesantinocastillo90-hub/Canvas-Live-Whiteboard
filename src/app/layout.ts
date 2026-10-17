@@ -1,3 +1,11 @@
+import {
+  DEFAULT_HOME_VIEW,
+  DEFAULT_WORKSPACE_VIEW,
+  normalizeHomeView,
+  normalizeWorkspaceLibraryView,
+  type HomeLibraryView,
+  type WorkspaceLibraryView,
+} from './homeView'
 export type WorkspaceLayout = {
   sidebarOpen: boolean
   sidebarWidth: number
@@ -18,6 +26,8 @@ export type WorkspaceLayout = {
   tabBarHeight: number
   statusBarHeight: number
   allProjectsCollapsed: boolean
+  homeView: HomeLibraryView
+  workspaceView: WorkspaceLibraryView
 }
 
 export const LAYOUT_STORAGE_KEY = 'canvas-live.layout.v2'
@@ -52,6 +62,8 @@ export const DEFAULT_LAYOUT: WorkspaceLayout = {
   tabBarHeight: CHROME_LIMITS.tabBarHeight.default,
   statusBarHeight: CHROME_LIMITS.statusBarHeight.default,
   allProjectsCollapsed: false,
+  homeView: { ...DEFAULT_HOME_VIEW },
+  workspaceView: { ...DEFAULT_WORKSPACE_VIEW },
 }
 
 export function boundedChromeSize(
@@ -82,13 +94,15 @@ export function boundedPanelWidth(
 
 export function parseLayout(raw: string | null): WorkspaceLayout {
   try {
-    if (!raw || raw.length > 3000) return { ...DEFAULT_LAYOUT }
+    if (!raw || raw.length > 32000) return { ...DEFAULT_LAYOUT }
     const value: unknown = JSON.parse(raw)
     if (!value || typeof value !== 'object' || Array.isArray(value))
       return { ...DEFAULT_LAYOUT }
     const candidate = value as Record<string, unknown>
     return {
       allProjectsCollapsed: candidate.allProjectsCollapsed === true,
+      homeView: normalizeHomeView(candidate.homeView),
+      workspaceView: normalizeWorkspaceLibraryView(candidate.workspaceView),
       sidebarOpen:
         typeof candidate.sidebarOpen === 'boolean'
           ? candidate.sidebarOpen

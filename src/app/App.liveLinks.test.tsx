@@ -376,7 +376,7 @@ describe('live view links in the application', () => {
     window.history.replaceState({}, '', new URL(url).hash)
     render(<App />)
     await screen.findByRole('region', { name: 'Alpha canvas view' })
-    fireEvent.click(screen.getByRole('button', { name: 'Files' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Open left panel' }))
     fireEvent.click(screen.getByRole('button', { name: 'Rename project' }))
     fireEvent.change(screen.getByLabelText('Project name'), {
       target: { value: 'Renamed live project' },
@@ -410,6 +410,11 @@ describe('live view links in the application', () => {
       name: 'rectangle Last valid unsaved project draft',
     })
     fireEvent.click(screen.getByRole('link', { name: 'Canvas Live home' }))
+    fireEvent.click(
+      await screen.findByRole('button', {
+        name: 'Browse project Live project',
+      }),
+    )
     await screen.findByRole('button', {
       name: 'Open canvas Alpha in Live project',
     })

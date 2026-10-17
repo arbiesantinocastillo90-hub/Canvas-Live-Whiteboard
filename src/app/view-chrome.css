@@ -255,20 +255,7 @@
   font: inherit;
   font-size: 11px;
 }
-@media (max-width: 900px) {
-  .app-shell .dock-panel[data-pinned='true'] {
-    top: var(--tab-bar-height, 40px);
-    max-width: calc(100% - var(--controls-width, 42px));
-  }
-  .app-shell .dock-panel[data-pinned='true'][data-dock-side='right'] {
-    right: var(--controls-width, 42px);
-  }
-  .app-shell[data-separate-rails='true']
-    .dock-panel[data-pinned='true'][data-dock-side='left'] {
-    left: var(--ribbon-width, 44px);
-    max-width: calc(100% - var(--ribbon-width, 44px));
-  }
-}
+
 @media (min-width: 901px) {
   .app-shell[data-separate-rails='true']
     .workspace-deck

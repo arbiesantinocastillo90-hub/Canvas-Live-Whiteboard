@@ -1,3 +1,7 @@
+import {
+  normalizeItemPresentation,
+  type ItemPresentation,
+} from './itemPresentation'
 export type CanvasViewport = { x: number; y: number; zoom: number }
 export type CanvasLayer = {
   id: string
@@ -59,6 +63,7 @@ export const CONNECTION_SIDES: readonly ConnectionSide[] = [
 export type CanvasElement =
   ShapeElement | TextElement | AreaElement | LineElement | ConnectionElement
 export type CanvasDocument = {
+  presentation?: ItemPresentation
   format: 'LCANVAS'
   version: 2
   name: string
@@ -465,6 +470,14 @@ export function connectionPath(
   return `M ${x1} ${y1} L ${a.x} ${a.y} ${middle} L ${x2} ${y2}`
 }
 
+function requirePresentation(value: unknown): ItemPresentation {
+  if (
+    !record(value) ||
+    !exactKeys(value, ['icon', 'color', 'fill', 'borderColor', 'description'])
+  )
+    return fail('The canvas appearance contains unsupported fields.')
+  return normalizeItemPresentation(value)
+}
 export function validateCanvasDocument(value: unknown): CanvasDocument {
   if (!record(value) || value.format !== 'LCANVAS')
     return fail('This is not an LCANVAS file.')
@@ -480,6 +493,7 @@ export function validateCanvasDocument(value: unknown): CanvasDocument {
       'name',
       'viewport',
       'elements',
+      ...(value.presentation !== undefined ? ['presentation'] : []),
       ...(!legacy ? ['layers'] : []),
     ])
   )
@@ -537,6 +551,9 @@ export function validateCanvasDocument(value: unknown): CanvasDocument {
     viewport,
     layers,
     elements,
+    ...(value.presentation !== undefined
+      ? { presentation: requirePresentation(value.presentation) }
+      : {}),
   }
   // Earlier v2 files had no endpoint-side fields. Fix their sides from the
   // loaded geometry before any edit can move an endpoint. Explicit auto keeps

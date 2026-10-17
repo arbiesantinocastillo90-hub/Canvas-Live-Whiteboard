@@ -69,6 +69,7 @@ import {
 } from './lcanvas'
 import type { Preferences, Project } from './workspace'
 import './file-workspace.css'
+import { formatCanvasZoom } from './canvasControls'
 import CanvasTabs from './CanvasTabs'
 import {
   normalizeProjectView,
@@ -936,6 +937,38 @@ export default function FileWorkspace({
             remote.document,
             entry.savedDocument,
           )
+          if (
+            changedContent &&
+            sameContent(
+              { ...remote.document, presentation: undefined },
+              { ...entry.savedDocument, presentation: undefined },
+            )
+          ) {
+            changed = true
+            const merged = {
+              ...document,
+              presentation: remote.document.presentation,
+            }
+            return {
+              ...entry,
+              record: {
+                ...entry.record,
+                ...remote,
+                document: merged,
+                lastOpenedAt: Math.max(
+                  entry.record.lastOpenedAt,
+                  remote.lastOpenedAt,
+                ),
+              },
+              savedDocument: {
+                ...remote.document,
+                viewport: document.viewport,
+              },
+              dirty: !sameContent(merged, remote.document),
+              persistence: result.persistence,
+            }
+          }
+
           const locallyEdited = !sameContent(document, entry.savedDocument)
           const activeElement = globalThis.document.activeElement
           const editing =
@@ -1048,6 +1081,59 @@ export default function FileWorkspace({
       clearInterval(timer)
     }
   }, [loading, sharedStoreActive, project.id, store, setNotice])
+
+  useEffect(() => {
+    let active = true
+    const update = (event: Event) => {
+      const detail = (
+        event as CustomEvent<{ projectId?: string; fileId?: string }>
+      ).detail
+      if (detail?.projectId !== project.id || !detail.fileId) return
+      void store
+        .get(project.id, detail.fileId)
+        .then((result) => {
+          if (!active || !result.value) return
+          const remote = result.value
+          const apply = (entries: Entry[]) =>
+            entries.map((entry) => {
+              if (entry.record.id !== remote.id) return entry
+              const live =
+                editorController.current?.fileId === remote.id
+                  ? editorController.current.controller.getDocument()
+                  : entry.record.document
+              const document = {
+                ...live,
+                presentation: remote.document.presentation,
+              }
+              return {
+                ...entry,
+                record: { ...entry.record, ...remote, document },
+                savedDocument: {
+                  ...entry.savedDocument,
+                  presentation: remote.document.presentation,
+                },
+                dirty: !(sharedStoreActive ? sameContent : sameDocument)(
+                  {
+                    ...entry.savedDocument,
+                    presentation: remote.document.presentation,
+                  },
+                  document,
+                ),
+              }
+            })
+          entriesRef.current = apply(entriesRef.current)
+          setEntries(apply)
+        })
+        .catch((failure: unknown) => {
+          if (active) setError(message(failure))
+        })
+    }
+    window.addEventListener('canvas-live-library-updated', update)
+    return () => {
+      active = false
+      window.removeEventListener('canvas-live-library-updated', update)
+    }
+  }, [project.id, store, sharedStoreActive, setError])
 
   useEffect(() => {
     if (!loading)
@@ -2243,6 +2329,7 @@ export default function FileWorkspace({
                       : undefined)
                 }
                 onViewStateChange={rememberEditorView}
+                controlOptions={preferences.canvasControls}
                 textOptions={{
                   autoGrowShapes: preferences.autoGrowShapes,
                   fitTextToShape: preferences.fitTextToShape,
@@ -2340,11 +2427,10 @@ export default function FileWorkspace({
             )}
             {active && (
               <output aria-label="Canvas zoom" aria-live="polite">
-                {Math.round(
-                  (editorStatus?.zoom ?? active.record.document.viewport.zoom) *
-                    100,
+                {formatCanvasZoom(
+                  editorStatus?.zoom ?? active.record.document.viewport.zoom,
+                  preferences.canvasControls,
                 )}
-                %
               </output>
             )}
             {active && (

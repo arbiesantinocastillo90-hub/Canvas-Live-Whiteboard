@@ -75,6 +75,19 @@ import {
 import './canvas-viewer.css'
 import './canvas-editor.css'
 import './smart-text.css'
+import CanvasRulers from './CanvasRulers'
+import {
+  DEFAULT_CANVAS_CONTROLS,
+  formatCanvasZoom,
+  isWithinSelection,
+  normalizeCanvasControls,
+  selectionColor,
+  snapCoordinate,
+  snapResizeDelta,
+  snapSelectionDelta,
+  type CanvasControlSettings,
+} from './canvasControls'
+import './canvas-precision.css'
 
 export type CanvasEditorProps = {
   active?: boolean
@@ -102,6 +115,7 @@ export type CanvasEditorProps = {
   onViewStateChange?: (state: EditorViewState) => void
   statusInFooter?: boolean
   textOptions?: TextLayoutOptions
+  controlOptions?: CanvasControlSettings
 }
 
 export type EditorSession = { tool: string; activeLayerId: string | null }
@@ -134,7 +148,7 @@ type SizedType = 'rectangle' | 'ellipse' | 'diamond' | 'text' | 'area'
 type ResizeHandle = 'nw' | 'n' | 'ne' | 'e' | 'se' | 's' | 'sw' | 'w'
 type Point = { x: number; y: number }
 type Box = Point & { width: number; height: number }
-type PointerSample = Point & { shiftKey: boolean }
+type PointerSample = Point & { shiftKey: boolean; altKey: boolean }
 type InlineEdit = { id: string; value: string; original: string }
 type Gesture = {
   kind: 'pan' | 'move' | 'resize' | 'marquee'
@@ -472,7 +486,9 @@ export default function CanvasEditor({
   statusInFooter = false,
   dockSide = 'right',
   textOptions = DEFAULT_TEXT_OPTIONS,
+  controlOptions = DEFAULT_CANVAS_CONTROLS,
 }: CanvasEditorProps) {
+  const controls = normalizeCanvasControls(controlOptions)
   const dockMode = dockHost !== undefined
   const [history, setHistory] = useState(() =>
     createEditorHistory(
@@ -631,6 +647,19 @@ export default function CanvasEditor({
     throw new Error('The canvas editor is not ready.')
   })
   const currentName = useRef(document.name)
+  const currentPresentation = useRef(document.presentation)
+  function withCurrentMetadata(present: CanvasDocument): CanvasDocument {
+    if (
+      present.name === currentName.current &&
+      present.presentation === currentPresentation.current
+    )
+      return present
+    const next = { ...present, name: currentName.current }
+    if (currentPresentation.current)
+      next.presentation = currentPresentation.current
+    else delete next.presentation
+    return next
+  }
   const flushCurrentDraft = useRef<() => void>(() => {
     throw new Error('The canvas editor is not ready.')
   })
@@ -641,9 +670,7 @@ export default function CanvasEditor({
         gesture.current?.history.present ?? currentHistory.current.present
       if (pendingWheel.current && !gesture.current)
         present = { ...present, viewport: pendingWheel.current }
-      return present.name === currentName.current
-        ? present
-        : { ...present, name: currentName.current }
+      return withCurrentMetadata(present)
     },
     getViewState: (): EditorViewState => {
       const present: CanvasDocument = controller.current.getDocument()
@@ -673,13 +700,8 @@ export default function CanvasEditor({
   }
 
   function showHistory(next: EditorHistory, committed = true) {
-    const renamed =
-      next.present.name === currentName.current
-        ? next
-        : {
-            ...next,
-            present: { ...next.present, name: currentName.current },
-          }
+    const present = withCurrentMetadata(next.present)
+    const renamed = present === next.present ? next : { ...next, present }
     currentHistory.current = renamed
     setHistory(renamed)
     if (committed && !sameDocument(notified.current, renamed.present)) {
@@ -806,6 +828,7 @@ export default function CanvasEditor({
       },
     }
     currentName.current = document.name
+    currentPresentation.current = document.presentation
     executeCommand.current = executeBridgeCommand
     flushCurrentDraft.current = flushEditorDraft
   })
@@ -923,10 +946,12 @@ export default function CanvasEditor({
           .length %
           5) *
         28
+      const x = (middle.x - viewport.x) / viewport.zoom - width / 2 + offset
+      const y = (middle.y - viewport.y) / viewport.zoom - height / 2 + offset
       const next = createElement(document, {
         type,
-        x: (middle.x - viewport.x) / viewport.zoom - width / 2 + offset,
-        y: (middle.y - viewport.y) / viewport.zoom - height / 2 + offset,
+        x: controls.snapToGrid ? snapCoordinate(x, controls.gridSpacing) : x,
+        y: controls.snapToGrid ? snapCoordinate(y, controls.gridSpacing) : y,
         width,
         height,
         layerId: activeLayerId,
@@ -1039,7 +1064,7 @@ export default function CanvasEditor({
       mode === 'pan' ||
       temporaryPan.current ||
       event.button === 1 ||
-      event.altKey
+      (event.altKey && !controls.snapToGrid)
     )
       return
     event.stopPropagation()
@@ -1096,10 +1121,7 @@ export default function CanvasEditor({
             const box = elementBounds(original, element)
             return (
               element.type !== 'connection' &&
-              box.x >= bounds.x &&
-              box.y >= bounds.y &&
-              box.x + box.width <= bounds.x + bounds.width &&
-              box.y + box.height <= bounds.y + bounds.height
+              isWithinSelection(box, bounds, controls.selectionBehavior)
             )
           })
           .map((element) => element.id)
@@ -1111,25 +1133,43 @@ export default function CanvasEditor({
         return
       }
       let present: CanvasDocument
+      const delta = {
+        x: dx / original.viewport.zoom,
+        y: dy / original.viewport.zoom,
+      }
+      const snap = controls.snapToGrid && !sample.altKey
       if (active.kind === 'pan')
         present = { ...original, viewport: panBy(original.viewport, dx, dy) }
-      else if (active.kind === 'move')
-        present = moveSelection(
-          original,
-          active.ids,
-          dx / original.viewport.zoom,
-          dy / original.viewport.zoom,
-        )
-      else {
+      else if (active.kind === 'move') {
+        const moved =
+          snap && active.bounds
+            ? snapSelectionDelta(
+                active.bounds,
+                delta.x,
+                delta.y,
+                controls.gridSpacing,
+              )
+            : delta
+        present = moveSelection(original, active.ids, moved.x, moved.y)
+      } else {
         if (!active.bounds || !active.handle) return
+        const resized = snap
+          ? snapResizeDelta(
+              active.bounds,
+              active.handle,
+              delta.x,
+              delta.y,
+              controls.gridSpacing,
+            )
+          : delta
         present = resizeSelection(
           original,
           active.ids,
           resizedBounds(
             active.bounds,
             active.handle,
-            dx / original.viewport.zoom,
-            dy / original.viewport.zoom,
+            resized.x,
+            resized.y,
             sample.shiftKey,
           ),
         )
@@ -1160,6 +1200,7 @@ export default function CanvasEditor({
       x: event.clientX,
       y: event.clientY,
       shiftKey: event.shiftKey,
+      altKey: event.altKey,
     }
     if (pointerFrame.current === null)
       pointerFrame.current = requestAnimationFrame(() => {
@@ -1182,6 +1223,7 @@ export default function CanvasEditor({
         x: event.clientX,
         y: event.clientY,
         shiftKey: event.shiftKey,
+        altKey: event.altKey,
       }
     if (cancelled) {
       pointerSample.current = null
@@ -1268,7 +1310,17 @@ export default function CanvasEditor({
       safely(duplicateSelected)
       return
     }
-    if (modifier || event.altKey) return
+    const arrowKey = [
+      'ArrowLeft',
+      'ArrowRight',
+      'ArrowUp',
+      'ArrowDown',
+    ].includes(event.key)
+    if (
+      modifier ||
+      (event.altKey && !(controls.snapToGrid && arrowKey && selectedIds.length))
+    )
+      return
     if ((event.key === 'Enter' || event.key === 'F2') && selected) {
       event.preventDefault()
       startTextEdit(selected)
@@ -1312,7 +1364,12 @@ export default function CanvasEditor({
       ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)
     ) {
       event.preventDefault()
-      const step = event.shiftKey ? 10 : 1
+      const step =
+        controls.snapToGrid && !event.altKey && selectedIds.length
+          ? controls.gridSpacing * (event.shiftKey ? 10 : 1)
+          : event.shiftKey
+            ? 10
+            : 1
       const dx =
         event.key === 'ArrowLeft'
           ? -step
@@ -1322,11 +1379,22 @@ export default function CanvasEditor({
       const dy =
         event.key === 'ArrowUp' ? -step : event.key === 'ArrowDown' ? step : 0
       if (selectedIds.length) {
-        safely(() =>
+        safely(() => {
+          const current = currentHistory.current.present
+          const bounds = selectionBounds(current, selectedIds)
+          const delta =
+            controls.snapToGrid && !event.altKey && bounds
+              ? snapSelectionDelta(bounds, dx, dy, controls.gridSpacing)
+              : { x: dx, y: dy }
           commit(
-            moveSelection(currentHistory.current.present, selectedIds, dx, dy),
-          ),
-        )
+            moveSelection(
+              current,
+              selectedIds,
+              dx ? delta.x : 0,
+              dy ? delta.y : 0,
+            ),
+          )
+        })
       } else
         changeView(
           panBy(currentHistory.current.present.viewport, -dx * 12, -dy * 12),
@@ -1573,7 +1641,7 @@ export default function CanvasEditor({
     })
   }
 
-  function pasteAtPointer(raw: string, structured = false) {
+  function pasteAtPointer(raw: string, structured = false, bypassSnap = false) {
     if (!activeRef.current || gesture.current || inlineEditRef.current || !raw)
       return
     const current = currentHistory.current.present
@@ -1593,7 +1661,17 @@ export default function CanvasEditor({
           center: point,
         })
     // Structured copies preserve deliberately sized objects and their layout.
-    commit(result.document, !isStructured)
+    const bounds = selectionBounds(result.document, result.selectedIds)
+    const delta =
+      controls.snapToGrid && !bypassSnap && bounds
+        ? snapSelectionDelta(bounds, 0, 0, controls.gridSpacing)
+        : { x: 0, y: 0 }
+    commit(
+      delta.x || delta.y
+        ? moveSelection(result.document, result.selectedIds, delta.x, delta.y)
+        : result.document,
+      !isStructured,
+    )
     setSelectedIds(result.selectedIds)
     setMode('select')
     setConnectionSource(null)
@@ -1669,7 +1747,17 @@ export default function CanvasEditor({
       selectedIds,
       { layerId: activeLayerId },
     )
-    commit(result.document, false)
+    const bounds = selectionBounds(result.document, result.selectedIds)
+    const delta =
+      controls.snapToGrid && bounds
+        ? snapSelectionDelta(bounds, 0, 0, controls.gridSpacing)
+        : { x: 0, y: 0 }
+    commit(
+      delta.x || delta.y
+        ? moveSelection(result.document, result.selectedIds, delta.x, delta.y)
+        : result.document,
+      false,
+    )
     setSelectedIds(result.selectedIds)
   }
   const commandAvailable = active && !dragging && !inlineEdit
@@ -1863,7 +1951,7 @@ export default function CanvasEditor({
     },
   ])
   const gridStyle = {
-    '--canvas-grid-size': `${(view.zoom < 0.5 ? 120 : 24) * view.zoom}px`,
+    '--canvas-grid-size': `${controls.gridSpacing * (view.zoom < 0.5 ? 5 : 1) * view.zoom}px`,
     '--canvas-grid-x': `${view.x}px`,
     '--canvas-grid-y': `${view.y}px`,
   } as CSSProperties
@@ -2154,6 +2242,8 @@ export default function CanvasEditor({
           data-dragging={dragging}
           data-gesture={gestureKind}
           data-selection-count={selectedIds.length}
+          data-snap-to-grid={controls.snapToGrid}
+          data-rulers={controls.rulers}
           data-mode={spaceHeld ? 'pan' : mode}
           style={gridStyle}
           tabIndex={0}
@@ -2195,6 +2285,7 @@ export default function CanvasEditor({
                     data-layer-id={element.layerId}
                     data-area-id={element.areaId ?? ''}
                     data-editable={isElementEditable(board, element.id)}
+                    data-selected={selectedIds.includes(element.id)}
                     className="canvas-edit-object"
                     onPointerDown={(event) => beginObject(event, element)}
                     onKeyDown={(event) => {
@@ -2235,6 +2326,29 @@ export default function CanvasEditor({
                   </g>
                 )
               })}
+              {(visibleSelection.length > 1 || marquee) &&
+                visibleSelection.map((element) => {
+                  const bounds = elementBounds(board, element)
+                  return (
+                    <rect
+                      key={`selection-${element.id}`}
+                      className="canvas-selected-member"
+                      data-selection-member={element.id}
+                      x={bounds.x - 2 / view.zoom}
+                      y={bounds.y - 2 / view.zoom}
+                      width={bounds.width + 4 / view.zoom}
+                      height={bounds.height + 4 / view.zoom}
+                      fill="none"
+                      stroke={selectionColor(controls.selectionStroke)}
+                      strokeWidth={controls.selectionStrokeWidth}
+                      strokeDasharray={
+                        controls.selectionDashed ? '5 4' : undefined
+                      }
+                      vectorEffect="non-scaling-stroke"
+                      pointerEvents="none"
+                    />
+                  )
+                })}
               {selected && selectedVisible && selectedBounds && (
                 <g className="canvas-selection">
                   <rect
@@ -2243,8 +2357,11 @@ export default function CanvasEditor({
                     width={selectedBounds.width + 8 / view.zoom}
                     height={selectedBounds.height + 8 / view.zoom}
                     fill="none"
-                    stroke="var(--accent)"
-                    strokeWidth="1.5"
+                    stroke={selectionColor(controls.selectionStroke)}
+                    strokeWidth={controls.selectionStrokeWidth}
+                    strokeDasharray={
+                      controls.selectionDashed ? '5 4' : undefined
+                    }
                     vectorEffect="non-scaling-stroke"
                     pointerEvents="none"
                   />
@@ -2274,7 +2391,7 @@ export default function CanvasEditor({
                         width={12 / view.zoom}
                         height={12 / view.zoom}
                         rx={2 / view.zoom}
-                        fill="var(--accent)"
+                        fill={selectionColor(controls.selectionStroke)}
                         stroke="var(--panel)"
                         strokeWidth="2"
                         vectorEffect="non-scaling-stroke"
@@ -2297,15 +2414,20 @@ export default function CanvasEditor({
                   y={marquee.y}
                   width={marquee.width}
                   height={marquee.height}
-                  fill="var(--tint)"
-                  stroke="var(--accent)"
-                  strokeWidth="1"
+                  fill={selectionColor(controls.selectionFill)}
+                  fillOpacity={controls.selectionOpacity}
+                  stroke={selectionColor(controls.selectionStroke)}
+                  strokeWidth={controls.selectionStrokeWidth}
+                  strokeDasharray={controls.selectionDashed ? '5 4' : undefined}
                   vectorEffect="non-scaling-stroke"
                   pointerEvents="none"
                 />
               )}
             </g>
           </svg>
+          {controls.rulers && (
+            <CanvasRulers viewport={view} unit={controls.rulerUnit} />
+          )}
           {inlineEdit && editBounds && editedElement && (
             <div
               className="canvas-inline-edit"
@@ -2553,7 +2675,7 @@ export default function CanvasEditor({
           <p id={`${prefix}-instructions`}>{instructions}</p>
           <span>{selectionDescription ?? `${visible.length} objects`}</span>
           <output aria-label="Canvas zoom" aria-live="polite">
-            {Math.round(view.zoom * 100)}%
+            {formatCanvasZoom(view.zoom, controls)}
           </output>
         </div>
       )}

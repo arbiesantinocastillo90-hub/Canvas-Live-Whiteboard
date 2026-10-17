@@ -20,6 +20,9 @@ export type ProjectViewSession = {
   editorSession: { tool: string; activeLayerId: string | null } | null
 }
 export type SavedWorkspace = {
+  createdAt?: number
+  updatedAt?: number
+  lastOpenedAt?: number
   id: string
   name: string
   projectId: string | null
@@ -178,6 +181,14 @@ export function normalizeProjectView(value: unknown): ProjectViewSession {
     editorSession,
   }
 }
+function validDate(value: unknown): value is number {
+  return (
+    typeof value === 'number' &&
+    Number.isSafeInteger(value) &&
+    value >= 0 &&
+    value <= 8_640_000_000_000_000
+  )
+}
 function normalizeSavedWorkspace(value: unknown): SavedWorkspace | null {
   if (!record(value) || !validId(value.id)) return null
   try {
@@ -195,6 +206,11 @@ function normalizeSavedWorkspace(value: unknown): SavedWorkspace | null {
         if (validId(id)) views[id] = normalizeProjectView(view)
     return {
       id: value.id,
+      ...(validDate(value.createdAt) ? { createdAt: value.createdAt } : {}),
+      ...(validDate(value.updatedAt) ? { updatedAt: value.updatedAt } : {}),
+      ...(validDate(value.lastOpenedAt)
+        ? { lastOpenedAt: value.lastOpenedAt }
+        : {}),
       name: name(value.name),
       projectId: validId(value.projectId) ? value.projectId : null,
       preferences,
@@ -213,7 +229,11 @@ export function createSavedWorkspace(
   id: string = crypto.randomUUID(),
 ): SavedWorkspace {
   if (!validId(id)) throw new Error('Invalid workspace identifier.')
+  const now = Date.now()
   return {
+    createdAt: now,
+    updatedAt: now,
+    lastOpenedAt: now,
     id,
     name: name(workspaceName),
     preferences: { ...preferences },
@@ -296,11 +316,20 @@ export function updateSavedWorkspace(
   id: string,
   patch: Partial<Omit<SavedWorkspace, 'id'>>,
 ): WorkspaceSessions {
-  const items = state.items.map((item) =>
-    item.id === id
-      ? (normalizeSavedWorkspace({ ...item, ...patch }) ?? item)
-      : item,
-  )
+  const items = state.items.map((item) => {
+    if (item.id !== id) return item
+    const next = normalizeSavedWorkspace({ ...item, ...patch })
+    const previous = normalizeSavedWorkspace(item) ?? item
+    if (!next || JSON.stringify(next) === JSON.stringify(previous)) return item
+    const meaningful = Object.keys(patch).some(
+      (key) =>
+        key !== 'lastOpenedAt' &&
+        key !== 'updatedAt' &&
+        JSON.stringify(Reflect.get(previous, key)) !==
+          JSON.stringify(Reflect.get(next, key)),
+    )
+    return meaningful ? { ...next, updatedAt: Date.now() } : next
+  })
   return { ...state, items }
 }
 export function addSavedWorkspace(

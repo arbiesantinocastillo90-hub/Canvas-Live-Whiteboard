@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, within } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import HomePage from './HomePage'
+import { DEFAULT_HOME_VIEW } from './homeView'
 import { createCanvasFileRecord, type CanvasFileStore } from './canvasFiles'
 import { projectDrafts } from './canvasDrafts'
 import { createCanvasDocument } from './lcanvas'
@@ -33,6 +34,7 @@ function setup() {
   }
   const props = {
     projects,
+    view: { ...DEFAULT_HOME_VIEW, perspective: 'canvas' as const },
     selectedProjectId: null,
     store,
     onSelectProject: vi.fn(),
@@ -52,6 +54,7 @@ describe('home project and file library', () => {
         {...props}
         workspaceName="Writing desk"
         selectedProjectId="alpha"
+        view={{ ...DEFAULT_HOME_VIEW, openedProjectId: 'alpha' }}
       />,
     )
     await screen.findByRole('button', { name: 'Open canvas Roadmap in Alpha' })
@@ -70,6 +73,7 @@ describe('home project and file library', () => {
     const view = render(
       <HomePage
         {...props}
+        view={{ ...DEFAULT_HOME_VIEW, openedProjectId: 'alpha' }}
         allProjectsCollapsed={false}
         onAllProjectsCollapsedChange={onAllProjectsCollapsedChange}
       />,
@@ -80,6 +84,7 @@ describe('home project and file library', () => {
     view.rerender(
       <HomePage
         {...props}
+        view={{ ...DEFAULT_HOME_VIEW, openedProjectId: 'alpha' }}
         allProjectsCollapsed
         onAllProjectsCollapsedChange={onAllProjectsCollapsedChange}
       />,
@@ -105,6 +110,7 @@ describe('home project and file library', () => {
         {...props}
         projects={nestedProjects}
         selectedProjectId="alpha"
+        view={{ ...DEFAULT_HOME_VIEW, openedProjectId: 'alpha' }}
       />,
     )
     const childFile = await screen.findByRole('button', {
@@ -135,6 +141,7 @@ describe('home project and file library', () => {
     render(
       <HomePage
         {...props}
+        view={{ ...DEFAULT_HOME_VIEW, openedProjectId: 'alpha' }}
         onPinProject={onPinProject}
         onHideRecentProject={onHideRecentProject}
         onProjectRecentsCollapsedChange={onProjectRecentsCollapsedChange}
@@ -147,7 +154,7 @@ describe('home project and file library', () => {
         name: 'Remove project Alpha from recent list',
       }),
     )
-    fireEvent.click(screen.getByRole('button', { name: 'Recent' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Recent projects' }))
     expect(onPinProject).toHaveBeenCalledWith('alpha', true)
     expect(onHideRecentProject).toHaveBeenCalledWith('alpha')
     expect(onProjectRecentsCollapsedChange).toHaveBeenCalledWith(true)
@@ -202,7 +209,13 @@ describe('home project and file library', () => {
     )
     expect(props.onOpenFile).toHaveBeenCalledWith('beta', 'ideas')
     fireEvent.change(screen.getByRole('searchbox'), { target: { value: '' } })
-    view.rerender(<HomePage {...props} selectedProjectId="alpha" />)
+    view.rerender(
+      <HomePage
+        {...props}
+        selectedProjectId="alpha"
+        view={{ ...DEFAULT_HOME_VIEW, openedProjectId: 'alpha' }}
+      />,
+    )
     expect(
       screen.queryByRole('button', { name: 'Open canvas Ideas in Beta' }),
     ).toBeNull()
@@ -274,7 +287,13 @@ describe('home project and file library', () => {
   })
   it('requests import into the chosen project and lets projects be browsed without entering the editor', async () => {
     const { props } = setup()
-    render(<HomePage {...props} selectedProjectId="beta" />)
+    render(
+      <HomePage
+        {...props}
+        selectedProjectId="beta"
+        view={{ ...DEFAULT_HOME_VIEW, openedProjectId: 'beta' }}
+      />,
+    )
     await screen.findByRole('button', { name: 'Open canvas Ideas in Beta' })
     fireEvent.click(screen.getByRole('button', { name: 'Open project Alpha' }))
     expect(props.onSelectProject).toHaveBeenCalledWith('alpha')
