@@ -130,7 +130,11 @@ internal sealed class LauncherContext : ApplicationContext
         menu = new ContextMenuStrip();
         menu.Items.Add("Open Canvas Live", null, delegate { Program.OpenBrowser(url); });
         menu.Items.Add("Close Canvas Live", null, delegate { ExitThread(); });
-        icon = new NotifyIcon { Text = "Canvas Live", Icon = SystemIcons.Application, ContextMenuStrip = menu, Visible = showTray };
+        string iconPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar), "app", "canvas-live.ico");
+        Icon appIcon;
+        try { appIcon = new Icon(iconPath); }
+        catch (Exception) { appIcon = SystemIcons.Application; }
+        icon = new NotifyIcon { Text = "Canvas Live", Icon = appIcon, ContextMenuStrip = menu, Visible = showTray };
         icon.DoubleClick += delegate { Program.OpenBrowser(url); };
     }
 
