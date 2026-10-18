@@ -54,7 +54,10 @@ const rectangle = {
   text: 'First',
 }
 
-async function fixture(bridge = new CanvasBridge()) {
+async function fixture(
+  bridge = new CanvasBridge(),
+  clientName = 'canvas-protocol-test',
+) {
   const companion = createCompanion({
     browserToken,
     mcpToken,
@@ -69,7 +72,7 @@ async function fixture(bridge = new CanvasBridge()) {
   if (!address || typeof address === 'string')
     throw new Error('Missing test server address.')
   const url = `http://127.0.0.1:${address.port}`
-  const client = new Client({ name: 'canvas-protocol-test', version: '1.0.0' })
+  const client = new Client({ name: clientName, version: '1.0.0' })
   await client.connect(
     new StreamableHTTPClientTransport(new URL(`${url}/mcp`), {
       requestInit: { headers: { Authorization: `Bearer ${mcpToken}` } },
@@ -236,6 +239,18 @@ afterEach(async () => {
 })
 
 describe('official MCP client against the local companion', () => {
+  it('identifies another MCP client from its authenticated initialization without guessing a model', async () => {
+    const other = await fixture(new CanvasBridge(), 'Claude Desktop')
+    try {
+      await other.share()
+      await other.tool('get_canvas_state')
+      expect(
+        ((await (await other.poll()).json()) as BridgeResponse).mcpClient,
+      ).toBe('Claude Desktop')
+    } finally {
+      await other.close()
+    }
+  })
   it('initializes, advertises a narrow tool set and exposes no file, shell or save tools', async () => {
     expect(active.client.getServerVersion()).toMatchObject({
       name: 'canvas-live',
@@ -298,7 +313,7 @@ describe('official MCP client against the local companion', () => {
     })
     expect(
       ((await (await active.poll()).json()) as BridgeResponse).mcpClient,
-    ).toBe('MCP client')
+    ).toBe('canvas-protocol-test')
   })
 
   it('reports success only after the browser applies and acknowledges the exact operation', async () => {

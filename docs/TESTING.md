@@ -1,70 +1,80 @@
-# Setup and testing
+# Setup, testing and verification
 
-The 2026-10-15 Bugs, Errors & Revision update passed 552 application tests, 63 MCP tests and 22 isolated Chrome checks, with visual review across four widths. Production/type/license/lint/format checks pass. See [BUGS_ERRORS_REVISION_VERIFICATION.md](BUGS_ERRORS_REVISION_VERIFICATION.md) for source scope, final assets, resolved visual findings and acceptance boundaries.
+## Environment
 
-The Home/local-file revision passed 470 application tests, 63 MCP tests, production/license/lint/format checks, 40 actual browser scenarios (18 UI, 9 SDK camera, 13 file streams) and 23 updater fixtures. See [HOME_AND_INTERACTIONS_VERIFICATION.md](HOME_AND_INTERACTIONS_VERIFICATION.md) for exact assets, resolved findings and the Windows chooser boundary.
+Use Node.js **24.x, at least 24.15**, and npm. Versions are pinned in `package-lock.json`; use `npm ci` after cloning or pulling dependency changes. On Windows PowerShell, `npm.cmd` avoids the script execution-policy wrapper.
 
-## Windows prerequisites
-
-Use Node.js 24 LTS, version 24.15 or newer in the 24.x line, with npm. The verified environment for this implementation reports Node 24.21.0 and npm 11.19.0. `npm.cmd` works in PowerShell without needing a PowerShell script execution-policy change.
-
-```powershell
-npm.cmd ci
-npm.cmd run dev
+```sh
+npm ci
+npm run dev
 ```
 
-Open `http://127.0.0.1:5173`. Dev startup uses a strict port; if it is occupied, stop the other service or intentionally select another loopback port with `npm.cmd run dev -- --port 5174`. Do not use `--host 0.0.0.0` for routine local development.
+Vite normally serves `http://127.0.0.1:5173`. If that strict development port is occupied, choose another with `npm run dev -- --port 5174`. The native launcher has its own available-port fallback.
 
 ## Commands
 
-| Command                                | Purpose                                                                   |
-| -------------------------------------- | ------------------------------------------------------------------------- |
-| `npm.cmd ci`                           | Install the pinned lockfile reproducibly                                  |
-| `npm.cmd run typecheck`                | Check application, companion, protocol tests and configuration types      |
-| `npm.cmd run lint`                     | Check React/TypeScript/script rules, fail on warnings                     |
-| `npm.cmd run format:check`             | Verify formatting                                                         |
-| `npm.cmd run format`                   | Apply formatting                                                          |
-| `npm.cmd test`                         | Run tests once                                                            |
-| `npm.cmd run test:watch`               | Watch tests during development                                            |
-| `npm.cmd run licenses`                 | Regenerate the lockfile license inventory; fail on unreviewed metadata    |
-| `npm.cmd run build`                    | Check licenses/types, build in `dist/`, and include distribution notices  |
-| `npm.cmd run preview`                  | Serve the production bundle on `127.0.0.1:4173`                           |
-| `npm.cmd run package:windows`          | Build the website and create the portable Windows executable folder       |
-| `npm.cmd run test:launcher`            | Test the packaged launcher and its local HTTP server on Windows           |
-| `npm.cmd run test:mcp`                 | Test real SDK protocol round trips, bridge scope and security in Node     |
-| `npm.cmd run build:mcp`                | Bundle the optional Node MCP companion in dist-mcp                        |
-| `npm.cmd run mcp`                      | Build/start the loopback companion and generate local pairing credentials |
-| `npm.cmd run check`                    | Run types, lint, format check, tests, licenses, and production build      |
-| `npm.cmd audit --audit-level=moderate` | Check the current registry vulnerability database                         |
+| Command                                                                                | Purpose                                                        |
+| -------------------------------------------------------------------------------------- | -------------------------------------------------------------- |
+| `npm run typecheck`                                                                    | Check application, companion and configuration types           |
+| `npm run lint`                                                                         | Run Oxlint with warnings denied                                |
+| `npm run format:check`                                                                 | Verify formatting                                              |
+| `npm test`                                                                             | Run application and real SDK MCP tests                         |
+| `npm run test:watch`                                                                   | Watch application tests                                        |
+| `npm run check:docs`                                                                   | Check Markdown links and the sample document                   |
+| `npm run licenses`                                                                     | Check resolved license metadata and regenerate the inventory   |
+| `npm run build`                                                                        | Check licenses/types, build site/companion and include notices |
+| `npm run check`                                                                        | Run types, lint, formatting, tests and production build        |
+| `npm run mcp`                                                                          | Start the authenticated development companion on port 8787     |
+| `npm run preview`                                                                      | Preview the production site locally                            |
+| `npm run package:windows`                                                              | Build the portable Windows package                             |
+| `npm run test:launcher`                                                                | Native site/launcher checks on Windows                         |
+| `npm run test:library`                                                                 | Native library/media checks on Windows                         |
+| `npm run test:mcp`                                                                     | Run MCP protocol tests independently                           |
+| `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/test-windows-mcp.ps1` | Portable companion checks on Windows                           |
 
-## Current coverage
+Windows checks create disposable packages and manage their own processes. Read their prerequisites first. They require the .NET Framework compiler and Windows APIs; runtime packaging also needs the official Node distribution or its verified cache.
 
-The suite now includes workspace metadata validation/storage tests and UI flows for project creation, naming, reopening, search, theme persistence/reset, live system appearance and unavailable storage. It checks the supplied logo reference and keeps canvas editing/AI states explicit. These tests verify the section/theme behavior, not drawing or AI control. See [UI_WORKSPACE.md](UI_WORKSPACE.md) for actual results and browser checks.
+## Latest dated evidence
 
-The LCANVAS suite adds strict import/export validation, project-scoped file storage with a transaction fixture, reload and quota/session recovery, atomic opening metadata, pan/zoom bounds, navigation history and component flows for files/tabs/panels/current AI context. A 125-file test verifies that the earlier project-count cap does not become a file-count cap. Native browser IndexedDB receives a separate browser reload smoke check; the transaction fixture is not a substitute for native browser verification. See [LCANVAS.md](LCANVAS.md).
+The October 18 interaction revision records:
 
-The editor suite adds v1-to-v2 migration, stable-ID shape/text operations, area membership, layer ordering/locking/visibility, attached connection geometry, combined bounded history, pointer movement/resizing/cancellation and Inspector properties. It also verifies explicit content saving, unsaved draft protection across Options navigation, fullscreen fallback/native exit and a pending fullscreen request completing after Escape. jsdom does not verify rendering; isolated automated Chrome checks inspect the actual editor. See [EDITOR_VERIFICATION.md](EDITOR_VERIFICATION.md).
+| Execution                        | Result                              | Boundary                                                                               |
+| -------------------------------- | ----------------------------------- | -------------------------------------------------------------------------------------- |
+| Application suite                | 1,041 tests passed; 177 suites      | Operations, schemas, component flows and recovery; not visual rendering proof          |
+| MCP protocol                     | 64 tests passed                     | Real SDK traffic against a local companion                                             |
+| Production browser               | 13 scenarios passed; no page errors | Areas, layers, Undo, panel geometry, destinations and a local MCP read/edit round trip |
+| Installed service                | 5 checks passed                     | Site/discovery/authentication/tools; the owner's canvas was not shared or read         |
+| Focused vertical docks           | 37 tests passed                     | Already included in the app suite                                                      |
+| Build/types/lint/format/licenses | Passed                              | 232 resolved license records; existing warnings documented                             |
 
-The MCP suite adds strict commands/read pagination, deletion limits, atomic batches and editor/history controllers. Browser hook checks cover explicit pairing, memory-only credentials, stale operations, replay, expiration, file switches and pagehide. `tests/mcp/companion.test.ts` drives the real official SDK against a loopback HTTP server, checking discovery, structured read/write results, acknowledgment gating, manual interleaving, timeouts, retries, single-tab ownership, and authentication/Host/origin/method/body limits. Actual browser scenarios send MCP calls to the bundled companion while inspecting visible SVG changes, Undo/Redo, Save/reload/export and revocation. The tunnel helper has separate local tests with a fake executable; those do not establish external connectivity. See [MCP_VERIFICATION.md](MCP_VERIFICATION.md).
+See [interaction verification](WORKSPACE_INTERACTIONS_VERIFICATION.md) for build identity and limits. Earlier [rich-canvas verification](RICH_CANVAS_VERIFICATION.md) records 53 native media checks, 24 portable launcher checks and 20 browser scenarios for that build. These overlap with earlier app suites and are separate executions.
 
-The Windows launcher has a separate integration test. Run `npm.cmd run package:windows`, then `npm.cmd run test:launcher`. It copies the package to a temporary folder with spaces and checks startup from an unrelated working directory, packaged assets/notices, HTTP restrictions, occupied-port fallback, repeated launch, restart recovery and missing-file errors. The executed result was **24 passed checks**. It uses `--no-browser` and force-stops its own processes; it does not exercise the tray's Close action or observe the operating system's default-browser window. See [WINDOWS_LAUNCHER.md](WINDOWS_LAUNCHER.md) for the normal-launch browser check and coverage limits.
+Historical results remain in the [documentation index](README.md). Dates, environment details and acceptance limits are retained instead of rewritten as current results.
 
-## Adaptable workspace verification
+## What the tests establish
 
-The 2026-10-11 update passed **352 application tests**, **63 MCP tests**, TypeScript, lint, formatting and the production build with the unchanged **232-package** license gate. It also passed **12 isolated production Chrome UI scenarios**, **9 production MCP camera scenarios** against the updated UI and **23 updater fixture checks**. Layout changes preserve saved document content; bindings protect typing/dialogs and replace cleared legacy defaults. Browser checks cover actual painted colors and motion, storage reload, keyboard commands and 760/320-pixel panel bounds. See [ADAPTABLE_WORKSPACE.md](ADAPTABLE_WORKSPACE.md) for evidence and limits.
+- Document validation, stable IDs, bounded operations and v1 migration.
+- Manual/AI shared history, atomic batches, replay protection, conflicts and acknowledgment.
+- Explicit sharing, revocation, separate credentials and HTTP Host/origin/body restrictions.
+- File/save lifecycles, failed-write recovery, workspace scope and native optimistic revisions.
+- Actual browser geometry and gestures for the scenarios described in each report.
+
+## What remains unverified
+
+- A current read/edit workflow through the owner's ChatGPT account and private tunnel. A 300-second timeout was reported; local protocol checks passed, while runtime-key setup and remote acceptance remain pending.
+- Moving the package to a second physical PC and operating under school device/network policies.
+- Broad browser, screen-reader, large-board performance and long-running media coverage beyond recorded scenarios.
+
+## CI and reproduction
+
+[GitHub Actions](../.github/workflows/ci.yml) installs the lockfile with Node 24, runs types/lint/format, application/protocol tests, documentation/demo validation and the build on Linux. It does not exercise Windows tray controls, native dialogs or an external AI account.
+
+To reproduce browser behavior, import [the sanitized demo](../examples/README.md), change a label or layer, Undo, save, reload and export. For MCP, explicitly share that disposable canvas, read it first and use its session/revision for an edit. Stop sharing afterward. See [MCP setup](CHATGPT_MCP.md) for transport and credentials.
 
 ## Troubleshooting
 
-- If npm cannot be resolved, reopen PowerShell after installing Node and use `npm.cmd`.
-- Run `npm.cmd ci` after pulling dependency changes; do not change the lockfile just to work around an unknown error.
-- An occupied strict port is reported instead of silently switching ports.
-- The development watcher explicitly ignores `dist` and `release`, including their directory roots, to avoid Windows output-folder locks. If another application holds output files open and a build reports `EPERM`, close that application and retry. Close a running packaged launcher before replacing its folder.
-- This checkout is on a filesystem without recorded ownership. For scoped Git commands, use `git -c safe.directory='D:/Canvas Live Environment/Canvas Live (Project)/Canvas-Live-Whiteboard' ...`; no wildcard exception is needed.
-
-Actual executed results, resolved failures and remaining scope are recorded in [MILESTONE_0.md](MILESTONE_0.md).
-
-The earlier editor milestone passed **203 application tests**, **16 browser scenarios** and **24 launcher checks**; see [EDITOR_VERIFICATION.md](EDITOR_VERIFICATION.md). The MCP implementation and its current results are recorded in [MCP_VERIFICATION.md](MCP_VERIFICATION.md). The historical viewer result remains in [LCANVAS_VERIFICATION.md](LCANVAS_VERIFICATION.md).
-
-## Compact reference UI verification
-
-The final 2026-10-11 reference revision passed 370 application tests across 23 files and 63 MCP tests, plus TypeScript, lint, formatting, the production/license build, 12 reference browser scenarios, 9 MCP camera scenarios and 23 updater fixture checks. Shared-dock tests cover draft retention, mouse vs keyboard focus, pinning and tab navigation; native browser checks cover the actual geometry and settings flow. See [reference verification](REFERENCE_UI_VERIFICATION.md) and [workspace guide](ADAPTABLE_WORKSPACE.md).
+- Keep the lockfile intact while diagnosing installation problems.
+- Fix a failing build/license/type gate before relying on a later output file.
+- Vite ignores generated `dist`/`release` paths to avoid output-folder locks. Choose another port instead of terminating an unrelated process.
+- Preserve `data/` and configuration when updating a package. Packaging rejects replacing populated data without a deliberate migration.
+- Restarting the companion rotates local credentials; reconnect using its current address. A browser pairing code is not an MCP client token or tunnel runtime key.

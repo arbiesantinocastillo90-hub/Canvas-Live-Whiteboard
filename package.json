@@ -17,6 +17,7 @@
     "lint": "oxlint src tests scripts server vite.config.ts vitest.mcp.config.ts --deny-warnings",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
+    "check:docs": "node scripts/check-docs.mjs",
     "test": "vitest run && vitest run --config vitest.mcp.config.ts",
     "test:watch": "vitest",
     "test:launcher": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/test-windows-launcher.ps1",

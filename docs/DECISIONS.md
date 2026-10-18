@@ -1,5 +1,9 @@
 # Development decisions
 
+This log preserves decisions made during development. Entries are historical snapshots: claims such as "not implemented," "no runtime bundled," or "future work" describe that entry's stage, not today's feature set. See [Architecture](ARCHITECTURE.md) for current behavior and [Roadmap](ROADMAP.md) for current milestone status.
+
+The original Excalidraw evaluation was deferred while the original SVG editor became the implemented path. It is not a blocking milestone. The early browser-only storage and externally installed Node assumptions were superseded by the native library and bundled portable companion. The original combined camera/content history and containing-area property UI were also revised later. Historical entries remain intact to show why those choices changed.
+
 ## 2026-10-09 — Milestone 0
 
 - The owner authorized initiation of the inspection plan and supplied the Git author name/email. Identity is configured in this checkout only. Work is on `codex/milestone-0`.
@@ -78,6 +82,14 @@
 - Register keyboard commands against the same UI handlers. Preserve text editing, dialogs, composition and fixed navigation keys; custom bindings suppress previous local defaults. Reject duplicate and protected browser combinations, and support storage failure within the current session.
 - Extend existing preferences with contrast, optional interface colors and motion style/speed. Old metadata receives defaults. Explicit colors affect interface tokens rather than canvas objects. App and operating-system reduced-motion settings override animation.
 
+## 2026-10-11 — Compact reference workspace
+
+- Follow the owner's reference as a ribbon, file tabs, central editor and left/right dock structure. Keep original Canvas Live branding and appearance tokens; reference annotations are not app decoration.
+- Open left Files/Projects and right Tools/Properties on mouse hover or click. Unpinned panels overlay the editor and auto-close; double-click tabs or use the accessible pin action to reserve space on wide screens. Narrow screens retain pins as overlays.
+- Separate pointer-focused actions from editing and keyboard focus so tool selection does not prevent auto-close. Preserve form drafts through stable hidden panel content. Shared AI authority remains in the bridge outside panel visibility.
+- Persist dock choices in layout v2 independently of LCANVAS, migrate old widths without rewriting old storage, and retain the same validated operations/history/transport. No dependencies were added.
+- Remove decorative text and repeated instructions; icon controls retain accessible names and hover titles. Keep editable labels, file names, real errors and sharing access details.
+
 ## 2026-10-12 — Home, practical editing and physical files
 
 - Start with a separate Home file/project library. Enter Work only on an explicit request. Retain the current editor through Home/Options with commands and sharing disabled; do not restore AI authority automatically.
@@ -94,16 +106,33 @@
 - Valid Inspector fields commit automatically; synchronous selection/Save flushing, external-edit replacement and atomic validation protect drafts. Legacy connections acquire fixed cardinal sides in memory; explicit Auto remains available.
 - `.lworkspace` exports are bounded validated UI references/settings without document payloads, native file handles or credentials. Existing physical LCANVAS writes and recovery remain the content safety boundary.
 
-## Remaining open decisions (unchanged)
+## 2026-10-18 — Rich editor and portable companion acceptance
 
-- Whether SIL OFL 1.1 is acceptable specifically for engine fonts, or a supported replacement is needed.
-- Whether the owner's ChatGPT account can invoke custom write tools, and which secure transport is available with acceptable cost.
-- Whether future editor expansion warrants adopting a separate drawing engine.
+Recorded at the October 18 verification checkpoint; this groups the accepted implementation rather than inventing dates for each individual feature.
 
-## 2026-10-11 — Compact reference workspace
+- Continue the original SVG editor and shared validated operations instead of adopting a new drawing engine. Add shapes, whole-label text formatting, richer connection paths/pointers and quick properties through the existing document model.
+- Separate relationship side handles from transparent edge resizing. Keep object snapping independently configurable. Pause or minimize live embeds by unloading their player/frame; store validated owned media separately from JSON and reference it by hash.
+- Keep the native library and binary assets with the portable folder. Require native record revisions for writes and preserve existing data/private configuration during updates. Browser-only permissions and unsaved drafts do not become portable merely because the app runs from USB.
+- Bundle an official pinned Node.js Windows x64 runtime with full notices and verified hashes/signature. The native website host remains independent of Node; the separate MCP launcher supervises only its own child process.
+- Discover only the matching package's loopback companion. Keep browser pairing credentials separate from MCP access credentials. Context appears after explicit sharing, and client names come from MCP initialization rather than guessing a model.
+- Treat local protocol/browser verification as evidence of local integration. A cloud client's live account approval, tunnel credentials and successful end-to-end edit remain separate acceptance work. No inference API is required by the app.
 
-- Follow the owner's reference as a ribbon, file tabs, central editor and left/right dock structure. Keep original Canvas Live branding and appearance tokens; reference annotations are not app decoration.
-- Open left Files/Projects and right Tools/Properties on mouse hover or click. Unpinned panels overlay the editor and auto-close; double-click tabs or use the accessible pin action to reserve space on wide screens. Narrow screens retain pins as overlays.
-- Separate pointer-focused actions from editing and keyboard focus so tool selection does not prevent auto-close. Preserve form drafts through stable hidden panel content. Shared AI authority remains in the bridge outside panel visibility.
-- Persist dock choices in layout v2 independently of LCANVAS, migrate old widths without rewriting old storage, and retain the same validated operations/history/transport. No dependencies were added.
-- Remove decorative text and repeated instructions; icon controls retain accessible names and hover titles. Keep editable labels, file names, real errors and sharing access details.
+See [rich controls](RICH_CANVAS.md), [portable MCP](PORTABLE_MCP.md) and [dated verification](RICH_CANVAS_VERIFICATION.md).
+
+## 2026-10-18 — Workspace interactions and explicit creation destinations
+
+- Require a parent project choice inside Canvas Live when creating a canvas or project; permit workspace-root project creation. Keep this logical destination separate from physical save locations. Cancellation creates nothing.
+- Combine objects with expandable layers. Use existing reorder/update operations for layer dragging and cross-layer object moves, retain locks/visibility boundaries, and provide Alt+Up/Down as a keyboard alternative to layer dragging.
+- Make area interiors transparent to selection; only border clicks or marquee intersections with a border select the area. Preserve layer stacking and render areas below other objects within the same layer.
+- Remove the containing-area selector while preserving supported older files' explicit membership data and operation behavior. Layer organization does not infer membership from overlap.
+- Apply eligible quick/Inspector properties across multiple selections. Keep top/bottom dock resizing bounded and persisted; replace the canvas-wide focus line with a compact keyboard focus marker.
+- Provide real project context actions. Disable Open file location honestly where a logical project has no linked physical folder.
+
+See [workspace interactions](WORKSPACE_INTERACTIONS.md) and [dated verification](WORKSPACE_INTERACTIONS_VERIFICATION.md).
+
+## Open questions as of October 18, 2026
+
+- Complete a successful read/edit/save workflow through the owner's external ChatGPT account and supported secure transport. Local tests do not settle account permissions or tunnel availability.
+- Verify the portable folder on a second physical Windows computer, including the school's permitted execution/network configuration.
+- Evaluate future real-time multiplayer and concurrent document merging separately from optimistic native save checks.
+- Reconsider a third-party drawing engine only if a concrete future capability justifies its integration and license review. The old font-policy question applies only if that evaluation is reopened.
