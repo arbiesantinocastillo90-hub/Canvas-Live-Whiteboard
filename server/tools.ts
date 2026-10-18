@@ -62,6 +62,13 @@ export function createCanvasMcpServer(bridge: CanvasBridge) {
     { name: 'canvas-live', version: '0.2.0' },
     { instructions },
   )
+  function identifyClient() {
+    const client = server.server.getClientVersion()
+    if (client) bridge.identifyClient(client.title || client.name)
+  }
+  // Stateless legacy initialize requests close before their initialized notification;
+  // modern requests carry their identity in the validated per-request envelope.
+  server.server.onclose = identifyClient
   function read<S extends z.ZodObject>(
     name: string,
     description: string,
@@ -82,6 +89,7 @@ export function createCanvasMcpServer(bridge: CanvasBridge) {
       },
       async (args) => {
         try {
+          identifyClient()
           return result(action(schema.parse(args)))
         } catch (error) {
           return result(errorOutcome(error))
@@ -160,6 +168,7 @@ export function createCanvasMcpServer(bridge: CanvasBridge) {
       },
       async (args) => {
         try {
+          identifyClient()
           const { sessionId, expectedRevision, operationId, ...payload } = args
           return result(
             await bridge.mutate(
@@ -177,7 +186,7 @@ export function createCanvasMcpServer(bridge: CanvasBridge) {
   }
   write(
     'create_shape',
-    'Create a rectangle, ellipse, diamond, text, containing area, line or connection.',
+    'Create a shape (rectangle, ellipse, diamond, triangle, hexagon, pentagon, star, cylinder, parallelogram or trapezoid), text, area, line, connection or paused media/web/document embed.',
     z.strictObject({ element: newElementSchema }),
     (args) => ({ kind: 'create', ...args }),
   )

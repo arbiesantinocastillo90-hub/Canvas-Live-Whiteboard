@@ -16,6 +16,13 @@ import {
   validateCanvasDocument,
   type CanvasDocument,
   type CanvasElement,
+  SHAPE_TYPES,
+  CONNECTION_STYLES,
+  POINTER_TYPES,
+  LINE_PATTERNS,
+  FONT_FAMILIES,
+  EMBED_KINDS,
+  validEmbedSource,
 } from '../app/lcanvas'
 
 export const MCP_MAX_READ_ELEMENTS = 100
@@ -67,26 +74,55 @@ const creationSize = {
   width: dimension,
   height: dimension,
 }
+const textFormatFields = {
+  textAlign: z.enum(['left', 'center', 'right']).optional(),
+  verticalAlign: z.enum(['top', 'middle', 'bottom']).optional(),
+  fontFamily: z.enum(FONT_FAMILIES).optional(),
+  textColor: color.optional(),
+  fontWeight: z.enum(['normal', 'bold']).optional(),
+  fontStyle: z.enum(['normal', 'italic']).optional(),
+}
+const embedFields = {
+  kind: z.enum(EMBED_KINDS),
+  src: z
+    .string()
+    .max(2048)
+    .refine(validEmbedSource, 'Use HTTPS or a library media reference.'),
+  title: z
+    .string()
+    .max(240)
+    // eslint-disable-next-line no-control-regex -- Embed titles are plain labels, not arbitrary control characters.
+    .regex(/^[^\u0000-\u001f\u007f]*$/u)
+    .optional(),
+  paused: z.boolean().optional(),
+  minimized: z.boolean().optional(),
+}
 const shapeFields = {
   ...creationSize,
   fill: color.nullable().optional(),
+  ...textFormatFields,
   text: text.optional(),
   fontSize: fontSize.optional(),
 }
 const connectionFields = {
   ...creationBase,
-  style: z.enum(['straight', 'elbow']).optional(),
+  style: z.enum(CONNECTION_STYLES).optional(),
+  linePattern: z.enum(LINE_PATTERNS).optional(),
+  startPointer: z.enum(POINTER_TYPES).optional(),
+  endPointer: z.enum(POINTER_TYPES).optional(),
   startArrow: z.boolean().optional(),
   endArrow: z.boolean().optional(),
+  fromSide: z.enum(['auto', 'top', 'right', 'bottom', 'left']).optional(),
+  toSide: z.enum(['auto', 'top', 'right', 'bottom', 'left']).optional(),
 }
 
 export const newElementSchema = z.discriminatedUnion('type', [
-  z.strictObject({ type: z.literal('rectangle'), ...shapeFields }),
-  z.strictObject({ type: z.literal('ellipse'), ...shapeFields }),
-  z.strictObject({ type: z.literal('diamond'), ...shapeFields }),
+  z.strictObject({ type: z.enum(SHAPE_TYPES), ...shapeFields }),
+  z.strictObject({ type: z.literal('embed'), ...creationSize, ...embedFields }),
   z.strictObject({
     type: z.literal('text'),
     ...creationSize,
+    ...textFormatFields,
     text: text.optional(),
     fontSize: fontSize.optional(),
   }),
@@ -104,6 +140,7 @@ export const newElementSchema = z.discriminatedUnion('type', [
     y: coordinate,
     x2: coordinate,
     y2: coordinate,
+    linePattern: z.enum(LINE_PATTERNS).optional(),
   }),
   z.strictObject({
     type: z.literal('connection'),
@@ -125,12 +162,23 @@ export const elementPatchSchema = z
     fill: color.nullable().optional(),
     text: text.optional(),
     fontSize: fontSize.optional(),
+    ...textFormatFields,
+    kind: embedFields.kind.optional(),
+    src: embedFields.src.optional(),
+    title: embedFields.title,
+    paused: embedFields.paused,
+    minimized: embedFields.minimized,
     name: name.optional(),
     layerId: identifier.optional(),
     areaId: identifier.nullable().optional(),
-    style: z.enum(['straight', 'elbow']).optional(),
+    style: z.enum(CONNECTION_STYLES).optional(),
+    linePattern: z.enum(LINE_PATTERNS).optional(),
+    startPointer: z.enum(POINTER_TYPES).optional(),
+    endPointer: z.enum(POINTER_TYPES).optional(),
     startArrow: z.boolean().optional(),
     endArrow: z.boolean().optional(),
+    fromSide: z.enum(['auto', 'top', 'right', 'bottom', 'left']).optional(),
+    toSide: z.enum(['auto', 'top', 'right', 'bottom', 'left']).optional(),
   })
   .refine(
     (patch) => Object.keys(patch).length > 0,

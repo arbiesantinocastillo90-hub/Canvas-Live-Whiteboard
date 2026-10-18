@@ -1,8 +1,12 @@
-# Windows executable
+# Portable Windows application
 
-## Open Canvas Live
+Current package as of October 18, 2026. The tested target is Windows 11 x64 with .NET Framework 4.8. The optional companion includes its own Windows x64 Node runtime. Normal use does not require an administrator installation; computer policies can still block USB programs or network connections. A second physical computer and the school's configuration have not been verified.
 
-Open `release/Canvas Live` and double-click **Canvas Live.exe**. The executable starts the packaged local website and asks Windows to open it in your default browser. It does not show a terminal or require Node.js, npm, an account, or internet access to run the current preview.
+## Run the package
+
+Open `release/Canvas Live` and double-click **Canvas Live.exe**. It starts a loopback website and opens the current address in your default browser. The canvas works offline without an account, terminal or global Node installation. External websites and cloud AI connections need their respective network services.
+
+For optional AI editing, open **Canvas Live MCP.exe**. It starts or finds the matching app host and runs the bundled companion. In Workspace AI, choose **Share this canvas**, then connect and approve your MCP-compatible client. A local client uses the current address and separate MCP access token from the companion status window. Cloud clients need their supported tunnel/HTTPS setup; see [Portable MCP](PORTABLE_MCP.md) and [ChatGPT setup](CHATGPT_MCP.md).
 
 Keep the complete folder together:
 
@@ -10,43 +14,61 @@ Keep the complete folder together:
 Canvas Live/
 ├── Canvas Live.exe
 ├── Canvas Live.exe.config
+├── Canvas Live MCP.exe
+├── Canvas Live MCP.exe.config
 ├── README.txt
 ├── LICENSE.txt
 ├── THIRD_PARTY_NOTICES.txt
-└── app/
-    ├── index.html
-    ├── assets/
-    ├── LICENSE.txt
-    └── THIRD_PARTY_NOTICES.txt
+├── app/                    # Packaged website and notices
+├── mcp/server.mjs          # Bundled MCP companion
+├── runtime/                # Pinned Node, licenses and provenance
+├── plugin/                 # Example local-client configuration
+└── data/                   # Created when the native library is used
+    ├── library.json
+    ├── appearance/
+    └── media/
 ```
 
-The current package also includes **Start Canvas Live MCP.cmd**, `mcp/server.mjs`, `plugin/`, `CHATGPT_MCP.md`, and `start-chatgpt-tunnel.ps1`. The optional MCP companion requires Node.js 24 and starts separately from the native website launcher. Pair an open file through Workspace AI; follow [CHATGPT_MCP.md](CHATGPT_MCP.md) for ChatGPT web's private tunnel or a local desktop connection. No Node runtime or tunnel client is bundled.
+The package also includes setup guides, a legacy command launcher and a manually configured tunnel helper. `data/` contains personal work; `.canvas-live/` contains private runtime state and credentials. Neither belongs in a public source checkout or demonstration package. Copying a private portable installation for your own use is different from publishing a clean release.
 
-You can move or copy this complete folder. Close the launcher before moving or replacing its folder. Double-clicking the executable again reopens the same running instance. Closing the browser tab leaves the local server running. Right-click the Canvas Live icon in the Windows tray and choose **Close Canvas Live** to stop it. The tray icon may be in the tray's overflow area.
+The preferred address is `http://127.0.0.1:4173/`; a busy port selects another loopback port. Browser profiles using that running native package share its library in `data/`. In contrast, development/browser-only storage belongs to its browser profile and origin. Saving the native library and keeping `data/`, including media and appearance assets, carries saved work with the USB. Physical files saved elsewhere remain at their chosen locations. Unsaved browser drafts, file permissions and external account setup do not automatically travel.
 
-The usual address is `http://127.0.0.1:4173/`. If that port is occupied, the launcher chooses an available local port and opens that address. This is a local website on your laptop. The package includes themes, Options, Projects, Work and the LCANVAS file organizer/editor; see [LCANVAS.md](LCANVAS.md). Files and preferences belong to the browser origin, including the port. Export LCANVAS backups to transfer them between browsers/ports; moving this folder does not transfer browser data. AI edits use the existing shapes, text, areas, layers, connections and Undo/Redo through the optional companion. Local integration is tested; actual ChatGPT account connectivity requires the separate acceptance step.
+Double-clicking a launcher again reuses its instance. Closing a browser tab does not stop the app. Use **Close Canvas Live** in the app tray menu and **Stop MCP** in the companion tray menu before moving the package or unplugging. The optional USB-root MCP executable resolves the package through a relative path; an ordinary Windows shortcut may still depend on its original drive letter.
 
-## Build and test
+## Build and verification commands
 
-On the target Windows 11 laptop, from the checkout:
+From a clean Windows development checkout with the documented Node environment:
 
 ```powershell
+npm.cmd ci
 npm.cmd run package:windows
 npm.cmd run test:launcher
+npm.cmd run test:library
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/test-windows-mcp.ps1
 ```
 
-Building requires the documented Node.js development environment plus Windows' .NET Framework compiler at `%WINDIR%/Microsoft.NET/Framework64/v4.0.30319/csc.exe`. Using the completed package requires .NET Framework 4.8 or newer, included with Windows 11. The packager compiles a GUI executable and copies the production build, configuration and license notices. It adds no npm dependency and does not distribute Microsoft's runtime. Microsoft documents [the Windows runtime requirements](https://learn.microsoft.com/en-us/dotnet/framework/get-started/system-requirements).
+Packaging builds the production website and companion, compiles both C# GUI launchers with Windows' .NET Framework compiler, and bundles official Node.js 24.15.0 for Windows x64. `package-mcp-runtime.ps1` verifies pinned archive/executable SHA-256 values and the OpenJS signature. It includes the complete Node license, executable checksum and provenance record. Microsoft's .NET runtime is supplied by the operating system and is not redistributed.
 
-`scripts/package-windows.ps1` builds into a staging folder and verifies that the final executable is in the expected location. If a package already exists, it retains that package in `release/Canvas Live.previous-<timestamp>-<id>`. Close a running packaged launcher before rebuilding. `release/` is generated output and is ignored by Git; source and rebuild instructions are committed.
+The packager stages its output and retains a previous clean generated package. It refuses to replace an existing installation containing `data/` or recognized private configuration/runtime state. Use a new empty destination or a verified data-preserving update process for a populated installation. Generated `release/` output is ignored by Git. Downloading the runtime during the build requires internet access; using the completed local package does not.
 
 ## Implementation boundaries
 
-- `launcher/CanvasLiveLauncher.cs` hosts only an exact whitelist of regular files in `app/`, binding to `127.0.0.1`.
-- It accepts GET/HEAD, validates the Host header and request path, rejects traversal and unsupported methods, and limits concurrent connections, header size and header read time.
-- A read-only `/__canvas_live_launcher` endpoint identifies a running instance. Per-user, per-folder mutex/state prevents ordinary duplicate launches from starting duplicate servers.
-- Runtime state and errors are recorded under `%LOCALAPPDATA%/Canvas Live/launchers/<package-key>/`. No application content is uploaded.
-- The tray provides Open and Close actions. Browser opening uses the documented Windows [default-handler behavior](https://learn.microsoft.com/en-us/dotnet/api/system.diagnostics.processstartinfo.useshellexecute?view=netframework-4.8.1); the tray uses [NotifyIcon](https://learn.microsoft.com/en-us/dotnet/api/system.windows.forms.notifyicon?view=netframework-4.8.1).
-- This static server has no MCP tools or board mutation API. The optional authenticated MCP companion starts separately. An alternate port changes the browser origin and therefore its stored files and preferences; export/import LCANVAS to transfer content.
+- The website host binds to loopback, serves an exact whitelist of packaged static files and exposes narrowly scoped library, media, appearance and companion-discovery endpoints. These validate exact Host/origin, methods, paths and request bounds.
+- Native library writes require record revisions and reject stale saves. Binary media is stored separately with content hashes and validated type/size. These endpoints do not expose arbitrary filesystem access.
+- The read-only launcher health endpoint and per-user, per-folder mutex support instance reuse. Local endpoint/error registrations are stored under `%LOCALAPPDATA%/Canvas Live/launchers/<package-key>/`.
+- Companion discovery returns the browser pairing credential for the matching package; it never returns the separate MCP access token. Canvas sharing remains explicit.
+- The MCP launcher checks its bundled runtime hash, chooses an available loopback port and supervises only its own Node child. Separate copied folders remain independent.
+- The tunnel helper is explicitly started and requires the external service's configuration and runtime credential. Starting the portable app does not automatically approve a cloud account or start a public tunnel.
+
+## Current verification checkpoint — 2026-10-18
+
+The [rich-canvas verification](RICH_CANVAS_VERIFICATION.md) records 53 owned-media native checks and 24 portable companion checks, including startup without global Node, moved folders, the USB-root forwarder, port fallback, independent copies and owned-child cleanup. The [workspace verification](WORKSPACE_INTERACTIONS_VERIFICATION.md) records the later UI and local companion/browser checks. These are dated acceptance results, not assertions that this documentation edit reran those checks.
+
+Local tests establish the local integration. External ChatGPT account editing, another physical computer and school-specific program/network permissions remain unverified.
+
+## Historical verification
+
+The following records describe earlier packages. Their browser-only storage, external Node requirement and narrower feature set were superseded by the current package described above.
 
 ## Executed verification — 2026-10-09
 

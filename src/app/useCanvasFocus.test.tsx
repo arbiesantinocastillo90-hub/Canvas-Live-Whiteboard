@@ -1,4 +1,4 @@
-import { useRef } from 'react'
+import { StrictMode, useRef } from 'react'
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import useCanvasFocus from './useCanvasFocus'
@@ -6,12 +6,14 @@ import useCanvasFocus from './useCanvasFocus'
 function Harness({
   onChange,
   onFit,
+  initialFocused = false,
 }: {
   onChange: (focused: boolean) => void
   onFit: () => void
+  initialFocused?: boolean
 }) {
   const root = useRef<HTMLElement>(null)
-  const { focused, toggle } = useCanvasFocus(root, onChange)
+  const { focused, toggle } = useCanvasFocus(root, onChange, initialFocused)
   return (
     <section ref={root} aria-label="Focus test" data-focus={focused}>
       <button onClick={toggle}>{focused ? 'Exit' : 'Enter'}</button>
@@ -27,6 +29,10 @@ const originalFullscreen = Object.getOwnPropertyDescriptor(
   'fullscreenElement',
 )
 const originalExit = Object.getOwnPropertyDescriptor(document, 'exitFullscreen')
+const originalRequest = Object.getOwnPropertyDescriptor(
+  HTMLElement.prototype,
+  'requestFullscreen',
+)
 afterEach(() => {
   if (originalFullscreen)
     Object.defineProperty(document, 'fullscreenElement', originalFullscreen)
@@ -34,6 +40,13 @@ afterEach(() => {
   if (originalExit)
     Object.defineProperty(document, 'exitFullscreen', originalExit)
   else Reflect.deleteProperty(document, 'exitFullscreen')
+  if (originalRequest)
+    Object.defineProperty(
+      HTMLElement.prototype,
+      'requestFullscreen',
+      originalRequest,
+    )
+  else Reflect.deleteProperty(HTMLElement.prototype, 'requestFullscreen')
   vi.restoreAllMocks()
 })
 
@@ -50,6 +63,33 @@ function mount() {
 }
 
 describe('current-file fullscreen and focus layout', () => {
+  it('restores a copied focus layout without requesting native fullscreen or replacing its camera', () => {
+    const onChange = vi.fn()
+    const onFit = vi.fn()
+    const requestFullscreen = vi.fn()
+    Object.defineProperty(HTMLElement.prototype, 'requestFullscreen', {
+      configurable: true,
+      value: requestFullscreen,
+    })
+    render(
+      <StrictMode>
+        <Harness onChange={onChange} onFit={onFit} initialFocused />
+      </StrictMode>,
+    )
+    expect(screen.getByRole('region', { name: 'Focus test' })).toHaveAttribute(
+      'data-focus',
+      'true',
+    )
+    expect(onChange).toHaveBeenLastCalledWith(true)
+    expect(onFit).not.toHaveBeenCalled()
+    expect(requestFullscreen).not.toHaveBeenCalled()
+    fireEvent.keyDown(window, { key: 'Escape' })
+    expect(screen.getByRole('region', { name: 'Focus test' })).toHaveAttribute(
+      'data-focus',
+      'false',
+    )
+  })
+
   it('works without native fullscreen, fits the canvas, and restores focus on Escape', async () => {
     const { root, onChange, onFit } = mount()
     const enter = screen.getByRole('button', { name: 'Enter' })

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { createCanvasFileRecord } from './canvasFiles'
 import { createCanvasDocument } from './lcanvas'
 import {
@@ -58,6 +58,80 @@ describe('canvas draft recovery', () => {
       ]),
     ).rejects.toThrow()
     expect(await store.list('project')).toEqual([valid])
+  })
+  it('migrates legacy drafts once, keeps explicit clears empty, and preserves another workspace migration', async () => {
+    const legacy = createCanvasRecoveryStore(null)
+    await legacy.replace('project', [draft()])
+    const readLegacy = vi.spyOn(legacy, 'list')
+    const first = createCanvasRecoveryStore(null, 'workspace-a', legacy)
+    expect(await first.list('project')).toEqual([draft()])
+    await first.replace('project', [])
+    expect(await first.list('project')).toEqual([])
+    expect(await first.list('project')).toEqual([])
+    expect(readLegacy).toHaveBeenCalledTimes(1)
+
+    const second = createCanvasRecoveryStore(null, 'workspace-b', legacy)
+    expect(await second.list('project')).toEqual([draft()])
+    expect(readLegacy).toHaveBeenCalledTimes(2)
+    expect(await legacy.list('project')).toEqual([draft()])
+  })
+  it('records an empty migration so later legacy drafts do not leak into an initialized workspace', async () => {
+    const legacy = createCanvasRecoveryStore(null)
+    const readLegacy = vi.spyOn(legacy, 'list')
+    const scoped = createCanvasRecoveryStore(null, 'workspace', legacy)
+    expect(await scoped.list('project')).toEqual([])
+    await legacy.replace('project', [draft()])
+    expect(await scoped.list('project')).toEqual([])
+    expect(readLegacy).toHaveBeenCalledTimes(1)
+  })
+  it('lets an explicit replacement initialize recovery without importing legacy content', async () => {
+    const legacy = createCanvasRecoveryStore(null)
+    await legacy.replace('project', [draft()])
+    const readLegacy = vi.spyOn(legacy, 'list')
+    const scoped = createCanvasRecoveryStore(null, 'workspace', legacy)
+    await scoped.replace('project', [])
+    expect(await scoped.list('project')).toEqual([])
+    expect(readLegacy).not.toHaveBeenCalled()
+  })
+  it('serializes a pending migration before an explicit clear and later reads', async () => {
+    const legacy = createCanvasRecoveryStore(null)
+    let release!: (value: CanvasDraft[]) => void
+    let started!: () => void
+    const waiting = new Promise<CanvasDraft[]>((resolve) => {
+      release = resolve
+    })
+    const began = new Promise<void>((resolve) => {
+      started = resolve
+    })
+    const readLegacy = vi.spyOn(legacy, 'list').mockImplementation(async () => {
+      started()
+      return waiting
+    })
+    const scoped = createCanvasRecoveryStore(null, 'workspace', legacy)
+    const migrated = scoped.list('project')
+    await began
+    const cleared = scoped.replace('project', [])
+    const reread = scoped.list('project')
+    release([draft()])
+    expect(await migrated).toEqual([draft()])
+    await cleared
+    expect(await reread).toEqual([])
+    expect(await scoped.list('project')).toEqual([])
+    expect(readLegacy).toHaveBeenCalledTimes(1)
+  })
+  it('retries a failed migration without marking it complete or changing the legacy recovery', async () => {
+    const legacy = createCanvasRecoveryStore(null)
+    await legacy.replace('project', [draft()])
+    const readLegacy = vi.spyOn(legacy, 'list')
+    readLegacy.mockRejectedValueOnce(
+      new Error('Recovery temporarily unavailable'),
+    )
+    const scoped = createCanvasRecoveryStore(null, 'workspace', legacy)
+    await expect(scoped.list('project')).rejects.toThrow(
+      'temporarily unavailable',
+    )
+    expect(await scoped.list('project')).toEqual([draft()])
+    expect(await legacy.list('project')).toEqual([draft()])
   })
   it('restores compatible dirty content and orphan imports but preserves a newer save', () => {
     const recoverable = draft()

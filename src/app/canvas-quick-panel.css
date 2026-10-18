@@ -1,0 +1,93 @@
+.canvas-quick-panel {
+  position: fixed;
+  z-index: 120;
+  width: min(324px, calc(100vw - 16px));
+  max-height: min(650px, calc(100vh - 24px));
+  overflow: auto;
+  padding: 12px;
+  color: var(--ink, #e9edf5);
+  background: var(--panel, #191d28);
+  border: 1px solid var(--line, #424755);
+  border-radius: 12px;
+  box-shadow: 0 12px 40px #0007;
+  font-size: 12px;
+}
+.canvas-quick-panel > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+.canvas-quick-panel button {
+  padding: 7px 10px;
+  color: inherit;
+  background: var(--field, #262b36);
+  border: 1px solid var(--line, #424755);
+  border-radius: 6px;
+  cursor: pointer;
+}
+.canvas-quick-panel button:hover {
+  border-color: var(--accent, #00ffff);
+}
+.canvas-quick-panel button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.canvas-quick-fields {
+  display: grid;
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+}
+.canvas-quick-fields legend {
+  padding: 0 0 10px;
+  font-weight: 600;
+}
+.canvas-rich-properties,
+.canvas-embed-insert,
+.canvas-embed-insert form {
+  display: grid;
+  gap: 10px;
+}
+.canvas-quick-fields .inspector-field,
+.canvas-quick-panel .inspector-field {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+}
+.canvas-quick-panel input,
+.canvas-quick-panel select {
+  width: 100%;
+  min-width: 0;
+  padding: 7px;
+  color: inherit;
+  background: #252a35;
+  border: 1px solid var(--line, #424755);
+  border-radius: 5px;
+}
+.canvas-quick-panel input[type='checkbox'] {
+  width: auto;
+}
+.canvas-quick-panel input[type='color'] {
+  padding: 3px;
+  height: 34px;
+}
+.canvas-quick-actions,
+.canvas-quick-add {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.canvas-quick-panel small {
+  color: var(--muted, #a1adbe);
+  line-height: 1.5;
+}
+.canvas-connect-handle {
+  cursor: crosshair;
+}
+.canvas-connect-handle:hover {
+  stroke: var(--accent);
+  fill: var(--ink);
+}

@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   DEFAULT_LAYOUT,
+  boundedChromeSize,
+  boundedPanelInset,
   LAYOUT_STORAGE_KEY,
   loadLayout,
   parseLayout,
@@ -11,6 +13,18 @@ describe('independent workspace layout', () => {
   beforeEach(() => {
     localStorage.clear()
     vi.restoreAllMocks()
+  })
+  it('persists canvas visibility separately in each workspace home layout', () => {
+    const visible = {
+      ...DEFAULT_LAYOUT,
+      homeView: { ...DEFAULT_LAYOUT.homeView, hierarchyShowCanvases: true },
+    }
+    expect(persistLayout(visible)).toBe(true)
+    expect(loadLayout().homeView.hierarchyShowCanvases).toBe(true)
+    expect(
+      parseLayout(JSON.stringify(DEFAULT_LAYOUT)).homeView
+        .hierarchyShowCanvases,
+    ).toBe(false)
   })
   it('remembers bounded widths and panel visibility in its own storage key', () => {
     localStorage.setItem('canvas-live.workspace.v1', 'existing projects')
@@ -29,6 +43,48 @@ describe('independent workspace layout', () => {
       'existing projects',
     )
     expect(localStorage.getItem(LAYOUT_STORAGE_KEY)).not.toBeNull()
+  })
+  it('persists independent chrome visibility and dimensions without changing old layout defaults', () => {
+    expect(parseLayout(JSON.stringify({ filesWidth: 300 }))).toEqual({
+      ...DEFAULT_LAYOUT,
+      filesWidth: 300,
+    })
+    const layout = {
+      ...DEFAULT_LAYOUT,
+      autoHideTabs: true,
+      autoHideStatus: true,
+      ribbonWidth: 60,
+      controlsWidth: 56,
+      tabBarHeight: 54,
+      statusBarHeight: 32,
+    }
+    expect(persistLayout(layout)).toBe(true)
+    expect(loadLayout()).toEqual(layout)
+  })
+  it('normalizes imported chrome sizes and rejects truthy auto-hide strings', () => {
+    expect(
+      parseLayout(
+        JSON.stringify({
+          autoHideTabs: 'true',
+          autoHideStatus: 1,
+          ribbonWidth: 900,
+          controlsWidth: -100,
+          tabBarHeight: 55.7,
+          statusBarHeight: 'tall',
+        }),
+      ),
+    ).toEqual({
+      ...DEFAULT_LAYOUT,
+      ribbonWidth: 76,
+      controlsWidth: 34,
+      tabBarHeight: 56,
+    })
+    expect(boundedChromeSize(Number.NaN, 'ribbonWidth')).toBe(44)
+    expect(boundedChromeSize(Number.POSITIVE_INFINITY, 'controlsWidth')).toBe(
+      42,
+    )
+    expect(boundedChromeSize(-20, 'statusBarHeight')).toBe(22)
+    expect(boundedChromeSize(999, 'tabBarHeight')).toBe(68)
   })
   it('recovers each invalid field while clamping oversized panels', () => {
     expect(
@@ -98,5 +154,142 @@ describe('independent workspace layout', () => {
         }),
       ),
     ).toEqual(DEFAULT_LAYOUT)
+  })
+  it('migrates old layouts safely and remembers arrangement, workspaces and auto-hide settings', () => {
+    const legacy = JSON.stringify({ filesWidth: 310, leftPinned: true })
+    expect(parseLayout(legacy)).toEqual({
+      ...DEFAULT_LAYOUT,
+      filesWidth: 310,
+      leftPinned: true,
+    })
+    const customized = {
+      ...DEFAULT_LAYOUT,
+      panelsSwapped: true,
+      autoHidePanels: false,
+      autoHideDelay: 640,
+      leftPanel: 'workspaces' as const,
+    }
+    expect(persistLayout(customized)).toBe(true)
+    expect(loadLayout()).toEqual(customized)
+    expect(
+      parseLayout(
+        JSON.stringify({
+          panelsSwapped: 'true',
+          autoHidePanels: 'false',
+          autoHideDelay: 'slow',
+        }),
+      ),
+    ).toEqual(DEFAULT_LAYOUT)
+    expect(
+      parseLayout(JSON.stringify({ autoHideDelay: 9000 })).autoHideDelay,
+    ).toBe(2000)
+    expect(
+      parseLayout(JSON.stringify({ autoHideDelay: -30 })).autoHideDelay,
+    ).toBe(0)
+  })
+
+  it('persists independent top and bottom insets for both panels across pins and swapped sides', () => {
+    const layout = {
+      ...DEFAULT_LAYOUT,
+      filesTopInset: 36,
+      filesBottomInset: 70,
+      rightTopInset: 110,
+      rightBottomInset: 24,
+      leftPinned: true,
+      rightPinned: false,
+      panelsSwapped: true,
+    }
+    expect(persistLayout(layout)).toBe(true)
+    expect(loadLayout()).toEqual(layout)
+    expect(
+      parseLayout(
+        JSON.stringify({ ...layout, panelsSwapped: false, rightPinned: true }),
+      ),
+    ).toMatchObject({
+      filesTopInset: 36,
+      filesBottomInset: 70,
+      rightTopInset: 110,
+      rightBottomInset: 24,
+      panelsSwapped: false,
+      rightPinned: true,
+    })
+  })
+
+  it('bounds imported inset values and uses eight-pixel legacy defaults without coercing invalid fields', () => {
+    expect(
+      parseLayout(
+        JSON.stringify({
+          filesTopInset: -20,
+          filesBottomInset: 9000,
+          rightTopInset: 16.7,
+          rightBottomInset: '40',
+        }),
+      ),
+    ).toMatchObject({
+      filesTopInset: 0,
+      filesBottomInset: 800,
+      rightTopInset: 17,
+      rightBottomInset: 8,
+    })
+    for (const invalid of [
+      undefined,
+      null,
+      '20',
+      {},
+      [],
+      true,
+      Number.NaN,
+      Number.POSITIVE_INFINITY,
+    ])
+      expect(boundedPanelInset(invalid)).toBe(8)
+    expect(boundedPanelInset(-1)).toBe(0)
+    expect(boundedPanelInset(8000)).toBe(800)
+    expect(parseLayout(JSON.stringify({ filesWidth: 310 }))).toMatchObject({
+      filesTopInset: 8,
+      filesBottomInset: 8,
+      rightTopInset: 8,
+      rightBottomInset: 8,
+    })
+    const legacy = JSON.stringify({ filesWidth: 310, rightPanel: 'ai' })
+    localStorage.setItem('canvas-live.layout.v1', legacy)
+    expect(loadLayout()).toMatchObject({
+      filesTopInset: 8,
+      filesBottomInset: 8,
+      rightTopInset: 8,
+      rightBottomInset: 8,
+    })
+    expect(localStorage.getItem('canvas-live.layout.v1')).toBe(legacy)
+    expect(localStorage.getItem(LAYOUT_STORAGE_KEY)).toBeNull()
+  })
+
+  it('normalizes inset bounds before writing storage without mutating supplied preferences', () => {
+    const layout = {
+      ...DEFAULT_LAYOUT,
+      filesTopInset: 9999,
+      filesBottomInset: -90,
+      rightTopInset: 700,
+      rightBottomInset: 650,
+    }
+    expect(persistLayout(layout)).toBe(true)
+    expect(loadLayout()).toMatchObject({
+      filesTopInset: 800,
+      filesBottomInset: 0,
+      rightTopInset: 700,
+      rightBottomInset: 650,
+    })
+    expect(JSON.parse(localStorage.getItem(LAYOUT_STORAGE_KEY)!)).toMatchObject(
+      {
+        filesTopInset: 800,
+        filesBottomInset: 0,
+        rightTopInset: 700,
+        rightBottomInset: 650,
+      },
+    )
+    expect(layout).toMatchObject({
+      filesTopInset: 9999,
+      filesBottomInset: -90,
+      rightTopInset: 700,
+      rightBottomInset: 650,
+    })
   })
 })

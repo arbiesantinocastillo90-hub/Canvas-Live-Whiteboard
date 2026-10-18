@@ -48,7 +48,21 @@ function clipboardDocument(document: CanvasDocument) {
 
 /** Recognize our text envelope without interpreting unrelated JSON as a canvas. */
 export function isCanvasClipboard(raw: string): boolean {
-  return raw.startsWith('Canvas Live clipboard ')
+  const text = raw.replace(/^\uFEFF/u, '').trimStart()
+  if (text.startsWith('Canvas Live clipboard ')) return true
+  if (!text.startsWith('{') || text.length > CANVAS_CLIPBOARD_MAX_BYTES)
+    return false
+  try {
+    const payload: unknown = JSON.parse(text)
+    return (
+      !!payload &&
+      typeof payload === 'object' &&
+      'format' in payload &&
+      payload.format === 'Canvas Live clipboard'
+    )
+  } catch {
+    return false
+  }
 }
 
 export function createCanvasClipboard(
@@ -91,11 +105,15 @@ export function createCanvasClipboard(
 
 export function parseCanvasClipboard(raw: string): CanvasDocument {
   clipboardSize(raw)
-  if (!raw.startsWith(CANVAS_CLIPBOARD_PREFIX))
+  // Windows clipboard text can normalize line endings to CRLF. The custom
+  // JSON MIME also accepts the same bounded envelope without its text header.
+  const text = raw.replace(/^\uFEFF/u, '').trimStart()
+  const header = /^Canvas Live clipboard v1\r?\n/u.exec(text)
+  if (text.startsWith('Canvas Live clipboard ') && !header)
     return fail('This canvas clipboard version is not supported.')
   let payload: unknown
   try {
-    payload = JSON.parse(raw.slice(CANVAS_CLIPBOARD_PREFIX.length))
+    payload = JSON.parse(header ? text.slice(header[0].length) : text)
   } catch {
     return fail('The canvas clipboard is not valid JSON.')
   }

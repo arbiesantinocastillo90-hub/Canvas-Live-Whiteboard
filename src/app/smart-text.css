@@ -1,0 +1,25 @@
+/* The underlying SVG keeps its own fill and outline throughout editing. */
+.canvas-inline-edit {
+  overflow: visible;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.canvas-inline-edit textarea {
+  height: 100%;
+  max-height: none;
+  padding: 0;
+  overflow: hidden;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: transparent;
+  caret-color: currentColor;
+}
+.canvas-inline-edit textarea::selection {
+  color: inherit;
+  background: color-mix(in srgb, var(--accent) 28%, transparent);
+}
+.app-shell .canvas-inline-edit textarea:focus-visible {
+  outline: none;
+}

@@ -333,6 +333,158 @@ describe('practical canvas interactions', () => {
     expect(test.current().viewport).toEqual(panned)
   })
 
+  it('Ctrl-drags a selected group once, preserves its internal links and undoes the complete copy', () => {
+    const document = connectElements(box(box(), 'b', 240, 40), 'a', 'b', {
+      id: 'edge',
+    })
+    const test = mount(document)
+    test.select('a')
+    test.select('b', true)
+    fireEvent.pointerDown(test.object('a'), {
+      button: 0,
+      clientX: 50,
+      clientY: 50,
+      ctrlKey: true,
+    })
+    fireEvent.pointerMove(test.stage, {
+      clientX: 80,
+      clientY: 70,
+      ctrlKey: true,
+    })
+    paint()
+    expect(test.container.querySelectorAll('[data-element-id]')).toHaveLength(6)
+    // The controller exposes only committed content during a pointer preview.
+    expect(test.current().elements).toEqual(document.elements)
+    fireEvent.pointerMove(test.stage, { clientX: 100, clientY: 90 })
+    paint()
+    fireEvent.pointerUp(test.stage, { clientX: 100, clientY: 90 })
+    const result = test.current().elements
+    expect(result).toHaveLength(6)
+    expect(result.slice(0, 3)).toEqual(document.elements)
+    expect(result[3]).toMatchObject({ x: 60, y: 60 })
+    expect(result[4]).toMatchObject({ x: 290, y: 80 })
+    expect(result[5]).toMatchObject({
+      fromId: result[3].id,
+      toId: result[4].id,
+    })
+    expect(test.changed).toHaveBeenCalledOnce()
+    fireEvent.click(screen.getByRole('button', { name: 'Undo' }))
+    expect(test.current().elements).toEqual(document.elements)
+    expect(screen.getByRole('button', { name: 'Undo' })).toBeDisabled()
+    fireEvent.click(screen.getByRole('button', { name: 'Redo' }))
+    expect(test.current().elements).toHaveLength(6)
+  })
+
+  it('Cmd-drags an area with members, creates no copy on a click and cancels a copy preview', () => {
+    let document = createElement(createCanvasDocument('Plan'), {
+      type: 'area',
+      id: 'area',
+      x: 0,
+      y: 0,
+      width: 500,
+      height: 300,
+    })
+    document = assignElementArea(box(document), 'a', 'area')
+    const test = mount(document)
+    test.select('area')
+    fireEvent.pointerDown(test.object('area'), {
+      button: 0,
+      clientX: 50,
+      clientY: 50,
+      metaKey: true,
+    })
+    fireEvent.pointerUp(test.stage, { clientX: 50, clientY: 50, metaKey: true })
+    expect(test.changed).not.toHaveBeenCalled()
+    fireEvent.pointerDown(test.object('area'), {
+      button: 0,
+      clientX: 50,
+      clientY: 50,
+      metaKey: true,
+    })
+    fireEvent.pointerMove(test.stage, {
+      clientX: 100,
+      clientY: 90,
+      metaKey: true,
+    })
+    paint()
+    expect(test.container.querySelectorAll('[data-element-id]')).toHaveLength(4)
+    fireEvent.keyDown(test.stage, { key: 'Escape' })
+    expect(test.current().elements).toEqual(document.elements)
+    expect(test.stage).toHaveAttribute('data-selection-count', '1')
+    expect(test.object('area')).toHaveAttribute('aria-pressed', 'true')
+    expect(test.changed).not.toHaveBeenCalled()
+    fireEvent.pointerDown(test.object('area'), {
+      button: 0,
+      clientX: 50,
+      clientY: 50,
+      metaKey: true,
+    })
+    fireEvent.pointerMove(test.stage, {
+      clientX: 100,
+      clientY: 90,
+      metaKey: true,
+    })
+    fireEvent.pointerUp(test.stage, {
+      clientX: 100,
+      clientY: 90,
+      metaKey: true,
+    })
+    const copied = test.current().elements.slice(2)
+    expect(copied).toHaveLength(2)
+    expect(copied[0]).toMatchObject({ type: 'area', x: 50, y: 40 })
+    expect(copied[1]).toMatchObject({ areaId: copied[0].id, x: 60, y: 60 })
+    expect(test.changed).toHaveBeenCalledOnce()
+  })
+
+  it('cancels a Ctrl-drag by pointer cancellation or returning to its starting position', () => {
+    const test = mount()
+    test.select('a')
+    for (const cancel of [true, false]) {
+      fireEvent.pointerDown(test.object('a'), {
+        button: 0,
+        clientX: 50,
+        clientY: 50,
+        ctrlKey: true,
+      })
+      fireEvent.pointerMove(test.stage, { clientX: 100, clientY: 90 })
+      paint()
+      expect(test.container.querySelectorAll('[data-element-id]')).toHaveLength(
+        2,
+      )
+      if (cancel) fireEvent.pointerCancel(test.stage)
+      else {
+        fireEvent.pointerMove(test.stage, { clientX: 50, clientY: 50 })
+        fireEvent.pointerUp(test.stage, { clientX: 50, clientY: 50 })
+      }
+      expect(test.current().elements).toHaveLength(1)
+      expect(test.object('a')).toHaveAttribute('aria-pressed', 'true')
+      expect(test.changed).not.toHaveBeenCalled()
+      expect(screen.getByRole('button', { name: 'Undo' })).toBeDisabled()
+    }
+  })
+
+  it('pastes a CRLF-normalized text envelope and a JSON custom MIME envelope', () => {
+    const test = mount()
+    const raw = createCanvasClipboard(test.current(), ['a'])!
+    fireEvent.paste(test.stage, {
+      clipboardData: {
+        getData: (type: string) =>
+          type === 'text/plain' ? raw.replaceAll('\n', '\r\n') : '',
+      },
+    })
+    expect(test.current().elements).toHaveLength(2)
+    fireEvent.paste(test.stage, {
+      clipboardData: {
+        getData: (type: string) =>
+          type === CANVAS_CLIPBOARD_MIME
+            ? raw.slice(raw.indexOf('\n') + 1)
+            : '',
+      },
+    })
+    expect(test.current().elements).toHaveLength(3)
+    expect(screen.queryByRole('alert')).toBeNull()
+  })
+
   it('copies and pastes an area and internal connections with fresh IDs and preserves native text clipboard', () => {
     let document = createElement(createCanvasDocument('Plan'), {
       type: 'area',
@@ -377,6 +529,28 @@ describe('practical canvas interactions', () => {
     clipboard.clear()
     expect(fireEvent.copy(field, { clipboardData: data })).toBe(true)
     expect(clipboard.size).toBe(0)
+  })
+
+  it('copies a portable text envelope when the browser rejects the custom clipboard MIME', () => {
+    const test = mount()
+    test.select('a')
+    let plain = ''
+    fireEvent.copy(test.stage, {
+      clipboardData: {
+        setData: (type: string, value: string) => {
+          if (type !== 'text/plain') throw new Error('Custom MIME unavailable')
+          plain = value
+        },
+      },
+    })
+    expect(plain).toBe(createCanvasClipboard(test.current(), ['a']))
+    fireEvent.paste(test.stage, {
+      clipboardData: {
+        getData: (type: string) => (type === 'text/plain' ? plain : ''),
+      },
+    })
+    expect(test.current().elements).toHaveLength(2)
+    expect(screen.queryByRole('alert')).toBeNull()
   })
 
   it('rejects locked group edits atomically and disables hidden canvas interaction', () => {

@@ -14,13 +14,15 @@ export default function PanelResizeHandle({
   min: number
   max: number
   defaultValue: number
-  edge?: 'left' | 'right'
+  edge?: 'left' | 'right' | 'top' | 'bottom'
   onChange: (width: number) => void
 }) {
   const start = useRef<{ x: number; width: number; pointerId: number } | null>(
     null,
   )
   const [resizing, setResizing] = useState(false)
+  const horizontal = edge === 'top' || edge === 'bottom'
+  const direction = edge === 'right' || edge === 'top' ? 1 : -1
   function change(width: number) {
     onChange(Math.round(Math.max(min, Math.min(max, width))))
   }
@@ -29,7 +31,7 @@ export default function PanelResizeHandle({
       className="panel-resize-handle"
       role="separator"
       aria-label={label}
-      aria-orientation="vertical"
+      aria-orientation={horizontal ? 'horizontal' : 'vertical'}
       aria-valuemin={min}
       aria-valuemax={max}
       aria-valuenow={value}
@@ -43,7 +45,7 @@ export default function PanelResizeHandle({
         event.preventDefault()
         event.stopPropagation()
         start.current = {
-          x: event.clientX,
+          x: horizontal ? event.clientY : event.clientX,
           width: value,
           pointerId: event.pointerId,
         }
@@ -54,9 +56,10 @@ export default function PanelResizeHandle({
         if (!start.current || start.current.pointerId !== event.pointerId)
           return
         event.stopPropagation()
-        const direction = edge === 'right' ? 1 : -1
         change(
-          start.current.width + (event.clientX - start.current.x) * direction,
+          start.current.width +
+            ((horizontal ? event.clientY : event.clientX) - start.current.x) *
+              direction,
         )
       }}
       onPointerUp={(event) => {
@@ -75,17 +78,24 @@ export default function PanelResizeHandle({
         setResizing(false)
       }}
       onKeyDown={(event) => {
-        if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key))
+        if (
+          !(
+            horizontal
+              ? ['ArrowUp', 'ArrowDown', 'Home', 'End']
+              : ['ArrowLeft', 'ArrowRight', 'Home', 'End']
+          ).includes(event.key)
+        )
           return
         event.preventDefault()
         event.stopPropagation()
         if (event.key === 'Home') change(min)
         else if (event.key === 'End') change(max)
         else {
-          const direction = edge === 'right' ? 1 : -1
           change(
             value +
-              (event.key === 'ArrowRight' ? 1 : -1) *
+              (event.key === 'ArrowRight' || event.key === 'ArrowDown'
+                ? 1
+                : -1) *
                 direction *
                 (event.shiftKey ? 30 : 10),
           )

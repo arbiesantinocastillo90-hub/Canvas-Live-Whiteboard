@@ -11,13 +11,16 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
+using System.Web.Script.Serialization;
+using System.Text.RegularExpressions;
 
 internal static class Program
 {
     [STAThread]
     private static int Main(string[] args)
     {
-        bool openBrowser = Array.IndexOf(args, "--no-browser") < 0;
+        bool showTray = Array.IndexOf(args, "--no-browser") < 0;
+        bool openBrowser = showTray && Array.IndexOf(args, "--background") < 0;
         string folder = AppDomain.CurrentDomain.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar);
         string key;
         using (SHA256 hash = SHA256.Create())
@@ -50,7 +53,7 @@ internal static class Program
                 {
                     server.Start();
                     File.WriteAllText(endpointFile, server.Url, new UTF8Encoding(false));
-                    using (LauncherContext context = new LauncherContext(server.Url, openBrowser))
+                    using (LauncherContext context = new LauncherContext(server.Url, showTray))
                     {
                         if (openBrowser) OpenBrowser(server.Url);
                         Application.Run(context);
@@ -130,7 +133,11 @@ internal sealed class LauncherContext : ApplicationContext
         menu = new ContextMenuStrip();
         menu.Items.Add("Open Canvas Live", null, delegate { Program.OpenBrowser(url); });
         menu.Items.Add("Close Canvas Live", null, delegate { ExitThread(); });
-        icon = new NotifyIcon { Text = "Canvas Live", Icon = SystemIcons.Application, ContextMenuStrip = menu, Visible = showTray };
+        string iconPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar), "app", "canvas-live.ico");
+        Icon appIcon;
+        try { appIcon = new Icon(iconPath); }
+        catch (Exception) { appIcon = SystemIcons.Application; }
+        icon = new NotifyIcon { Text = "Canvas Live", Icon = appIcon, ContextMenuStrip = menu, Visible = showTray };
         icon.DoubleClick += delegate { Program.OpenBrowser(url); };
     }
 
@@ -147,6 +154,8 @@ internal sealed class StaticSite : IDisposable
     private readonly List<TcpClient> clients = new List<TcpClient>();
     private readonly SemaphoreSlim slots = new SemaphoreSlim(16);
     private readonly string identity;
+    private readonly LocalLibrary library;
+    private readonly string packageFolder;
     private TcpListener listener;
     private volatile bool stopping;
     internal string Url { get; private set; }
@@ -154,6 +163,8 @@ internal sealed class StaticSite : IDisposable
     internal StaticSite(string root, string key)
     {
         root = Path.GetFullPath(root);
+        packageFolder = Path.GetDirectoryName(root);
+        library = new LocalLibrary(Path.Combine(Path.GetDirectoryName(root), "data"));
         if (!File.Exists(Path.Combine(root, "index.html")))
             throw new FileNotFoundException("The packaged website is missing: app/index.html.");
         CollectAssets(root, root);
@@ -243,6 +254,9 @@ internal sealed class StaticSite : IDisposable
                 }
             if (host != new Uri(Url).Authority)
             { Reply(stream, 403, "Forbidden", "text/plain", new byte[0], false); return; }
+            if (request[1].StartsWith("/__canvas_live_companion", StringComparison.Ordinal))
+            { ServeCompanion(stream, request[0], request[1], lines); return; }
+            if (library.Serve(stream, request[0], request[1], lines, Url.TrimEnd('/'))) return;
             bool head = request[0] == "HEAD";
             if (request[0] != "GET" && !head)
             { Reply(stream, 405, "Method Not Allowed", "text/plain", new byte[0], false); return; }
@@ -257,12 +271,72 @@ internal sealed class StaticSite : IDisposable
             string file;
             if (!assets.TryGetValue(path, out file))
             { Reply(stream, 404, "Not Found", "text/plain", new byte[0], head); return; }
+            if (path == "/" || path == "/index.html")
+            {
+                string html = File.ReadAllText(file, Encoding.UTF8).Replace("</head>", "<meta name=\"canvas-live-storage\" content=\"local-v1\"></head>");
+                Reply(stream, 200, "OK", "text/html; charset=utf-8", Encoding.UTF8.GetBytes(html), head); return;
+            }
             using (FileStream content = File.OpenRead(file))
             {
                 WriteHeader(stream, 200, "OK", ContentType(file), content.Length);
                 if (!head) content.CopyTo(stream);
             }
         }
+    }
+
+    private void ServeCompanion(Stream stream, string method, string target, string[] headers)
+    {
+        string origin = HeaderValue(headers, "Origin");
+        string site = HeaderValue(headers, "Sec-Fetch-Site");
+        if (target != "/__canvas_live_companion" || method != "GET")
+        { Reply(stream, 404, "Not Found", "text/plain", new byte[0], false); return; }
+        if (HeaderValue(headers, "X-Canvas-Live-Companion") != "1" ||
+            (origin != null && origin != Url.TrimEnd('/')) ||
+            (site != null && site != "same-origin" && site != "none"))
+        { Reply(stream, 403, "Forbidden", "text/plain", new byte[0], false); return; }
+        try
+        {
+            string folder = Path.Combine(packageFolder, ".canvas-live");
+            string file = Path.Combine(folder, "mcp-session.json");
+            if ((File.GetAttributes(folder) & FileAttributes.ReparsePoint) != 0 ||
+                (File.GetAttributes(file) & FileAttributes.ReparsePoint) != 0)
+                throw new IOException("Linked runtime files are not supported.");
+            FileInfo info = new FileInfo(file);
+            if (info.Length > 16384) throw new IOException("Invalid companion registration.");
+            var serializer = new JavaScriptSerializer { MaxJsonLength = 16384, RecursionLimit = 8 };
+            var session = serializer.Deserialize<Dictionary<string, object>>(File.ReadAllText(file, Encoding.UTF8));
+            object urlValue, codeValue;
+            Uri endpoint;
+            if (session == null || !session.TryGetValue("url", out urlValue) || !session.TryGetValue("browserPairingCode", out codeValue) ||
+                !(urlValue is string) || !(codeValue is string) || !Uri.TryCreate((string)urlValue, UriKind.Absolute, out endpoint) ||
+                endpoint.Scheme != "http" || endpoint.Host != "127.0.0.1" || endpoint.UserInfo != "" || endpoint.Query != "" ||
+                endpoint.Fragment != "" || endpoint.AbsolutePath != "/mcp" || endpoint.Port < 1024 ||
+                !Regex.IsMatch((string)codeValue, "^[A-Za-z0-9_-]{32,256}$"))
+                throw new IOException("Invalid companion registration.");
+            // Deliberately return only the browser credential, never the MCP bearer token.
+            string json = serializer.Serialize(new { url = endpoint.GetLeftPart(UriPartial.Authority), browserPairingCode = (string)codeValue });
+            byte[] body = Encoding.UTF8.GetBytes(json);
+            byte[] responseHeader = Encoding.ASCII.GetBytes("HTTP/1.1 200 OK\r\nContent-Type: application/json; charset=utf-8\r\nContent-Length: " + body.Length + "\r\nCache-Control: no-store\r\nConnection: close\r\nX-Content-Type-Options: nosniff\r\n\r\n");
+            stream.Write(responseHeader, 0, responseHeader.Length);
+            stream.Write(body, 0, body.Length);
+        }
+        catch (Exception error)
+        {
+            if (!(error is IOException) && !(error is UnauthorizedAccessException) && !(error is ArgumentException) && !(error is InvalidOperationException)) throw;
+            Reply(stream, 503, "Service Unavailable", "application/json", Encoding.UTF8.GetBytes("{\"error\":\"Start Canvas Live MCP from this package.\"}"), false);
+        }
+    }
+
+    private static string HeaderValue(string[] lines, string name)
+    {
+        string value = null;
+        foreach (string line in lines)
+            if (line.StartsWith(name + ":", StringComparison.OrdinalIgnoreCase))
+            {
+                if (value != null) return "invalid-duplicate-header";
+                value = line.Substring(name.Length + 1).Trim();
+            }
+        return value;
     }
 
     private static string ContentType(string file)

@@ -215,7 +215,15 @@ describe('LCANVAS viewer', () => {
       ],
     }
     const { container } = mount(document)
-    expect(screen.getByText('<script>alert(1)</script>')).toBeInTheDocument()
+    const literalText = Array.from(container.querySelectorAll('text')).find(
+      (text) => text.getAttribute('aria-label')?.startsWith('<script>'),
+    )
+    expect(literalText?.getAttribute('aria-label')).toBe(
+      '<script>alert(1)</script>\nhttps://example.com',
+    )
+    expect(literalText?.textContent).toBe(
+      '<script>alert(1)</script>https://example.com',
+    )
     expect(container.querySelector('script')).toBeNull()
     expect(container.querySelector('a')).toBeNull()
     expect(container.querySelector('foreignObject')).toBeNull()

@@ -1,5 +1,14 @@
 import { resolveAppearanceVariables, type AppearanceMode } from './appearance'
 import { DEFAULT_PREFERENCES, type Preferences } from './workspace'
+import {
+  boundedAutoHideDelay,
+  boundedChromeSize,
+  boundedPanelWidth,
+  CHROME_LIMITS,
+  DEFAULT_LAYOUT,
+  PANEL_LIMITS,
+  type WorkspaceLayout,
+} from './layout'
 
 const accents = [
   { name: 'Forest', color: '#297A5A' },
@@ -21,12 +30,16 @@ type AppearanceOptionsProps = {
   preferences: Preferences
   onChange: (preferences: Preferences) => void
   mode?: AppearanceMode
+  layout?: WorkspaceLayout
+  onLayoutChange?: (layout: WorkspaceLayout) => void
 }
 
 export default function AppearanceOptions({
   preferences,
   onChange,
   mode = preferences.mode === 'dark' ? 'dark' : 'light',
+  layout,
+  onLayoutChange,
 }: AppearanceOptionsProps) {
   function update<K extends keyof Preferences>(key: K, value: Preferences[K]) {
     onChange({ ...preferences, [key]: value })
@@ -202,6 +215,58 @@ export default function AppearanceOptions({
               </label>
             ))}
           </div>
+          <label className="toggle-control option-inline-toggle">
+            <input
+              type="checkbox"
+              checked={preferences.railButtonBackground}
+              onChange={(event) =>
+                update('railButtonBackground', event.target.checked)
+              }
+            />
+            <span>Separate rail buttons</span>
+          </label>
+        </fieldset>
+
+        <fieldset className="option-card">
+          <legend className="option-title">Canvas text</legend>
+          <label className="toggle-control">
+            <input
+              type="checkbox"
+              checked={preferences.autoGrowShapes}
+              onChange={(event) =>
+                update('autoGrowShapes', event.target.checked)
+              }
+            />
+            <span>Grow shapes with text</span>
+          </label>
+          <label className="toggle-control">
+            <input
+              type="checkbox"
+              checked={preferences.fitTextToShape}
+              onChange={(event) =>
+                update('fitTextToShape', event.target.checked)
+              }
+            />
+            <span>Fit text when shapes shrink</span>
+          </label>
+          <div className="range-control">
+            <label htmlFor="minimum-text-size">Minimum text size</label>
+            <output htmlFor="minimum-text-size">
+              {preferences.minTextSize} px
+            </output>
+            <input
+              id="minimum-text-size"
+              type="range"
+              min="8"
+              max="32"
+              step="1"
+              value={preferences.minTextSize}
+              disabled={!preferences.fitTextToShape}
+              onChange={(event) =>
+                update('minTextSize', Number(event.target.value))
+              }
+            />
+          </div>
         </fieldset>
 
         <fieldset className="option-card">
@@ -230,7 +295,7 @@ export default function AppearanceOptions({
             ))}
           </div>
           <label className="select-control" htmlFor="motion-speed">
-            <span>Animation speed</span>
+            <span>Speed preset</span>
             <select
               id="motion-speed"
               value={preferences.motionSpeed}
@@ -247,10 +312,249 @@ export default function AppearanceOptions({
               <option value="fast">Fast</option>
             </select>
           </label>
+          <div className="range-control">
+            <label htmlFor="motion-scale">Animation speed</label>
+            <output htmlFor="motion-scale">{preferences.motionScale}%</output>
+            <input
+              id="motion-scale"
+              type="range"
+              min="25"
+              max="200"
+              step="5"
+              value={preferences.motionScale}
+              disabled={preferences.reduceMotion}
+              onChange={(event) =>
+                update('motionScale', Number(event.target.value))
+              }
+            />
+            <span>Slower</span>
+            <span>Faster</span>
+          </div>
+          <label className="select-control" htmlFor="motion-effect">
+            <span>Animation type</span>
+            <select
+              id="motion-effect"
+              value={preferences.motionEffect}
+              disabled={preferences.reduceMotion}
+              onChange={(event) =>
+                update(
+                  'motionEffect',
+                  event.target.value as Preferences['motionEffect'],
+                )
+              }
+            >
+              <option value="flow">Flow</option>
+              <option value="fade">Fade</option>
+              <option value="pop">Pop</option>
+            </select>
+          </label>
+          <label className="select-control" htmlFor="motion-easing">
+            <span>Animation easing</span>
+            <select
+              id="motion-easing"
+              value={preferences.motionEasing}
+              disabled={preferences.reduceMotion}
+              onChange={(event) =>
+                update(
+                  'motionEasing',
+                  event.target.value as Preferences['motionEasing'],
+                )
+              }
+            >
+              <option value="standard">Standard</option>
+              <option value="linear">Linear</option>
+              <option value="ease-in">Ease in</option>
+              <option value="ease-out">Ease out</option>
+              <option value="ease-in-out">Ease in and out</option>
+            </select>
+          </label>
+          <button
+            className="button secondary motion-preview"
+            type="button"
+            title="Hover to preview your animation"
+            disabled={preferences.reduceMotion}
+          >
+            Preview
+          </button>
           <p className="option-description">
             Your device’s reduced motion setting is always respected.
           </p>
         </fieldset>
+
+        {layout && onLayoutChange && (
+          <fieldset className="option-card">
+            <legend className="option-title">Panels</legend>
+            <label className="toggle-control">
+              <input
+                type="checkbox"
+                checked={layout.autoHidePanels}
+                onChange={(event) =>
+                  onLayoutChange({
+                    ...layout,
+                    autoHidePanels: event.target.checked,
+                  })
+                }
+              />
+              <span>Auto-hide panels</span>
+            </label>
+            <label className="toggle-control">
+              <input
+                type="checkbox"
+                checked={layout.autoHideTabs}
+                onChange={(event) =>
+                  onLayoutChange({
+                    ...layout,
+                    autoHideTabs: event.target.checked,
+                  })
+                }
+              />
+              <span>Auto-hide tab bar</span>
+            </label>
+            <label className="toggle-control">
+              <input
+                type="checkbox"
+                checked={layout.autoHideStatus}
+                onChange={(event) =>
+                  onLayoutChange({
+                    ...layout,
+                    autoHideStatus: event.target.checked,
+                  })
+                }
+              />
+              <span>Auto-hide status bar</span>
+            </label>
+            <div className="range-control">
+              <label htmlFor="panel-hide-delay">Panel hide delay</label>
+              <output htmlFor="panel-hide-delay">
+                {layout.autoHideDelay} ms
+              </output>
+              <input
+                id="panel-hide-delay"
+                type="range"
+                min="0"
+                max="2000"
+                step="20"
+                value={layout.autoHideDelay}
+                disabled={!layout.autoHidePanels}
+                onChange={(event) =>
+                  onLayoutChange({
+                    ...layout,
+                    autoHideDelay: boundedAutoHideDelay(
+                      Number(event.target.value),
+                    ),
+                  })
+                }
+              />
+            </div>
+            <button
+              className="button secondary"
+              type="button"
+              aria-pressed={layout.panelsSwapped}
+              title={
+                layout.panelsSwapped
+                  ? 'Files right, canvas panels left'
+                  : 'Files left, canvas panels right'
+              }
+              onClick={() =>
+                onLayoutChange({
+                  ...layout,
+                  panelsSwapped: !layout.panelsSwapped,
+                })
+              }
+            >
+              Swap panel sides
+            </button>
+          </fieldset>
+        )}
+
+        {layout && onLayoutChange && (
+          <fieldset className="option-card">
+            <legend className="option-title">Interface dimensions</legend>
+            {(
+              [
+                [
+                  'filesWidth',
+                  'Files and projects width',
+                  PANEL_LIMITS.files,
+                  'files',
+                ],
+                [
+                  'rightWidth',
+                  'Tools and AI width',
+                  PANEL_LIMITS.right,
+                  'right',
+                ],
+              ] as const
+            ).map(([key, label, limits, panel]) => (
+              <div className="range-control" key={key}>
+                <label htmlFor={`layout-${key}`}>{label}</label>
+                <output htmlFor={`layout-${key}`}>{layout[key]} px</output>
+                <input
+                  id={`layout-${key}`}
+                  type="range"
+                  min={limits.min}
+                  max={limits.max}
+                  step="1"
+                  value={layout[key]}
+                  onChange={(event) =>
+                    onLayoutChange({
+                      ...layout,
+                      [key]: boundedPanelWidth(
+                        Number(event.target.value),
+                        panel,
+                      ),
+                    })
+                  }
+                />
+              </div>
+            ))}
+            {(
+              [
+                ['ribbonWidth', 'Workspace rail width'],
+                ['controlsWidth', 'Canvas controls width'],
+                ['tabBarHeight', 'Tab bar height'],
+                ['statusBarHeight', 'Status bar height'],
+              ] as const
+            ).map(([key, label]) => (
+              <div className="range-control" key={key}>
+                <label htmlFor={`layout-${key}`}>{label}</label>
+                <output htmlFor={`layout-${key}`}>{layout[key]} px</output>
+                <input
+                  id={`layout-${key}`}
+                  type="range"
+                  min={CHROME_LIMITS[key].min}
+                  max={CHROME_LIMITS[key].max}
+                  step="1"
+                  value={layout[key]}
+                  onChange={(event) =>
+                    onLayoutChange({
+                      ...layout,
+                      [key]: boundedChromeSize(Number(event.target.value), key),
+                    })
+                  }
+                />
+              </div>
+            ))}
+            <button
+              className="button secondary"
+              type="button"
+              onClick={() =>
+                onLayoutChange({
+                  ...layout,
+                  sidebarWidth: DEFAULT_LAYOUT.sidebarWidth,
+                  filesWidth: DEFAULT_LAYOUT.filesWidth,
+                  rightWidth: DEFAULT_LAYOUT.rightWidth,
+                  ribbonWidth: DEFAULT_LAYOUT.ribbonWidth,
+                  controlsWidth: DEFAULT_LAYOUT.controlsWidth,
+                  tabBarHeight: DEFAULT_LAYOUT.tabBarHeight,
+                  statusBarHeight: DEFAULT_LAYOUT.statusBarHeight,
+                })
+              }
+            >
+              Reset interface dimensions
+            </button>
+          </fieldset>
+        )}
 
         <div className="option-card reset-card">
           <h2 className="option-title">A fresh look</h2>

@@ -25,6 +25,19 @@
   margin-top: 10px;
   font-size: 11px;
 }
+.workspace-ai-panel button:not(:disabled) {
+  transition:
+    background-color var(--motion-fast, 117ms) var(--motion-easing, ease-out),
+    border-color var(--motion-fast, 117ms) var(--motion-easing, ease-out),
+    color var(--motion-fast, 117ms) var(--motion-easing, ease-out),
+    box-shadow var(--motion-fast, 117ms) var(--motion-easing, ease-out),
+    transform var(--motion-duration, 180ms) var(--motion-easing, ease-out);
+}
+.workspace-ai-panel button:hover:not(:disabled) {
+  transform: translateY(var(--motion-lift, -1px))
+    scale(var(--motion-hover-scale, 1));
+  box-shadow: 0 3px 10px #00000012;
+}
 .ai-status-card[data-sharing='true'] .status-dot {
   background: #4d9e77;
 }
@@ -80,4 +93,13 @@
   font-size: 9px;
   color: var(--accent-text);
   background: var(--tint);
+}
+.ai-introduction {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.7;
+  margin: 18px 0;
+}
+.ai-introduction strong {
+  color: var(--ink);
 }

@@ -3,6 +3,7 @@ import {
   useEffectEvent,
   useId,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   type CSSProperties,
@@ -14,11 +15,16 @@ import {
 } from 'react'
 import { createPortal } from 'react-dom'
 import {
-  connectionEndpoints,
   elementBounds,
   type CanvasDocument,
   type CanvasElement,
   type CanvasViewport,
+  type ConnectionSide,
+  type ConnectionStyle,
+  type ShapeType,
+  type EmbedKind,
+  type EmbedElement,
+  SHAPE_TYPES,
 } from './lcanvas'
 import {
   connectElements,
@@ -54,6 +60,13 @@ import {
 } from './editorHistory'
 import { CanvasInspector } from './CanvasInspector'
 import {
+  adaptCanvasText,
+  DEFAULT_TEXT_OPTIONS,
+  growCanvasText,
+  layoutCanvasText,
+  type TextLayoutOptions,
+} from './canvasText'
+import {
   applyCanvasCommand,
   type CanvasCommandResult,
 } from '../mcp/canvasCommands'
@@ -66,6 +79,35 @@ import {
 } from './workspaceCommandsContext'
 import './canvas-viewer.css'
 import './canvas-editor.css'
+import './smart-text.css'
+import CanvasRulers from './CanvasRulers'
+import CanvasBackdrop from './CanvasBackdrop'
+import { useCanvasDeck } from './canvasDeck'
+import {
+  DEFAULT_CANVAS_CONTROLS,
+  formatCanvasZoom,
+  isWithinSelection,
+  normalizeCanvasControls,
+  selectionColor,
+  snapCoordinate,
+  snapResizeDelta,
+  snapSelectionDelta,
+  type CanvasControlSettings,
+} from './canvasControls'
+import './canvas-precision.css'
+import { ShapeOutline, CanvasObjectText, ConnectionDrawing } from './RichObject'
+import { lineDash } from './canvasDrawing'
+import EmbedObject from './EmbedObject'
+import CanvasQuickProperties from './CanvasQuickProperties'
+import CanvasEmbedInsert from './CanvasEmbedInsert'
+import { useCanvasMedia } from './canvasMedia'
+import {
+  snapMoveToObjects,
+  snapResizeToObjects,
+  type ObjectSnapGuide,
+} from './canvasObjectSnapping'
+import { canvasFontFamily, canvasTextPlacement } from './canvasText'
+import './canvas-quick-panel.css'
 
 export type CanvasEditorProps = {
   active?: boolean
@@ -85,23 +127,68 @@ export type CanvasEditorProps = {
   dockHost?: HTMLElement | null
   toolsOpen?: boolean
   onToolsOpenChange?: (open: boolean) => void
+  dockSide?: 'left' | 'right'
+  initialSession?: EditorSession
+  onSessionChange?: (session: EditorSession) => void
+  initialViewState?: EditorViewState
+  onStatusChange?: (status: CanvasEditorStatus) => void
+  onViewStateChange?: (state: EditorViewState) => void
+  statusInFooter?: boolean
+  textOptions?: TextLayoutOptions
+  controlOptions?: CanvasControlSettings
+}
+
+export type EditorSession = { tool: string; activeLayerId: string | null }
+export type EditorViewState = EditorSession & {
+  viewport: CanvasViewport
+  selectedIds: string[]
+  connection?: {
+    arrowStyle: 'end' | 'none' | 'both' | 'start'
+    style: ConnectionStyle
+    sourceSide: ConnectionSide | 'fixed'
+    targetSide: ConnectionSide | 'fixed'
+  }
+}
+export type CanvasEditorStatus = {
+  instructions: string
+  selection: string | null
+  visibleCount: number
+  zoom: number
 }
 
 export type CanvasEditorController = {
   getDocument: () => CanvasDocument
+  getViewState: () => EditorViewState
   execute: (command: BridgeCommand) => CanvasCommandResult
   flushDraft?: () => void
 }
 
 type Mode = 'select' | 'pan' | 'connect'
-type SizedType = 'rectangle' | 'ellipse' | 'diamond' | 'text' | 'area'
+type SizedType = ShapeType | 'text' | 'area'
 type ResizeHandle = 'nw' | 'n' | 'ne' | 'e' | 'se' | 's' | 'sw' | 'w'
 type Point = { x: number; y: number }
 type Box = Point & { width: number; height: number }
-type PointerSample = Point & { shiftKey: boolean }
+
+function intersectsAreaBorder(area: Box, selection: Box) {
+  const right = selection.x + selection.width
+  const bottom = selection.y + selection.height
+  const areaRight = area.x + area.width
+  const areaBottom = area.y + area.height
+  const crossesVertical = bottom >= area.y && selection.y <= areaBottom
+  const crossesHorizontal = right >= area.x && selection.x <= areaRight
+  return (
+    (crossesVertical &&
+      ((selection.x <= area.x && right >= area.x) ||
+        (selection.x <= areaRight && right >= areaRight))) ||
+    (crossesHorizontal &&
+      ((selection.y <= area.y && bottom >= area.y) ||
+        (selection.y <= areaBottom && bottom >= areaBottom)))
+  )
+}
+type PointerSample = Point & { shiftKey: boolean; altKey: boolean }
 type InlineEdit = { id: string; value: string; original: string }
 type Gesture = {
-  kind: 'pan' | 'move' | 'resize' | 'marquee'
+  kind: 'pan' | 'move' | 'resize' | 'marquee' | 'connect'
   pointerId: number
   x: number
   y: number
@@ -110,6 +197,10 @@ type Gesture = {
   handle?: ResizeHandle
   bounds?: Box | null
   selectionBefore: string[]
+  copyOnDrag?: boolean
+  copyDocument?: CanvasDocument
+  copyIds?: string[]
+  fromSide?: ConnectionSide
 }
 
 const resizeHandles: {
@@ -177,6 +268,33 @@ function resizedBounds(
   }
 }
 
+function nearestSide(box: Box, point: Point): Exclude<ConnectionSide, 'auto'> {
+  return (
+    [
+      ['left', Math.abs(point.x - box.x)],
+      ['right', Math.abs(point.x - box.x - box.width)],
+      ['top', Math.abs(point.y - box.y)],
+      ['bottom', Math.abs(point.y - box.y - box.height)],
+    ] as const
+  ).reduce((a, b) => (b[1] < a[1] ? b : a))[0]
+}
+function sidePoint(box: Box, side: ConnectionSide): Point {
+  return {
+    x:
+      side === 'left'
+        ? box.x
+        : side === 'right'
+          ? box.x + box.width
+          : box.x + box.width / 2,
+    y:
+      side === 'top'
+        ? box.y
+        : side === 'bottom'
+          ? box.y + box.height
+          : box.y + box.height / 2,
+  }
+}
+
 function ToolIcon({ children }: { children: ReactNode }) {
   return (
     <svg
@@ -195,210 +313,103 @@ function ToolIcon({ children }: { children: ReactNode }) {
   )
 }
 
-function ObjectText({
-  element,
-  prefix,
-  centered,
-}: {
-  element: Extract<CanvasElement, { text: string }>
-  prefix: string
-  centered: boolean
-}) {
-  const padding = centered ? 12 : 0
-  const lines = element.text.split('\n')
-  const x = element.x + (centered ? element.width / 2 : 0)
-  const y = centered
-    ? element.y +
-      element.height / 2 -
-      ((lines.length - 1) * element.fontSize * 1.3) / 2
-    : element.y
-  const clipId = `${prefix}-text`
-  return (
-    <g pointerEvents="none">
-      <defs>
-        <clipPath id={clipId}>
-          <rect
-            x={element.x + padding}
-            y={element.y + padding}
-            width={Math.max(0, element.width - padding * 2)}
-            height={Math.max(0, element.height - padding * 2)}
-          />
-        </clipPath>
-      </defs>
-      <text
-        x={x}
-        y={y}
-        fill={element.color}
-        fontSize={element.fontSize}
-        fontFamily="'Segoe UI', system-ui, sans-serif"
-        textAnchor={centered ? 'middle' : 'start'}
-        dominantBaseline={centered ? 'middle' : 'text-before-edge'}
-        clipPath={`url(#${clipId})`}
-        xmlSpace="preserve"
-      >
-        {lines.map((line, index) => (
-          <tspan
-            key={index}
-            x={x}
-            dy={index === 0 ? 0 : element.fontSize * 1.3}
-          >
-            {line || '\u00a0'}
-          </tspan>
-        ))}
-      </text>
-    </g>
-  )
-}
-
 export function EditorObject({
   document,
   element,
   prefix,
   editing = false,
+  textOptions = DEFAULT_TEXT_OPTIONS,
+  interactive = false,
+  onPatch,
+  resolveMedia,
+  onMove,
+  onSelect,
 }: {
   document: CanvasDocument
   element: CanvasElement
   prefix: string
   editing?: boolean
+  textOptions?: TextLayoutOptions
+  interactive?: boolean
+  onPatch?: (patch: import('./canvasOperations').ElementPatch) => void
+  resolveMedia?: (src: string) => string | undefined
+  onMove?: (event: PointerEvent) => void
+  onSelect?: () => void
 }) {
-  const common = {
-    stroke: element.color,
-    strokeWidth: 2,
-    vectorEffect: 'non-scaling-stroke' as const,
-  }
-  switch (element.type) {
-    case 'rectangle':
-    case 'ellipse':
-    case 'diamond': {
-      const fill = element.fill ?? 'none'
-      return (
-        <>
-          {element.type === 'rectangle' ? (
-            <rect
-              x={element.x}
-              y={element.y}
-              width={element.width}
-              height={element.height}
-              rx="6"
-              fill={fill}
-              {...common}
-            />
-          ) : element.type === 'ellipse' ? (
-            <ellipse
-              cx={element.x + element.width / 2}
-              cy={element.y + element.height / 2}
-              rx={element.width / 2}
-              ry={element.height / 2}
-              fill={fill}
-              {...common}
-            />
-          ) : (
-            <polygon
-              points={`${element.x + element.width / 2},${element.y} ${element.x + element.width},${element.y + element.height / 2} ${element.x + element.width / 2},${element.y + element.height} ${element.x},${element.y + element.height / 2}`}
-              fill={fill}
-              {...common}
-            />
-          )}
-          {!editing && (
-            <ObjectText element={element} prefix={prefix} centered />
-          )}
-        </>
-      )
-    }
-    case 'area':
-      return (
-        <>
-          <rect
-            x={element.x}
-            y={element.y}
-            width={element.width}
-            height={element.height}
-            rx="12"
-            fill={element.fill ?? 'none'}
-            fillOpacity="0.3"
-            strokeDasharray="7 5"
-            {...common}
+  if ('text' in element)
+    return (
+      <>
+        {element.type !== 'text' && <ShapeOutline element={element} />}
+        {!editing && (
+          <CanvasObjectText
+            element={element}
+            prefix={prefix}
+            textOptions={textOptions}
           />
-          {!editing && (
-            <text
-              x={element.x + 14}
-              y={element.y + 24}
-              fill={element.color}
-              fontFamily="'Segoe UI', system-ui, sans-serif"
-              fontSize="14"
-              pointerEvents="none"
-            >
-              {element.name}
-            </text>
-          )}
-        </>
-      )
-    case 'text':
-      return editing ? null : (
-        <ObjectText element={element} prefix={prefix} centered={false} />
-      )
-    case 'line':
-      return (
-        <line
-          x1={element.x}
-          y1={element.y}
-          x2={element.x2}
-          y2={element.y2}
-          {...common}
-        />
-      )
-    case 'connection': {
-      const { x1, y1, x2, y2 } = connectionEndpoints(document, element)
-      const path =
-        element.style === 'elbow'
-          ? `M ${x1} ${y1} H ${(x1 + x2) / 2} V ${y2} H ${x2}`
-          : `M ${x1} ${y1} L ${x2} ${y2}`
-      const start = `${prefix}-start`
-      const end = `${prefix}-end`
-      return (
-        <>
-          <defs>
-            <marker
-              id={start}
-              viewBox="0 0 10 10"
-              refX="9"
-              refY="5"
-              markerWidth="7"
-              markerHeight="7"
-              orient="auto-start-reverse"
-            >
-              <path d="M 0 0 L 10 5 L 0 10 z" fill={element.color} />
-            </marker>
-            <marker
-              id={end}
-              viewBox="0 0 10 10"
-              refX="9"
-              refY="5"
-              markerWidth="7"
-              markerHeight="7"
-              orient="auto"
-            >
-              <path d="M 0 0 L 10 5 L 0 10 z" fill={element.color} />
-            </marker>
-          </defs>
-          <path
-            d={path}
-            fill="none"
-            markerStart={element.startArrow ? `url(#${start})` : undefined}
-            markerEnd={element.endArrow ? `url(#${end})` : undefined}
-            {...common}
-          />
-          <path
-            d={path}
-            fill="none"
-            stroke="transparent"
-            strokeWidth="16"
-            vectorEffect="non-scaling-stroke"
-          />
-        </>
-      )
-    }
-  }
+        )}
+      </>
+    )
+  if (element.type === 'embed')
+    return (
+      <EmbedObject
+        element={element}
+        interactive={interactive}
+        onPatch={onPatch}
+        resolveMedia={resolveMedia}
+        onMove={onMove}
+        onSelect={onSelect}
+      />
+    )
+  if (element.type === 'connection')
+    return (
+      <ConnectionDrawing
+        document={document}
+        element={element}
+        prefix={prefix}
+      />
+    )
+  if (element.type === 'line')
+    return (
+      <line
+        x1={element.x}
+        y1={element.y}
+        x2={element.x2}
+        y2={element.y2}
+        stroke={element.color}
+        strokeWidth="2"
+        strokeDasharray={lineDash(element.linePattern)}
+        strokeLinecap={element.linePattern === 'dotted' ? 'round' : undefined}
+        vectorEffect="non-scaling-stroke"
+      />
+    )
+  return (
+    <g pointerEvents="none">
+      <rect
+        x={element.x}
+        y={element.y}
+        width={element.width}
+        height={element.height}
+        rx="12"
+        fill={element.fill ?? 'none'}
+        fillOpacity="0.3"
+        strokeDasharray="7 5"
+        stroke={element.color}
+        strokeWidth="2"
+        vectorEffect="non-scaling-stroke"
+      />
+      {!editing && (
+        <text
+          x={element.x + 14}
+          y={element.y + 24}
+          fill={element.color}
+          fontSize="14"
+          pointerEvents="none"
+        >
+          {element.name}
+        </text>
+      )}
+    </g>
+  )
 }
 
 function objectLabel(element: CanvasElement) {
@@ -423,13 +434,30 @@ export default function CanvasEditor({
   dockHost,
   toolsOpen = false,
   onToolsOpenChange,
+  initialSession,
+  onSessionChange,
+  initialViewState,
+  onStatusChange,
+  onViewStateChange,
+  statusInFooter = false,
+  dockSide = 'right',
+  textOptions = DEFAULT_TEXT_OPTIONS,
+  controlOptions = DEFAULT_CANVAS_CONTROLS,
 }: CanvasEditorProps) {
+  const controls = normalizeCanvasControls(controlOptions)
   const dockMode = dockHost !== undefined
-  const [history, setHistory] = useState(() => createEditorHistory(document))
+  const [history, setHistory] = useState(() =>
+    createEditorHistory(
+      initialViewState
+        ? { ...document, viewport: { ...initialViewState.viewport } }
+        : document,
+    ),
+  )
   const activeRef = useRef(active)
   const currentHistory = useRef(history)
   const notified = useRef(document)
   const stage = useRef<HTMLDivElement>(null)
+  const deckGeometry = useCanvasDeck(stage, active && dockMode)
   const gesture = useRef<Gesture | null>(null)
   const pointerSample = useRef<PointerSample | null>(null)
   const pointerFrame = useRef<number | null>(null)
@@ -437,14 +465,37 @@ export default function CanvasEditor({
   const pendingWheel = useRef<CanvasViewport | null>(null)
   const [dragging, setDragging] = useState(false)
   const [gestureKind, setGestureKind] = useState<Gesture['kind'] | ''>('')
-  const [selectedIds, setSelectedIds] = useState<string[]>([])
+  const [selectedIds, setSelectedIds] = useState<string[]>(() => {
+    const visibleIds = new Set(
+      orderedVisibleElements(document).map((element) => element.id),
+    )
+    return [...new Set(initialViewState?.selectedIds ?? [])].filter((id) =>
+      visibleIds.has(id),
+    )
+  })
   const selectedId = selectedIds.at(-1) ?? null
   const [marquee, setMarquee] = useState<Box | null>(null)
+  const [quickPanel, setQuickPanel] = useState<{
+    x: number
+    y: number
+    point: Point
+    ids: string[]
+    embed?: boolean
+  } | null>(null)
+  const [snapGuides, setSnapGuides] = useState<ObjectSnapGuide[]>([])
+  const [connectionPreview, setConnectionPreview] = useState<{
+    from: Point
+    to: Point
+  } | null>(null)
+  const quickPanelRef = useRef<HTMLDivElement>(null)
   const [inlineEdit, setInlineEdit] = useState<InlineEdit | null>(null)
   const inlineEditRef = useRef<InlineEdit | null>(null)
   const textInput = useRef<HTMLTextAreaElement>(null)
   const lastPointer = useRef<Point | null>(null)
-  const [mode, setMode] = useState<Mode>('select')
+  const [mode, setMode] = useState<Mode>(() => {
+    const tool = initialViewState?.tool ?? initialSession?.tool
+    return tool === 'pan' || tool === 'connect' ? tool : 'select'
+  })
   const [spaceHeld, setSpaceHeld] = useState(false)
   const temporaryPan = useRef(false)
   const [localInspectorOpen, setLocalInspectorOpen] = useState(false)
@@ -454,19 +505,58 @@ export default function CanvasEditor({
     if (onPropertiesOpenChange) onPropertiesOpenChange(open)
     else setLocalInspectorOpen(open)
   }
-  const [layerId, setLayerId] = useState(document.layers[0].id)
+  const [layerId, setLayerId] = useState(
+    () =>
+      document.layers.find(
+        (layer) =>
+          layer.id ===
+            (initialViewState
+              ? initialViewState.activeLayerId
+              : initialSession?.activeLayerId) &&
+          layer.visible &&
+          !layer.locked,
+      )?.id ?? document.layers[0].id,
+  )
+  const propertyFlusher = useRef<(() => boolean) | null>(null)
   const [connectionSource, setConnectionSource] = useState<string | null>(null)
   const [arrowStyle, setArrowStyle] = useState<
     'end' | 'none' | 'both' | 'start'
-  >('end')
-  const [connectionStyle, setConnectionStyle] = useState<'straight' | 'elbow'>(
-    'straight',
+  >(initialViewState?.connection?.arrowStyle ?? 'end')
+  const [connectionStyle, setConnectionStyle] = useState<ConnectionStyle>(
+    initialViewState?.connection?.style ?? 'straight',
+  )
+  const [sourceSide, setSourceSide] = useState<ConnectionSide | 'fixed'>(
+    initialViewState?.connection?.sourceSide ?? 'fixed',
+  )
+  const [targetSide, setTargetSide] = useState<ConnectionSide | 'fixed'>(
+    initialViewState?.connection?.targetSide ?? 'fixed',
   )
   const [error, setError] = useState('')
   const prefix = useId().replace(/[^\w-]/gu, '')
-  const board = history.present
+  const board =
+    inlineEdit && inlineEdit.value !== inlineEdit.original
+      ? {
+          ...history.present,
+          elements: history.present.elements.map((element) =>
+            element.id === inlineEdit.id && 'text' in element
+              ? growCanvasText(
+                  { ...element, text: inlineEdit.value },
+                  textOptions,
+                )
+              : element,
+          ),
+        }
+      : history.present
   const view = board.viewport
   const visible = orderedVisibleElements(board)
+  const mediaUrls = useCanvasMedia(
+    visible
+      .filter(
+        (e): e is EmbedElement =>
+          e.type === 'embed' && !e.paused && !e.minimized,
+      )
+      .map((e) => e.src),
+  )
   const selected = board.elements.find((element) => element.id === selectedId)
   const selectedVisible = visible.some((element) => element.id === selectedId)
   const activeLayerId = board.layers.some((layer) => layer.id === layerId)
@@ -485,17 +575,71 @@ export default function CanvasEditor({
       .filter((element) => element.type !== 'connection')
       .every(
         (element) =>
-          element.type !== 'line' && isElementEditable(board, element.id),
+          element.type !== 'line' &&
+          !(element.type === 'embed' && element.minimized) &&
+          isElementEditable(board, element.id),
       )
   function setSelectedId(id: string | null) {
+    propertyFlusher.current?.()
     setSelectedIds(id ? [id] : [])
   }
+  useEffect(() => {
+    onSessionChange?.({ tool: mode, activeLayerId })
+  }, [mode, activeLayerId, onSessionChange])
+  const instructions = `${
+    mode === 'pan'
+      ? 'Drag to pan'
+      : mode === 'connect'
+        ? 'Choose two shapes to connect'
+        : 'Drag to move · Edge to resize · Side handle to connect · Right-click for properties'
+  } · Scroll to zoom`
+  const selectionDescription = selected
+    ? `${selected.type} · ${board.layers.find((layer) => layer.id === selected.layerId)?.name ?? 'Layer'}`
+    : null
+  useEffect(() => {
+    onStatusChange?.({
+      instructions,
+      selection: selectionDescription,
+      visibleCount: visible.length,
+      zoom: view.zoom,
+    })
+  }, [
+    instructions,
+    selectionDescription,
+    visible.length,
+    view.zoom,
+    onStatusChange,
+  ])
+  const currentViewState = useRef<Omit<EditorViewState, 'viewport'>>({
+    selectedIds,
+    tool: mode,
+    activeLayerId,
+    connection: {
+      arrowStyle,
+      style: connectionStyle,
+      sourceSide,
+      targetSide,
+    },
+  })
   const executeCommand = useRef<
     (command: BridgeCommand) => CanvasCommandResult
   >(() => {
     throw new Error('The canvas editor is not ready.')
   })
   const currentName = useRef(document.name)
+  const currentPresentation = useRef(document.presentation)
+  function withCurrentMetadata(present: CanvasDocument): CanvasDocument {
+    if (
+      present.name === currentName.current &&
+      present.presentation === currentPresentation.current
+    )
+      return present
+    const next = { ...present, name: currentName.current }
+    if (currentPresentation.current)
+      next.presentation = currentPresentation.current
+    else delete next.presentation
+    return next
+  }
   const flushCurrentDraft = useRef<() => void>(() => {
     throw new Error('The canvas editor is not ready.')
   })
@@ -506,9 +650,25 @@ export default function CanvasEditor({
         gesture.current?.history.present ?? currentHistory.current.present
       if (pendingWheel.current && !gesture.current)
         present = { ...present, viewport: pendingWheel.current }
-      return present.name === currentName.current
-        ? present
-        : { ...present, name: currentName.current }
+      return withCurrentMetadata(present)
+    },
+    getViewState: (): EditorViewState => {
+      const present: CanvasDocument = controller.current.getDocument()
+      const state = currentViewState.current
+      const visibleIds = new Set(
+        orderedVisibleElements(present).map((element) => element.id),
+      )
+      return {
+        viewport: { ...present.viewport },
+        selectedIds: state.selectedIds.filter((id) => visibleIds.has(id)),
+        tool: state.tool,
+        activeLayerId: present.layers.some(
+          (layer) => layer.id === state.activeLayerId,
+        )
+          ? state.activeLayerId
+          : present.layers[0].id,
+        connection: state.connection ? { ...state.connection } : undefined,
+      }
     },
     execute: (command) => executeCommand.current(command),
     flushDraft: () => flushCurrentDraft.current(),
@@ -520,13 +680,8 @@ export default function CanvasEditor({
   }
 
   function showHistory(next: EditorHistory, committed = true) {
-    const renamed =
-      next.present.name === currentName.current
-        ? next
-        : {
-            ...next,
-            present: { ...next.present, name: currentName.current },
-          }
+    const present = withCurrentMetadata(next.present)
+    const renamed = present === next.present ? next : { ...next, present }
     currentHistory.current = renamed
     setHistory(renamed)
     if (committed && !sameDocument(notified.current, renamed.present)) {
@@ -535,8 +690,11 @@ export default function CanvasEditor({
     }
   }
 
-  function commit(next: CanvasDocument) {
-    showHistory(commitEditorHistory(currentHistory.current, next))
+  function commit(next: CanvasDocument, adaptText = true) {
+    const adapted = adaptText
+      ? adaptCanvasText(currentHistory.current.present, next, textOptions)
+      : next
+    showHistory(commitEditorHistory(currentHistory.current, adapted))
     setError('')
   }
 
@@ -599,9 +757,29 @@ export default function CanvasEditor({
             : 'Redid the latest canvas change.',
       }
     }
-    const result = applyCanvasCommand(controller.current.getDocument(), command)
+    const before = controller.current.getDocument()
+    const result = applyCanvasCommand(before, command)
     commit(result.document)
-    return { ...result, document: controller.current.getDocument() }
+    const after = controller.current.getDocument()
+    const oldElements = new Map(
+      before.elements.map((element) => [element.id, element]),
+    )
+    return {
+      ...result,
+      document: after,
+      affectedIds: [
+        ...new Set([
+          ...result.affectedIds,
+          ...after.elements
+            .filter(
+              (element) =>
+                JSON.stringify(element) !==
+                JSON.stringify(oldElements.get(element.id)),
+            )
+            .map((element) => element.id),
+        ]),
+      ],
+    }
   }
 
   function flushEditorDraft() {
@@ -612,14 +790,45 @@ export default function CanvasEditor({
     finishTextEdit()
     if (inlineEditRef.current)
       throw new Error('Correct or cancel the current text draft before saving.')
+    if (propertyFlusher.current?.() === false)
+      throw new Error('Correct the current object properties before saving.')
   }
 
   useLayoutEffect(() => {
     activeRef.current = active
+    currentViewState.current = {
+      selectedIds,
+      tool: mode,
+      activeLayerId,
+      connection: {
+        arrowStyle,
+        style: connectionStyle,
+        sourceSide,
+        targetSide,
+      },
+    }
     currentName.current = document.name
+    currentPresentation.current = document.presentation
     executeCommand.current = executeBridgeCommand
     flushCurrentDraft.current = flushEditorDraft
   })
+
+  useEffect(() => {
+    onViewStateChange?.({
+      ...controller.current.getViewState(),
+      viewport: { ...view },
+    })
+  }, [
+    onViewStateChange,
+    view,
+    selectedIds,
+    mode,
+    activeLayerId,
+    arrowStyle,
+    connectionStyle,
+    sourceSide,
+    targetSide,
+  ])
 
   useEffect(() => {
     activeRef.current = active
@@ -703,7 +912,8 @@ export default function CanvasEditor({
     })
   }
 
-  function add(type: SizedType) {
+  function add(type: SizedType, position?: Point) {
+    if (propertyFlusher.current?.() === false) return
     flushWheel()
     safely(() => {
       const document = currentHistory.current.present
@@ -716,10 +926,16 @@ export default function CanvasEditor({
           .length %
           5) *
         28
+      const x =
+        position?.x ??
+        (middle.x - viewport.x) / viewport.zoom - width / 2 + offset
+      const y =
+        position?.y ??
+        (middle.y - viewport.y) / viewport.zoom - height / 2 + offset
       const next = createElement(document, {
         type,
-        x: (middle.x - viewport.x) / viewport.zoom - width / 2 + offset,
-        y: (middle.y - viewport.y) / viewport.zoom - height / 2 + offset,
+        x: controls.snapToGrid ? snapCoordinate(x, controls.gridSpacing) : x,
+        y: controls.snapToGrid ? snapCoordinate(y, controls.gridSpacing) : y,
         width,
         height,
         layerId: activeLayerId,
@@ -732,15 +948,118 @@ export default function CanvasEditor({
     })
   }
 
+  function addLine(position?: Point) {
+    runCanvas(() => {
+      const current = currentHistory.current.present
+      const middle = center()
+      const point = position ?? {
+        x: (middle.x - current.viewport.x) / current.viewport.zoom - 90,
+        y: (middle.y - current.viewport.y) / current.viewport.zoom,
+      }
+      const next = createElement(current, {
+        type: 'line',
+        ...point,
+        x2: point.x + 180,
+        y2: point.y,
+        layerId: activeLayerId,
+      })
+      commit(next)
+      setSelectedId(next.elements.at(-1)!.id)
+      setQuickPanel(null)
+    })
+  }
+
+  function openQuick(event: MouseEvent, id?: string) {
+    if (!active || gesture.current || isTyping(event.target)) return
+    event.preventDefault()
+    event.stopPropagation()
+    if (inlineEditRef.current) finishTextEdit()
+    if (propertyFlusher.current?.() === false || inlineEditRef.current) return
+    const rect = stage.current?.getBoundingClientRect()
+    if (!rect) return
+    const ids = id ? (selectedIds.includes(id) ? selectedIds : [id]) : []
+    if (id) setSelectedIds(ids)
+    else setSelectedIds([])
+    setQuickPanel({
+      x: Math.max(8, Math.min(event.clientX, window.innerWidth - 340)),
+      y: Math.max(8, Math.min(event.clientY, window.innerHeight - 480)),
+      point: {
+        x: (event.clientX - rect.left - view.x) / view.zoom,
+        y: (event.clientY - rect.top - view.y) / view.zoom,
+      },
+      ids,
+    })
+  }
+
+  function insertEmbed(kind: EmbedKind, src: string, title: string) {
+    runCanvas(() => {
+      const current = currentHistory.current.present
+      const middle = center()
+      const point = quickPanel?.point ?? {
+        x: (middle.x - view.x) / view.zoom - 180,
+        y: (middle.y - view.y) / view.zoom - 120,
+      }
+      const next = createElement(current, {
+        type: 'embed',
+        ...point,
+        width: 360,
+        height: kind === 'audio' ? 140 : 260,
+        kind,
+        src,
+        title,
+        paused: true,
+        layerId: activeLayerId,
+      })
+      commit(next)
+      setSelectedId(next.elements.at(-1)!.id)
+      setQuickPanel(null)
+    })
+  }
+
+  function beginConnection(event: PointerEvent, side: ConnectionSide) {
+    if (
+      event.button !== 0 ||
+      !selected ||
+      !selectedBounds ||
+      !isElementEditable(board, selected.id)
+    )
+      return
+    event.stopPropagation()
+    beginGesture(event, 'connect', [selected.id])
+    if (!gesture.current) return
+    gesture.current.fromSide = side
+    const point = sidePoint(selectedBounds, side)
+    setConnectionPreview({ from: point, to: point })
+  }
+
+  const quickPanelOpen = quickPanel !== null
+  useEffect(() => {
+    if (!quickPanelOpen) return
+    quickPanelRef.current?.querySelector<HTMLButtonElement>('button')?.focus()
+    const close = (event: globalThis.PointerEvent) => {
+      if (
+        event.target instanceof Node &&
+        !quickPanelRef.current?.contains(event.target)
+      )
+        setQuickPanel(null)
+    }
+    globalThis.document.addEventListener('pointerdown', close)
+    return () => globalThis.document.removeEventListener('pointerdown', close)
+  }, [quickPanelOpen])
+
   function beginGesture(
     event: PointerEvent,
     kind: Gesture['kind'],
     ids: string[] = [],
     handle?: ResizeHandle,
+    copyOnDrag = false,
   ) {
     if (!active || gesture.current || !stage.current) return
+    setQuickPanel(null)
+    setSnapGuides([])
     if (inlineEditRef.current) finishTextEdit()
     if (inlineEditRef.current) return
+    propertyFlusher.current?.()
     flushWheel()
     event.preventDefault()
     gesture.current = {
@@ -753,6 +1072,7 @@ export default function CanvasEditor({
       handle,
       bounds: selectionBounds(currentHistory.current.present, ids),
       selectionBefore: selectedIds,
+      copyOnDrag,
     }
     stage.current.focus({ preventScroll: true })
     stage.current.setPointerCapture?.(event.pointerId)
@@ -783,6 +1103,7 @@ export default function CanvasEditor({
   }
 
   function chooseObject(id: string, additive = false) {
+    propertyFlusher.current?.()
     if (mode !== 'connect') {
       if (additive)
         setSelectedIds((ids) =>
@@ -808,6 +1129,8 @@ export default function CanvasEditor({
         style: connectionStyle,
         startArrow: arrowStyle === 'both' || arrowStyle === 'start',
         endArrow: arrowStyle === 'both' || arrowStyle === 'end',
+        ...(sourceSide === 'fixed' ? {} : { fromSide: sourceSide }),
+        ...(targetSide === 'fixed' ? {} : { toSide: targetSide }),
       })
       commit(next)
       setSelectedId(next.elements.at(-1)?.id ?? null)
@@ -816,10 +1139,7 @@ export default function CanvasEditor({
     })
   }
 
-  function beginObject(
-    event: PointerEvent<SVGGElement>,
-    element: CanvasElement,
-  ) {
+  function beginObject(event: PointerEvent, element: CanvasElement) {
     if (!active) return
     if (inlineEditRef.current) finishTextEdit()
     if (inlineEditRef.current) return
@@ -828,7 +1148,7 @@ export default function CanvasEditor({
       mode === 'pan' ||
       temporaryPan.current ||
       event.button === 1 ||
-      event.altKey
+      (event.altKey && !controls.snapToGrid && !controls.snapToObjects)
     )
       return
     event.stopPropagation()
@@ -854,16 +1174,38 @@ export default function CanvasEditor({
         )
         return candidate?.type !== 'connection'
       }),
+      undefined,
+      event.ctrlKey || event.metaKey,
     )
   }
 
   function applyPointerSample(sample: PointerSample) {
     const active = gesture.current
     if (!active) return
-    const original = active.history.present
+    let original = active.history.present
     const dx = sample.x - active.x
     const dy = sample.y - active.y
     safely(() => {
+      if (active.kind === 'connect') {
+        const rect = stage.current?.getBoundingClientRect()
+        const source = original.elements.find((e) => e.id === active.ids[0])
+        if (rect && source)
+          setConnectionPreview({
+            from: sidePoint(
+              elementBounds(original, source),
+              active.fromSide ?? 'auto',
+            ),
+            to: {
+              x:
+                (sample.x - rect.left - original.viewport.x) /
+                original.viewport.zoom,
+              y:
+                (sample.y - rect.top - original.viewport.y) /
+                original.viewport.zoom,
+            },
+          })
+        return
+      }
       if (active.kind === 'marquee') {
         const rect = stage.current?.getBoundingClientRect()
         if (!rect) return
@@ -885,10 +1227,9 @@ export default function CanvasEditor({
             const box = elementBounds(original, element)
             return (
               element.type !== 'connection' &&
-              box.x >= bounds.x &&
-              box.y >= bounds.y &&
-              box.x + box.width <= bounds.x + bounds.width &&
-              box.y + box.height <= bounds.y + bounds.height
+              (element.type === 'area'
+                ? intersectsAreaBorder(box, bounds)
+                : isWithinSelection(box, bounds, controls.selectionBehavior))
             )
           })
           .map((element) => element.id)
@@ -897,28 +1238,101 @@ export default function CanvasEditor({
       }
       if (active.kind !== 'pan' && Math.abs(dx) + Math.abs(dy) < 3) {
         showHistory(active.history, false)
+        if (active.copyDocument) setSelectedIds(active.selectionBefore)
         return
       }
+      if (active.copyOnDrag) {
+        if (!active.copyDocument) {
+          const copy = duplicateSelection(original, active.ids, {
+            layerId: activeLayerId,
+            offset: 0,
+          })
+          active.copyDocument = copy.document
+          active.copyIds = copy.selectedIds
+        }
+        original = active.copyDocument
+        setSelectedIds(active.copyIds!)
+      }
       let present: CanvasDocument
+      const delta = {
+        x: dx / original.viewport.zoom,
+        y: dy / original.viewport.zoom,
+      }
+      const snap = controls.snapToGrid && !sample.altKey
+      const excludeIds = [
+        ...selectionIds(original, active.ids),
+        ...(active.copyIds ?? []),
+      ]
+      const targets = orderedVisibleElements(original)
+        .filter((e) => e.type !== 'connection' && e.type !== 'line')
+        .map((e) => ({
+          id: e.id,
+          bounds: elementBounds(original, e),
+          locked: !isElementEditable(original, e.id),
+        }))
+      const objectSnap = {
+        enabled: controls.snapToObjects && !sample.altKey,
+        zoom: original.viewport.zoom,
+        excludeIds,
+      }
       if (active.kind === 'pan')
         present = { ...original, viewport: panBy(original.viewport, dx, dy) }
-      else if (active.kind === 'move')
+      else if (active.kind === 'move') {
+        let moved =
+          snap && active.bounds
+            ? snapSelectionDelta(
+                active.bounds,
+                delta.x,
+                delta.y,
+                controls.gridSpacing,
+              )
+            : delta
+        if (active.bounds) {
+          const result = snapMoveToObjects(
+            active.bounds,
+            moved.x,
+            moved.y,
+            targets,
+            objectSnap,
+          )
+          moved = result
+          setSnapGuides(result.guides)
+        }
         present = moveSelection(
           original,
-          active.ids,
-          dx / original.viewport.zoom,
-          dy / original.viewport.zoom,
+          active.copyIds ?? active.ids,
+          moved.x,
+          moved.y,
         )
-      else {
+      } else {
         if (!active.bounds || !active.handle) return
+        let resized = snap
+          ? snapResizeDelta(
+              active.bounds,
+              active.handle,
+              delta.x,
+              delta.y,
+              controls.gridSpacing,
+            )
+          : delta
+        const result = snapResizeToObjects(
+          active.bounds,
+          active.handle,
+          resized.x,
+          resized.y,
+          targets,
+          { ...objectSnap, enabled: objectSnap.enabled && !sample.shiftKey },
+        )
+        resized = result
+        setSnapGuides(result.guides)
         present = resizeSelection(
           original,
           active.ids,
           resizedBounds(
             active.bounds,
             active.handle,
-            dx / original.viewport.zoom,
-            dy / original.viewport.zoom,
+            resized.x,
+            resized.y,
             sample.shiftKey,
           ),
         )
@@ -949,6 +1363,7 @@ export default function CanvasEditor({
       x: event.clientX,
       y: event.clientY,
       shiftKey: event.shiftKey,
+      altKey: event.altKey,
     }
     if (pointerFrame.current === null)
       pointerFrame.current = requestAnimationFrame(() => {
@@ -971,16 +1386,75 @@ export default function CanvasEditor({
         x: event.clientX,
         y: event.clientY,
         shiftKey: event.shiftKey,
+        altKey: event.altKey,
       }
     if (cancelled) {
       pointerSample.current = null
       if (pointerFrame.current !== null)
         cancelAnimationFrame(pointerFrame.current)
       pointerFrame.current = null
-      if (active.kind === 'marquee') setSelectedIds(active.selectionBefore)
+      if (active.kind === 'marquee' || active.copyOnDrag)
+        setSelectedIds(active.selectionBefore)
     } else flushPointer()
     gesture.current = null
     setMarquee(null)
+    setSnapGuides([])
+    setConnectionPreview(null)
+    if (active.kind === 'connect') {
+      if (!cancelled && event.type === 'pointerup')
+        safely(() => {
+          const original = active.history.present
+          const rect = stage.current?.getBoundingClientRect()
+          if (!rect) return
+          const point = {
+            x:
+              (event.clientX - rect.left - original.viewport.x) /
+              original.viewport.zoom,
+            y:
+              (event.clientY - rect.top - original.viewport.y) /
+              original.viewport.zoom,
+          }
+          const tolerance = 12 / original.viewport.zoom
+          const target = orderedVisibleElements(original)
+            .toReversed()
+            .find((e) => {
+              if (
+                e.id === active.ids[0] ||
+                e.type === 'line' ||
+                e.type === 'connection' ||
+                !isElementEditable(original, e.id)
+              )
+                return false
+              const box = elementBounds(original, e)
+              return (
+                point.x >= box.x - tolerance &&
+                point.x <= box.x + box.width + tolerance &&
+                point.y >= box.y - tolerance &&
+                point.y <= box.y + box.height + tolerance
+              )
+            })
+          if (target) {
+            const source = original.elements.find(
+              (e) => e.id === active.ids[0],
+            )!
+            const next = connectElements(original, source.id, target.id, {
+              layerId: source.layerId,
+              fromSide: active.fromSide,
+              toSide: nearestSide(elementBounds(original, target), point),
+              style: connectionStyle,
+              startArrow: arrowStyle === 'both' || arrowStyle === 'start',
+              endArrow: arrowStyle === 'both' || arrowStyle === 'end',
+            })
+            showHistory(commitEditorHistory(active.history, next))
+            setSelectedIds([next.elements.at(-1)!.id])
+          }
+        })
+      setDragging(false)
+      setGestureKind('')
+      if (stage.current?.hasPointerCapture?.(event.pointerId))
+        stage.current.releasePointerCapture(event.pointerId)
+      return
+    }
     showHistory(
       cancelled
         ? active.history
@@ -1005,8 +1479,11 @@ export default function CanvasEditor({
       pointerFrame.current = null
       gesture.current = null
       showHistory(current.history, false)
-      if (current.kind === 'marquee') setSelectedIds(current.selectionBefore)
+      if (current.kind === 'marquee' || current.copyOnDrag)
+        setSelectedIds(current.selectionBefore)
       setMarquee(null)
+      setSnapGuides([])
+      setConnectionPreview(null)
       setDragging(false)
       setGestureKind('')
       if (stage.current?.hasPointerCapture?.(current.pointerId))
@@ -1057,7 +1534,17 @@ export default function CanvasEditor({
       safely(duplicateSelected)
       return
     }
-    if (modifier || event.altKey) return
+    const arrowKey = [
+      'ArrowLeft',
+      'ArrowRight',
+      'ArrowUp',
+      'ArrowDown',
+    ].includes(event.key)
+    if (
+      modifier ||
+      (event.altKey && !(controls.snapToGrid && arrowKey && selectedIds.length))
+    )
+      return
     if ((event.key === 'Enter' || event.key === 'F2') && selected) {
       event.preventDefault()
       startTextEdit(selected)
@@ -1101,7 +1588,12 @@ export default function CanvasEditor({
       ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)
     ) {
       event.preventDefault()
-      const step = event.shiftKey ? 10 : 1
+      const step =
+        controls.snapToGrid && !event.altKey && selectedIds.length
+          ? controls.gridSpacing * (event.shiftKey ? 10 : 1)
+          : event.shiftKey
+            ? 10
+            : 1
       const dx =
         event.key === 'ArrowLeft'
           ? -step
@@ -1111,11 +1603,22 @@ export default function CanvasEditor({
       const dy =
         event.key === 'ArrowUp' ? -step : event.key === 'ArrowDown' ? step : 0
       if (selectedIds.length) {
-        safely(() =>
+        safely(() => {
+          const current = currentHistory.current.present
+          const bounds = selectionBounds(current, selectedIds)
+          const delta =
+            controls.snapToGrid && !event.altKey && bounds
+              ? snapSelectionDelta(bounds, dx, dy, controls.gridSpacing)
+              : { x: dx, y: dy }
           commit(
-            moveSelection(currentHistory.current.present, selectedIds, dx, dy),
-          ),
-        )
+            moveSelection(
+              current,
+              selectedIds,
+              dx ? delta.x : 0,
+              dy ? delta.y : 0,
+            ),
+          )
+        })
       } else
         changeView(
           panBy(currentHistory.current.present.viewport, -dx * 12, -dy * 12),
@@ -1145,13 +1648,14 @@ export default function CanvasEditor({
     temporaryPan.current = false
     setSpaceHeld(false)
     if (gesture.current) {
-      const previous = gesture.current.history
+      const previous = gesture.current
       gesture.current = null
       pointerSample.current = null
       if (pointerFrame.current !== null)
         cancelAnimationFrame(pointerFrame.current)
       pointerFrame.current = null
-      showHistory(previous, false)
+      showHistory(previous.history, false)
+      if (previous.copyOnDrag) setSelectedIds(previous.selectionBefore)
       setDragging(false)
       setGestureKind('')
       setMarquee(null)
@@ -1223,6 +1727,7 @@ export default function CanvasEditor({
   function runCanvas(action: () => void) {
     if (!active || gesture.current || inlineEditRef.current) return
     flushWheel()
+    if (propertyFlusher.current?.() === false) return
     safely(action)
     stage.current?.focus()
   }
@@ -1234,7 +1739,12 @@ export default function CanvasEditor({
       !isElementEditable(currentHistory.current.present, element.id)
     )
       return
-    if (element.type === 'connection' || element.type === 'line') {
+    if (propertyFlusher.current?.() === false) return
+    element =
+      currentHistory.current.present.elements.find(
+        (item) => item.id === element.id,
+      ) ?? element
+    if (!('text' in element) && element.type !== 'area') {
       setSelectedId(element.id)
       openInspector()
       return
@@ -1282,7 +1792,7 @@ export default function CanvasEditor({
     safely(() => {
       const current = currentHistory.current.present
       const element = current.elements.find((item) => item.id === draft.id)
-      if (!element || element.type === 'connection' || element.type === 'line')
+      if (!element || (!('text' in element) && element.type !== 'area'))
         throw new Error('The edited object no longer exists.')
       const value = element.type === 'area' ? element.name : element.text
       if (value !== draft.original)
@@ -1348,15 +1858,20 @@ export default function CanvasEditor({
       const current = currentHistory.current.present
       const raw = createCanvasClipboard(current, selectedIds)
       if (!raw) return
-      event.clipboardData.setData(CANVAS_CLIPBOARD_MIME, raw)
+      // Plain text is the portable fallback when a browser rejects custom MIME.
       event.clipboardData.setData('text/plain', raw)
+      try {
+        event.clipboardData.setData(CANVAS_CLIPBOARD_MIME, raw)
+      } catch {
+        // The validated text envelope still carries every object relationship.
+      }
       event.preventDefault()
       if (cut)
         commit(removeSelection(current, selectionIds(current, selectedIds)))
     })
   }
 
-  function pasteAtPointer(raw: string, structured = false) {
+  function pasteAtPointer(raw: string, structured = false, bypassSnap = false) {
     if (!activeRef.current || gesture.current || inlineEditRef.current || !raw)
       return
     const current = currentHistory.current.present
@@ -1365,17 +1880,28 @@ export default function CanvasEditor({
       x: (screenPoint.x - current.viewport.x) / current.viewport.zoom,
       y: (screenPoint.y - current.viewport.y) / current.viewport.zoom,
     }
-    const result =
-      structured || isCanvasClipboard(raw)
-        ? pasteCanvasClipboard(current, raw, {
-            layerId: activeLayerId,
-            center: point,
-          })
-        : pasteCanvasText(current, raw, {
-            layerId: activeLayerId,
-            center: point,
-          })
-    commit(result.document)
+    const isStructured = structured || isCanvasClipboard(raw)
+    const result = isStructured
+      ? pasteCanvasClipboard(current, raw, {
+          layerId: activeLayerId,
+          center: point,
+        })
+      : pasteCanvasText(current, raw, {
+          layerId: activeLayerId,
+          center: point,
+        })
+    // Structured copies preserve deliberately sized objects and their layout.
+    const bounds = selectionBounds(result.document, result.selectedIds)
+    const delta =
+      controls.snapToGrid && !bypassSnap && bounds
+        ? snapSelectionDelta(bounds, 0, 0, controls.gridSpacing)
+        : { x: 0, y: 0 }
+    commit(
+      delta.x || delta.y
+        ? moveSelection(result.document, result.selectedIds, delta.x, delta.y)
+        : result.document,
+      !isStructured,
+    )
     setSelectedIds(result.selectedIds)
     setMode('select')
     setConnectionSource(null)
@@ -1451,7 +1977,17 @@ export default function CanvasEditor({
       selectedIds,
       { layerId: activeLayerId },
     )
-    commit(result.document)
+    const bounds = selectionBounds(result.document, result.selectedIds)
+    const delta =
+      controls.snapToGrid && bounds
+        ? snapSelectionDelta(bounds, 0, 0, controls.gridSpacing)
+        : { x: 0, y: 0 }
+    commit(
+      delta.x || delta.y
+        ? moveSelection(result.document, result.selectedIds, delta.x, delta.y)
+        : result.document,
+      false,
+    )
     setSelectedIds(result.selectedIds)
   }
   const commandAvailable = active && !dragging && !inlineEdit
@@ -1521,16 +2057,14 @@ export default function CanvasEditor({
       enabled: commandAvailable,
       scope: 'canvas',
     },
-    ...(['rectangle', 'ellipse', 'diamond', 'text', 'area'] as const).map(
-      (type) => ({
-        id: `canvas.${type}` as const,
-        label: `Add ${type}`,
-        category: 'Canvas',
-        execute: () => runCanvas(() => add(type)),
-        enabled: commandAvailable,
-        scope: 'canvas' as const,
-      }),
-    ),
+    ...([...SHAPE_TYPES, 'text', 'area'] as const).map((type) => ({
+      id: `canvas.${type}` as const,
+      label: `Add ${type}`,
+      category: 'Canvas',
+      execute: () => runCanvas(() => add(type)),
+      enabled: commandAvailable,
+      scope: 'canvas' as const,
+    })),
     {
       id: 'canvas.connection',
       label: 'Connection tool',
@@ -1645,7 +2179,7 @@ export default function CanvasEditor({
     },
   ])
   const gridStyle = {
-    '--canvas-grid-size': `${(view.zoom < 0.5 ? 120 : 24) * view.zoom}px`,
+    '--canvas-grid-size': `${controls.gridSpacing * (view.zoom < 0.5 ? 5 : 1) * view.zoom}px`,
     '--canvas-grid-x': `${view.x}px`,
     '--canvas-grid-y': `${view.y}px`,
   } as CSSProperties
@@ -1653,17 +2187,53 @@ export default function CanvasEditor({
     <CanvasInspector
       document={board}
       selectedId={selected?.id ?? null}
+      selectedIds={selectedIds}
       activeLayerId={activeLayerId}
       onSelect={setSelectedId}
       onActiveLayerChange={setLayerId}
-      onDocumentChange={(next) => safely(() => commit(next))}
+      onDocumentChange={(next) =>
+        safely(() =>
+          commit({
+            ...next,
+            name: currentName.current,
+            viewport:
+              pendingWheel.current ?? currentHistory.current.present.viewport,
+          }),
+        )
+      }
       onError={setError}
+      onDraftFlusherChange={(flush) => {
+        propertyFlusher.current = flush
+      }}
     />
   )
   const editedElement = inlineEdit
     ? board.elements.find((element) => element.id === inlineEdit.id)
     : null
-  const editBounds = editedElement ? elementBounds(board, editedElement) : null
+  const editLayout =
+    editedElement && 'text' in editedElement
+      ? layoutCanvasText(
+          { ...editedElement, text: inlineEdit?.value ?? editedElement.text },
+          textOptions,
+        )
+      : null
+  const editBounds = editLayout
+    ? {
+        ...editLayout.box,
+        y:
+          editedElement && 'text' in editedElement
+            ? canvasTextPlacement(editedElement, editLayout).y
+            : editLayout.box.y,
+        height: editLayout.height,
+      }
+    : editedElement && 'width' in editedElement
+      ? {
+          x: editedElement.x + 14,
+          y: editedElement.y + 8,
+          width: Math.max(1, editedElement.width - 28),
+          height: 28,
+        }
+      : null
   const connectionOptions = (
     <div className="canvas-connection-options">
       <span>
@@ -1697,8 +2267,32 @@ export default function CanvasEditor({
         >
           <option value="straight">Straight</option>
           <option value="elbow">Elbow</option>
+          <option value="curve">Curve</option>
+          <option value="step">Step</option>
         </select>
       </label>
+      {(['source', 'target'] as const).map((endpoint) => (
+        <label key={endpoint}>
+          {endpoint === 'source' ? 'Source side' : 'Target side'}
+          <select
+            aria-label={`New connection ${endpoint} side`}
+            value={endpoint === 'source' ? sourceSide : targetSide}
+            onChange={(event) =>
+              (endpoint === 'source' ? setSourceSide : setTargetSide)(
+                event.target.value as ConnectionSide | 'fixed',
+              )
+            }
+          >
+            <option value="fixed">Automatic fixed side</option>
+            <option value="auto">Auto (follow direction)</option>
+            {(['top', 'right', 'bottom', 'left'] as const).map((side) => (
+              <option key={side} value={side}>
+                {side[0].toUpperCase() + side.slice(1)}
+              </option>
+            ))}
+          </select>
+        </label>
+      ))}
     </div>
   )
   const drawingTools = (
@@ -1768,6 +2362,70 @@ export default function CanvasEditor({
       >
         <ToolIcon>
           <path d="m12 3 9 9-9 9-9-9Z" />
+        </ToolIcon>
+      </button>
+      {SHAPE_TYPES.filter(
+        (type) => !['rectangle', 'ellipse', 'diamond'].includes(type),
+      ).map((type) => (
+        <button
+          type="button"
+          key={type}
+          aria-label={`Add ${type}`}
+          title={`Add ${type}`}
+          onClick={() => add(type)}
+        >
+          <ToolIcon>
+            <ShapeOutline
+              element={{
+                id: 'tool',
+                type,
+                x: 3,
+                y: 3,
+                width: 18,
+                height: 18,
+                color: 'currentColor',
+                fill: null,
+                text: '',
+                fontSize: 10,
+                layerId: 'tool',
+                areaId: null,
+              }}
+            />
+          </ToolIcon>
+        </button>
+      ))}
+      <button
+        type="button"
+        aria-label="Add line"
+        title="Add line"
+        onClick={() => addLine()}
+      >
+        <ToolIcon>
+          <path d="M4 20 20 4" />
+        </ToolIcon>
+      </button>
+      <button
+        type="button"
+        aria-label="Add media or website"
+        title="Add media or website"
+        onClick={(event) => {
+          const rect = event.currentTarget.getBoundingClientRect()
+          const middle = center()
+          setQuickPanel({
+            x: Math.max(8, Math.min(rect.left, window.innerWidth - 340)),
+            y: Math.max(8, Math.min(rect.bottom + 8, window.innerHeight - 480)),
+            point: {
+              x: (middle.x - view.x) / view.zoom - 180,
+              y: (middle.y - view.y) / view.zoom - 120,
+            },
+            ids: [],
+            embed: true,
+          })
+        }}
+      >
+        <ToolIcon>
+          <rect x="3" y="4" width="18" height="16" rx="2" />
+          <path d="m9 9 7 3-7 3Z" />
         </ToolIcon>
       </button>
       <button
@@ -1842,6 +2500,189 @@ export default function CanvasEditor({
       )}
     </div>
   )
+  const hasDeck = Boolean(deckGeometry)
+  const backdropElements = board.elements
+  const backdropLayers = board.layers
+  const editingId = inlineEdit?.id
+  const { autoGrowShapes, fitTextToShape, minTextSize } = textOptions
+  const backdropObjects = useMemo(() => {
+    if (!hasDeck) return null
+    // Geometry arrays stay identical during camera navigation. Reusing the
+    // children means pan/zoom only updates the outer transform and grid.
+    const document: CanvasDocument = {
+      format: 'LCANVAS',
+      version: 2,
+      name: 'Backdrop',
+      viewport: { x: 0, y: 0, zoom: 1 },
+      layers: backdropLayers,
+      elements: backdropElements,
+    }
+    const options = { autoGrowShapes, fitTextToShape, minTextSize }
+    return orderedVisibleElements(document).map((element, index) => (
+      <EditorObject
+        key={element.id}
+        document={document}
+        element={element}
+        prefix={`${prefix}-backdrop-${index}`}
+        editing={editingId === element.id}
+        textOptions={options}
+      />
+    ))
+  }, [
+    hasDeck,
+    backdropElements,
+    backdropLayers,
+    editingId,
+    prefix,
+    autoGrowShapes,
+    fitTextToShape,
+    minTextSize,
+  ])
+  const viewRail = (
+    <div
+      className={`canvas-view-rail${deckGeometry ? ' canvas-deck-rail' : ''}`}
+      style={
+        deckGeometry
+          ? ({
+              '--deck-rail-right': `${deckGeometry.railRight}px`,
+            } as CSSProperties)
+          : undefined
+      }
+      role="toolbar"
+      aria-label="Canvas controls"
+    >
+      {dockMode && (
+        <button
+          type="button"
+          aria-label="Open right panel"
+          aria-expanded={toolsOpen || inspectorOpen || aiOpen}
+          title="Tools, properties and AI"
+          data-dock-trigger={dockSide}
+          onPointerEnter={(event) => {
+            if (event.pointerType === 'mouse') onToolsOpenChange?.(true)
+          }}
+          onClick={() => onToolsOpenChange?.(true)}
+        >
+          <ToolIcon>
+            <rect x="3" y="4" width="18" height="16" rx="2" />
+            <path d="M15 4v16" />
+          </ToolIcon>
+        </button>
+      )}
+      <button
+        type="button"
+        aria-label="Undo"
+        title="Undo edit (Ctrl+Z)"
+        disabled={!history.past.length || dragging}
+        onClick={() =>
+          runCanvas(() =>
+            showHistory(undoEditorContentHistory(currentHistory.current)),
+          )
+        }
+      >
+        <ToolIcon>
+          <path d="m8 6-5 5 5 5M3 11h10a7 7 0 0 1 7 7" />
+        </ToolIcon>
+      </button>
+      <button
+        type="button"
+        aria-label="Reset view"
+        title="Fit visible objects (0)"
+        disabled={dragging}
+        onClick={resetView}
+      >
+        <ToolIcon>
+          <path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5" />
+          <rect x="8" y="8" width="8" height="8" rx="1" />
+        </ToolIcon>
+      </button>
+      <button
+        type="button"
+        aria-label="Redo"
+        title="Redo edit (Ctrl+Shift+Z)"
+        disabled={!history.future.length || dragging}
+        onClick={() =>
+          runCanvas(() =>
+            showHistory(redoEditorContentHistory(currentHistory.current)),
+          )
+        }
+      >
+        <ToolIcon>
+          <path d="m16 6 5 5-5 5m5-5H11a7 7 0 0 0-7 7" />
+        </ToolIcon>
+      </button>
+      <span className="canvas-rail-divider" />
+      <button
+        type="button"
+        aria-label="Zoom in"
+        title="Zoom in (+)"
+        disabled={view.zoom >= MAX_ZOOM || dragging}
+        onClick={() => changeZoom(1.2)}
+      >
+        <ToolIcon>
+          <path d="M12 5v14M5 12h14" />
+        </ToolIcon>
+      </button>
+      <button
+        type="button"
+        aria-label="Zoom out"
+        title="Zoom out (−)"
+        disabled={view.zoom <= MIN_ZOOM || dragging}
+        onClick={() => changeZoom(1 / 1.2)}
+      >
+        <ToolIcon>
+          <path d="M5 12h14" />
+        </ToolIcon>
+      </button>
+      {onToggleFocus && (
+        <>
+          <span className="canvas-rail-divider" />
+          <button
+            type="button"
+            aria-label={focusMode ? 'Exit full screen' : 'Full screen canvas'}
+            aria-pressed={focusMode}
+            title={focusMode ? 'Exit full screen' : 'Focus on this canvas'}
+            onClick={() => {
+              if (!focusMode && propertiesOpen === undefined)
+                setInspectorOpen(false)
+              onToggleFocus()
+            }}
+          >
+            <ToolIcon>
+              {focusMode ? (
+                <path d="M3 8h5V3m8 0v5h5M8 21v-5H3m18 0h-5v5" />
+              ) : (
+                <path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5" />
+              )}
+            </ToolIcon>
+          </button>
+        </>
+      )}
+      <span className="canvas-rail-spacer" />
+      {!dockMode && (
+        <button
+          type="button"
+          className={aiOpen ? 'canvas-ai-toggle active' : 'canvas-ai-toggle'}
+          aria-label={
+            aiOpen ? 'Close AI workspace panel' : 'Open AI workspace panel'
+          }
+          aria-expanded={aiOpen}
+          aria-controls="workspace-ai-panel"
+          data-dock-trigger={dockMode ? dockSide : undefined}
+          title="Workspace AI / MCP"
+          onClick={() => {
+            setInspectorOpen(false)
+            onToggleAI()
+          }}
+        >
+          <ToolIcon>
+            <rect x="4" y="7" width="16" height="13" rx="4" />
+            <path d="M12 7V3m-2 0h4M8 12h.01M16 12h.01M9 16h6" />
+          </ToolIcon>
+        </button>
+      )}
+    </div>
+  )
   return (
     <section
       className={`canvas-editor${inspectorOpen ? ' has-inspector' : ''}`}
@@ -1852,6 +2693,18 @@ export default function CanvasEditor({
       onCut={(event) => clipboardCopy(event, true)}
       onPaste={clipboardPaste}
     >
+      {deckGeometry && (
+        <CanvasBackdrop
+          geometry={deckGeometry}
+          viewport={view}
+          grid={grid}
+          gridSize={
+            controls.gridSpacing * (view.zoom < 0.5 ? 5 : 1) * view.zoom
+          }
+        >
+          {backdropObjects}
+        </CanvasBackdrop>
+      )}
       {!dockMode && drawingTools}
       {dockMode &&
         dockHost &&
@@ -1878,6 +2731,8 @@ export default function CanvasEditor({
           data-dragging={dragging}
           data-gesture={gestureKind}
           data-selection-count={selectedIds.length}
+          data-snap-to-grid={controls.snapToGrid}
+          data-rulers={controls.rulers}
           data-mode={spaceHeld ? 'pan' : mode}
           style={gridStyle}
           tabIndex={0}
@@ -1888,6 +2743,7 @@ export default function CanvasEditor({
           onPointerMove={moveGesture}
           onPointerUp={endGesture}
           onDoubleClick={editAtPointer}
+          onContextMenu={(event) => openQuick(event)}
           onPointerCancel={(event) => endGesture(event, true)}
           onLostPointerCapture={(event) => endGesture(event)}
           onKeyDown={navigateByKey}
@@ -1919,8 +2775,10 @@ export default function CanvasEditor({
                     data-layer-id={element.layerId}
                     data-area-id={element.areaId ?? ''}
                     data-editable={isElementEditable(board, element.id)}
+                    data-selected={selectedIds.includes(element.id)}
                     className="canvas-edit-object"
                     onPointerDown={(event) => beginObject(event, element)}
+                    onContextMenu={(event) => openQuick(event, element.id)}
                     onKeyDown={(event) => {
                       if (event.key === ' ') {
                         navigateByKey(event)
@@ -1942,11 +2800,29 @@ export default function CanvasEditor({
                       element.type !== 'line' && (
                         <rect
                           className="canvas-object-hit"
+                          data-area-border-hit={
+                            element.type === 'area' || undefined
+                          }
                           x={bounds.x}
                           y={bounds.y}
                           width={bounds.width}
                           height={bounds.height}
-                          fill="transparent"
+                          rx={element.type === 'area' ? 12 : undefined}
+                          fill={
+                            element.type === 'area' ? 'none' : 'transparent'
+                          }
+                          stroke={
+                            element.type === 'area' ? 'transparent' : undefined
+                          }
+                          strokeWidth={element.type === 'area' ? 8 : undefined}
+                          vectorEffect={
+                            element.type === 'area'
+                              ? 'non-scaling-stroke'
+                              : undefined
+                          }
+                          pointerEvents={
+                            element.type === 'area' ? 'stroke' : undefined
+                          }
                         />
                       )}
                     <EditorObject
@@ -1954,10 +2830,52 @@ export default function CanvasEditor({
                       element={element}
                       prefix={`${prefix}-${index}`}
                       editing={inlineEdit?.id === element.id}
+                      interactive={active && element.type === 'embed'}
+                      resolveMedia={(src) => mediaUrls[src]}
+                      onPatch={(patch) =>
+                        runCanvas(() =>
+                          commit(
+                            updateElement(
+                              currentHistory.current.present,
+                              element.id,
+                              patch,
+                            ),
+                          ),
+                        )
+                      }
+                      onMove={(event) => beginObject(event, element)}
+                      onSelect={() => {
+                        if (!selectedIds.includes(element.id))
+                          setSelectedId(element.id)
+                      }}
+                      textOptions={textOptions}
                     />
                   </g>
                 )
               })}
+              {(visibleSelection.length > 1 || marquee) &&
+                visibleSelection.map((element) => {
+                  const bounds = elementBounds(board, element)
+                  return (
+                    <rect
+                      key={`selection-${element.id}`}
+                      className="canvas-selected-member"
+                      data-selection-member={element.id}
+                      x={bounds.x - 2 / view.zoom}
+                      y={bounds.y - 2 / view.zoom}
+                      width={bounds.width + 4 / view.zoom}
+                      height={bounds.height + 4 / view.zoom}
+                      fill="none"
+                      stroke={selectionColor(controls.selectionStroke)}
+                      strokeWidth={controls.selectionStrokeWidth}
+                      strokeDasharray={
+                        controls.selectionDashed ? '5 4' : undefined
+                      }
+                      vectorEffect="non-scaling-stroke"
+                      pointerEvents="none"
+                    />
+                  )
+                })}
               {selected && selectedVisible && selectedBounds && (
                 <g className="canvas-selection">
                   <rect
@@ -1966,8 +2884,11 @@ export default function CanvasEditor({
                     width={selectedBounds.width + 8 / view.zoom}
                     height={selectedBounds.height + 8 / view.zoom}
                     fill="none"
-                    stroke="var(--accent)"
-                    strokeWidth="1.5"
+                    stroke={selectionColor(controls.selectionStroke)}
+                    strokeWidth={controls.selectionStrokeWidth}
+                    strokeDasharray={
+                      controls.selectionDashed ? '5 4' : undefined
+                    }
                     vectorEffect="non-scaling-stroke"
                     pointerEvents="none"
                   />
@@ -1986,20 +2907,31 @@ export default function CanvasEditor({
                         data-resize-handle={handle.id}
                         x={
                           selectedBounds.x +
-                          selectedBounds.width * handle.x -
-                          6 / view.zoom
+                          (handle.id === 'n' || handle.id === 's'
+                            ? 12 / view.zoom
+                            : selectedBounds.width * handle.x - 6 / view.zoom)
                         }
                         y={
                           selectedBounds.y +
-                          selectedBounds.height * handle.y -
-                          6 / view.zoom
+                          (handle.id === 'e' || handle.id === 'w'
+                            ? 12 / view.zoom
+                            : selectedBounds.height * handle.y - 6 / view.zoom)
                         }
-                        width={12 / view.zoom}
-                        height={12 / view.zoom}
-                        rx={2 / view.zoom}
-                        fill="var(--accent)"
-                        stroke="var(--panel)"
-                        strokeWidth="2"
+                        width={
+                          handle.id === 'n' || handle.id === 's'
+                            ? Math.max(1, selectedBounds.width - 24 / view.zoom)
+                            : 12 / view.zoom
+                        }
+                        height={
+                          handle.id === 'e' || handle.id === 'w'
+                            ? Math.max(
+                                1,
+                                selectedBounds.height - 24 / view.zoom,
+                              )
+                            : 12 / view.zoom
+                        }
+                        fill="transparent"
+                        stroke="none"
                         vectorEffect="non-scaling-stroke"
                         onPointerDown={(event) => {
                           if (event.button !== 0) return
@@ -2010,8 +2942,88 @@ export default function CanvasEditor({
                         <title>{`Resize ${handle.label} · Shift keeps proportions`}</title>
                       </rect>
                     ))}
+                  {visibleSelection.length === 1 &&
+                    isElementEditable(board, selected.id) &&
+                    selected.type !== 'line' &&
+                    selected.type !== 'connection' &&
+                    !inlineEdit &&
+                    (['top', 'right', 'bottom', 'left'] as const).map(
+                      (side) => {
+                        const point = sidePoint(selectedBounds, side)
+                        return (
+                          <circle
+                            key={side}
+                            className="canvas-connect-handle"
+                            role="button"
+                            tabIndex={0}
+                            aria-label={`Connect from ${side}`}
+                            cx={point.x}
+                            cy={point.y}
+                            r={5 / view.zoom}
+                            fill="var(--accent)"
+                            stroke="var(--panel)"
+                            strokeWidth="2"
+                            vectorEffect="non-scaling-stroke"
+                            onPointerDown={(event) =>
+                              beginConnection(event, side)
+                            }
+                            onKeyDown={(event) => {
+                              if (event.key === 'Enter' || event.key === ' ') {
+                                event.preventDefault()
+                                setConnectionSource(selected.id)
+                                setSourceSide(side)
+                                setMode('connect')
+                              }
+                            }}
+                          >
+                            <title>{`Drag to connect from ${side}`}</title>
+                          </circle>
+                        )
+                      },
+                    )}
                 </g>
               )}
+              {connectionPreview && (
+                <path
+                  data-testid="connection-preview"
+                  d={`M ${connectionPreview.from.x} ${connectionPreview.from.y} L ${connectionPreview.to.x} ${connectionPreview.to.y}`}
+                  stroke="var(--accent)"
+                  strokeWidth="2"
+                  strokeDasharray="5 4"
+                  fill="none"
+                  vectorEffect="non-scaling-stroke"
+                  pointerEvents="none"
+                />
+              )}
+              {snapGuides.map((guide) => (
+                <line
+                  key={`${guide.axis}-${guide.targetId}`}
+                  data-testid="object-snap-guide"
+                  x1={
+                    guide.axis === 'x' ? guide.coordinate : -view.x / view.zoom
+                  }
+                  x2={
+                    guide.axis === 'x'
+                      ? guide.coordinate
+                      : ((stage.current?.clientWidth ?? 1000) - view.x) /
+                        view.zoom
+                  }
+                  y1={
+                    guide.axis === 'y' ? guide.coordinate : -view.y / view.zoom
+                  }
+                  y2={
+                    guide.axis === 'y'
+                      ? guide.coordinate
+                      : ((stage.current?.clientHeight ?? 800) - view.y) /
+                        view.zoom
+                  }
+                  stroke="var(--accent)"
+                  strokeDasharray="4 4"
+                  strokeWidth="1"
+                  vectorEffect="non-scaling-stroke"
+                  pointerEvents="none"
+                />
+              ))}
               {marquee && (
                 <rect
                   className="canvas-marquee"
@@ -2020,15 +3032,20 @@ export default function CanvasEditor({
                   y={marquee.y}
                   width={marquee.width}
                   height={marquee.height}
-                  fill="var(--tint)"
-                  stroke="var(--accent)"
-                  strokeWidth="1"
+                  fill={selectionColor(controls.selectionFill)}
+                  fillOpacity={controls.selectionOpacity}
+                  stroke={selectionColor(controls.selectionStroke)}
+                  strokeWidth={controls.selectionStrokeWidth}
+                  strokeDasharray={controls.selectionDashed ? '5 4' : undefined}
                   vectorEffect="non-scaling-stroke"
                   pointerEvents="none"
                 />
               )}
             </g>
           </svg>
+          {controls.rulers && (
+            <CanvasRulers viewport={view} unit={controls.rulerUnit} />
+          )}
           {inlineEdit && editBounds && editedElement && (
             <div
               className="canvas-inline-edit"
@@ -2038,12 +3055,8 @@ export default function CanvasEditor({
               style={{
                 left: editBounds.x * view.zoom + view.x,
                 top: editBounds.y * view.zoom + view.y,
-                width: Math.max(48, editBounds.width * view.zoom),
-                height: Math.max(
-                  32,
-                  (editedElement.type === 'area' ? 42 : editBounds.height) *
-                    view.zoom,
-                ),
+                width: editBounds.width * view.zoom,
+                height: Math.max(1, editBounds.height * view.zoom + 2),
               }}
             >
               <textarea
@@ -2058,13 +3071,28 @@ export default function CanvasEditor({
                 maxLength={editedElement.type === 'area' ? 120 : 20000}
                 spellCheck
                 style={{
-                  fontSize:
-                    (editedElement.type === 'area'
-                      ? 14
-                      : 'fontSize' in editedElement
-                        ? editedElement.fontSize
-                        : 20) * view.zoom,
-                  color: editedElement.color,
+                  fontSize: (editLayout?.fontSize ?? 14) * view.zoom,
+                  color:
+                    'text' in editedElement
+                      ? (editedElement.textColor ?? editedElement.color)
+                      : editedElement.color,
+                  fontFamily:
+                    'text' in editedElement
+                      ? canvasFontFamily(editedElement)
+                      : undefined,
+                  fontWeight:
+                    'text' in editedElement
+                      ? editedElement.fontWeight
+                      : undefined,
+                  fontStyle:
+                    'text' in editedElement
+                      ? editedElement.fontStyle
+                      : undefined,
+                  textAlign:
+                    'text' in editedElement
+                      ? (editedElement.textAlign ??
+                        (editedElement.type === 'text' ? 'left' : 'center'))
+                      : undefined,
                 }}
                 onChange={(event) => {
                   const draft = { ...inlineEdit, value: event.target.value }
@@ -2140,179 +3168,113 @@ export default function CanvasEditor({
           </div>
         )}
       </div>
-      <div
-        className="canvas-view-rail"
-        role="toolbar"
-        aria-label="Canvas controls"
-      >
-        <button
-          type="button"
-          aria-label="Undo"
-          title="Undo edit (Ctrl+Z)"
-          disabled={!history.past.length || dragging}
-          onClick={() =>
-            runCanvas(() =>
-              showHistory(undoEditorContentHistory(currentHistory.current)),
-            )
-          }
-        >
-          <ToolIcon>
-            <path d="m8 6-5 5 5 5M3 11h10a7 7 0 0 1 7 7" />
-          </ToolIcon>
-        </button>
-        <button
-          type="button"
-          aria-label="Reset view"
-          title="Fit visible objects (0)"
-          disabled={dragging}
-          onClick={resetView}
-        >
-          <ToolIcon>
-            <path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5" />
-            <rect x="8" y="8" width="8" height="8" rx="1" />
-          </ToolIcon>
-        </button>
-        <button
-          type="button"
-          aria-label="Redo"
-          title="Redo edit (Ctrl+Shift+Z)"
-          disabled={!history.future.length || dragging}
-          onClick={() =>
-            runCanvas(() =>
-              showHistory(redoEditorContentHistory(currentHistory.current)),
-            )
-          }
-        >
-          <ToolIcon>
-            <path d="m16 6 5 5-5 5m5-5H11a7 7 0 0 0-7 7" />
-          </ToolIcon>
-        </button>
-        <span className="canvas-rail-divider" />
-        <button
-          type="button"
-          aria-label="Zoom in"
-          title="Zoom in (+)"
-          disabled={view.zoom >= MAX_ZOOM || dragging}
-          onClick={() => changeZoom(1.2)}
-        >
-          <ToolIcon>
-            <path d="M12 5v14M5 12h14" />
-          </ToolIcon>
-        </button>
-        <button
-          type="button"
-          aria-label="Zoom out"
-          title="Zoom out (−)"
-          disabled={view.zoom <= MIN_ZOOM || dragging}
-          onClick={() => changeZoom(1 / 1.2)}
-        >
-          <ToolIcon>
-            <path d="M5 12h14" />
-          </ToolIcon>
-        </button>
-        {onToggleFocus && (
-          <>
-            <span className="canvas-rail-divider" />
-            <button
-              type="button"
-              aria-label={focusMode ? 'Exit full screen' : 'Full screen canvas'}
-              aria-pressed={focusMode}
-              title={focusMode ? 'Exit full screen' : 'Focus on this canvas'}
-              onClick={() => {
-                if (!focusMode && propertiesOpen === undefined)
-                  setInspectorOpen(false)
-                onToggleFocus()
-              }}
-            >
-              <ToolIcon>
-                {focusMode ? (
-                  <path d="M3 8h5V3m8 0v5h5M8 21v-5H3m18 0h-5v5" />
-                ) : (
-                  <path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5" />
-                )}
-              </ToolIcon>
-            </button>
-          </>
+      {quickPanel &&
+        active &&
+        createPortal(
+          <div
+            ref={quickPanelRef}
+            className="canvas-quick-panel"
+            role="dialog"
+            aria-label={
+              quickPanel.ids.length
+                ? 'Quick object properties'
+                : quickPanel.embed
+                  ? 'Add media or website'
+                  : 'Add to canvas'
+            }
+            style={{
+              left: quickPanel.x,
+              top: quickPanel.y,
+              maxHeight: `calc(100vh - ${quickPanel.y + 12}px)`,
+            }}
+            onKeyDown={(event) => {
+              event.stopPropagation()
+              if (event.key === 'Escape') {
+                event.preventDefault()
+                setQuickPanel(null)
+                stage.current?.focus()
+              }
+            }}
+            onContextMenu={(event) => event.preventDefault()}
+          >
+            <header>
+              <strong>
+                {quickPanel.ids.length
+                  ? 'Quick properties'
+                  : quickPanel.embed
+                    ? 'Media & embeds'
+                    : 'Add to canvas'}
+              </strong>
+              <button
+                type="button"
+                aria-label="Close quick panel"
+                onClick={() => {
+                  setQuickPanel(null)
+                  stage.current?.focus()
+                }}
+              >
+                ×
+              </button>
+            </header>
+            {quickPanel.ids.length ? (
+              <CanvasQuickProperties
+                document={board}
+                ids={quickPanel.ids}
+                onChange={(next) => safely(() => commit(next))}
+                onError={setError}
+                onDelete={() => {
+                  runCanvas(removeSelected)
+                  setQuickPanel(null)
+                }}
+                onDuplicate={() => {
+                  runCanvas(duplicateSelected)
+                  setQuickPanel(null)
+                }}
+              />
+            ) : quickPanel.embed ? (
+              <CanvasEmbedInsert onInsert={insertEmbed} />
+            ) : (
+              <div className="canvas-quick-add">
+                {[...SHAPE_TYPES, 'text', 'area'].map((type) => (
+                  <button
+                    type="button"
+                    key={type}
+                    onClick={() => {
+                      add(type as SizedType, quickPanel.point)
+                      setQuickPanel(null)
+                    }}
+                  >
+                    {type[0].toUpperCase() + type.slice(1)}
+                  </button>
+                ))}
+                <button type="button" onClick={() => addLine(quickPanel.point)}>
+                  Line
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setQuickPanel({ ...quickPanel, embed: true })}
+                >
+                  Media or website
+                </button>
+              </div>
+            )}
+          </div>,
+          stage.current?.closest('.app-shell') ?? globalThis.document.body,
         )}
-        <span className="canvas-rail-spacer" />
-        {dockMode && (
-          <>
-            <button
-              type="button"
-              aria-label="Open canvas tools"
-              aria-expanded={toolsOpen}
-              title="Canvas tools and shapes"
-              data-dock-trigger="right"
-              onPointerEnter={(event) => {
-                if (event.pointerType === 'mouse') onToolsOpenChange?.(true)
-              }}
-              onClick={() => onToolsOpenChange?.(true)}
-            >
-              <ToolIcon>
-                <rect x="3" y="3" width="7" height="7" rx="1" />
-                <circle cx="17" cy="6.5" r="3.5" />
-                <path d="m6.5 14 4 4-4 4-4-4Z" />
-                <path d="M14 18h7" />
-              </ToolIcon>
-            </button>
-            <button
-              type="button"
-              aria-label="Open object properties"
-              aria-expanded={inspectorOpen}
-              title="Object properties and layers"
-              data-dock-trigger="right"
-              onPointerEnter={(event) => {
-                if (event.pointerType === 'mouse') openInspector()
-              }}
-              onClick={openInspector}
-            >
-              <ToolIcon>
-                <path d="M4 7h16M4 17h16" />
-                <circle cx="9" cy="7" r="3" />
-                <circle cx="15" cy="17" r="3" />
-              </ToolIcon>
-            </button>
-          </>
-        )}
-        <button
-          type="button"
-          className={aiOpen ? 'canvas-ai-toggle active' : 'canvas-ai-toggle'}
-          aria-label={
-            aiOpen ? 'Close AI workspace panel' : 'Open AI workspace panel'
-          }
-          aria-expanded={aiOpen}
-          aria-controls="workspace-ai-panel"
-          data-dock-trigger={dockMode ? 'right' : undefined}
-          title="Workspace AI / MCP"
-          onClick={() => {
-            setInspectorOpen(false)
-            onToggleAI()
-          }}
-        >
-          <ToolIcon>
-            <rect x="4" y="7" width="16" height="13" rx="4" />
-            <path d="M12 7V3m-2 0h4M8 12h.01M16 12h.01M9 16h6" />
-          </ToolIcon>
-        </button>
-      </div>
-      <div className="canvas-view-status">
-        <p id={`${prefix}-instructions`}>
-          {mode === 'pan'
-            ? 'Drag to pan'
-            : mode === 'connect'
-              ? 'Choose two shapes to connect'
-              : 'Drag to move · Corner to resize · Double-click to edit'}{' '}
-          · Scroll to zoom
+      {deckGeometry ? createPortal(viewRail, deckGeometry.host) : viewRail}
+      {statusInFooter ? (
+        <p id={`${prefix}-instructions`} hidden>
+          {instructions}
         </p>
-        <span>
-          {selected
-            ? `${selected.type} · ${board.layers.find((layer) => layer.id === selected.layerId)?.name ?? 'Layer'}`
-            : `${visible.length} objects`}
-        </span>
-        <output aria-label="Canvas zoom" aria-live="polite">
-          {Math.round(view.zoom * 100)}%
-        </output>
-      </div>
+      ) : (
+        <div className="canvas-view-status">
+          <p id={`${prefix}-instructions`}>{instructions}</p>
+          <span>{selectionDescription ?? `${visible.length} objects`}</span>
+          <output aria-label="Canvas zoom" aria-live="polite">
+            {formatCanvasZoom(view.zoom, controls)}
+          </output>
+        </div>
+      )}
     </section>
   )
 }

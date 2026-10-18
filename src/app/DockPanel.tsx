@@ -1,6 +1,14 @@
-import { useEffect, useRef, type ReactNode } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type PointerEvent as ReactPointerEvent,
+  type ReactNode,
+} from 'react'
 import Icon from './Icon'
 import PanelResizeHandle from './PanelResizeHandle'
+import { boundedAutoHideDelay } from './layout'
 
 type Props = {
   id: string
@@ -12,12 +20,19 @@ type Props = {
   min: number
   max: number
   defaultWidth: number
+  topInset?: number
+  bottomInset?: number
+  onTopInsetChange?: (value: number) => void
+  onBottomInsetChange?: (value: number) => void
   tabs: { id: string; label: string; icon?: ReactNode }[]
   activeTab: string
   onSelect: (id: string) => void
   onClose: () => void
   onPin: (pinned: boolean) => void
   onWidthChange: (width: number) => void
+  autoHide?: boolean
+  autoHideDelay?: number
+  onMove?: (side: 'left' | 'right') => void
   children: ReactNode
 }
 
@@ -31,16 +46,107 @@ export default function DockPanel({
   min,
   max,
   defaultWidth,
+  topInset = 8,
+  bottomInset = 8,
+  onTopInsetChange,
+  onBottomInsetChange,
   tabs,
   activeTab,
   onSelect,
   onClose,
   onPin,
   onWidthChange,
+  autoHide = true,
+  autoHideDelay = 280,
+  onMove,
   children,
 }: Props) {
   const root = useRef<HTMLElement>(null)
+  const [availableHeight, setAvailableHeight] = useState(() =>
+    Math.max(160, window.innerHeight - (pinned ? 0 : 62)),
+  )
+  useEffect(() => {
+    const deck = root.current?.closest('.workspace-deck')
+    if (!deck) return
+    const measure = () => {
+      const style = getComputedStyle(deck)
+      const chrome = pinned
+        ? 0
+        : (parseFloat(style.getPropertyValue('--tab-bar-height')) || 40) +
+          (parseFloat(style.getPropertyValue('--status-bar-height')) || 22)
+      setAvailableHeight(
+        Math.max(
+          160,
+          (deck.getBoundingClientRect().height || window.innerHeight) - chrome,
+        ),
+      )
+    }
+    measure()
+    const observer =
+      typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(measure)
+    observer?.observe(deck)
+    window.addEventListener('resize', measure)
+    return () => {
+      observer?.disconnect()
+      window.removeEventListener('resize', measure)
+    }
+  }, [pinned, open])
+  const maxTop = Math.max(0, Math.min(800, availableHeight - bottomInset - 160))
+  const top = Math.max(0, Math.min(topInset, maxTop))
+  const maxBottom = Math.max(0, Math.min(800, availableHeight - top - 160))
+  const bottom = Math.max(0, Math.min(bottomInset, maxBottom))
+  const arrangement = useRef<{
+    pointerId: number
+    startX: number
+    side: 'left' | 'right'
+    header: HTMLElement
+  } | null>(null)
+  const [dropSide, setDropSide] = useState<'left' | 'right' | null>(null)
   const keyboardFocus = useRef(true)
+  const endArrangement = useCallback(
+    (cancelled = false) => {
+      const drag = arrangement.current
+      if (!drag) return
+      arrangement.current = null
+      setDropSide(null)
+      if (drag.header.hasPointerCapture?.(drag.pointerId))
+        drag.header.releasePointerCapture(drag.pointerId)
+      if (!cancelled && drag.side !== side) onMove?.(drag.side)
+    },
+    [side, onMove],
+  )
+  function beginArrangement(event: ReactPointerEvent<HTMLDivElement>) {
+    if (!onMove || event.button !== 0) return
+    const target = event.target instanceof Element ? event.target : null
+    if (
+      target?.closest('button, input, select, textarea') &&
+      !target.closest('.dock-move-handle')
+    )
+      return
+    event.preventDefault()
+    arrangement.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      side,
+      header: event.currentTarget,
+    }
+    setDropSide(side)
+    event.currentTarget.setPointerCapture?.(event.pointerId)
+  }
+  function moveArrangement(event: ReactPointerEvent<HTMLDivElement>) {
+    const drag = arrangement.current
+    if (!drag || drag.pointerId !== event.pointerId) return
+    if (Math.abs(event.clientX - drag.startX) < 12) return
+    const bounds = root.current
+      ?.closest('.workspace-deck')
+      ?.getBoundingClientRect()
+    const midpoint =
+      bounds && bounds.width > 0
+        ? bounds.left + bounds.width / 2
+        : window.innerWidth / 2
+    drag.side = event.clientX < midpoint ? 'left' : 'right'
+    setDropSide(drag.side)
+  }
   useEffect(() => {
     const pointer = () => {
       keyboardFocus.current = false
@@ -66,13 +172,14 @@ export default function DockPanel({
     close.current = onClose
   }, [onClose])
   useEffect(() => {
-    if (!open || pinned) return
+    if (!open || pinned || !autoHide) return
     let timer: ReturnType<typeof setTimeout> | undefined
     const clear = () => {
       if (timer) clearTimeout(timer)
       timer = undefined
     }
     const protectedInteraction = () =>
+      arrangement.current ||
       (root.current?.contains(document.activeElement) &&
         (keyboardFocus.current ||
           document.activeElement?.matches(
@@ -89,7 +196,7 @@ export default function DockPanel({
       timer = setTimeout(() => {
         timer = undefined
         if (!protectedInteraction()) close.current()
-      }, 280)
+      }, boundedAutoHideDelay(autoHideDelay))
     }
     const move = (event: PointerEvent) => {
       if (inside(event.target)) clear()
@@ -98,6 +205,7 @@ export default function DockPanel({
     const outside = (event: PointerEvent) => {
       if (
         !inside(event.target) &&
+        !arrangement.current &&
         !root.current?.querySelector('[data-resizing="true"]') &&
         !document.querySelector('[aria-modal="true"]')
       ) {
@@ -118,7 +226,19 @@ export default function DockPanel({
       document.removeEventListener('pointerdown', outside)
       document.removeEventListener('focusin', focus)
     }
-  }, [open, pinned, side])
+  }, [open, pinned, side, autoHide, autoHideDelay])
+  useEffect(() => {
+    if (!open) endArrangement(true)
+  }, [open, endArrangement])
+  useEffect(
+    () => () => {
+      const drag = arrangement.current
+      if (drag?.header.hasPointerCapture?.(drag.pointerId))
+        drag.header.releasePointerCapture(drag.pointerId)
+      arrangement.current = null
+    },
+    [],
+  )
   return (
     <aside
       id={id}
@@ -130,8 +250,25 @@ export default function DockPanel({
       data-dock-side={side}
       data-pinned={pinned}
       data-open={open}
-      style={{ width }}
+      data-arranging={dropSide !== null}
+      data-drop-side={dropSide ?? undefined}
+      style={{
+        width,
+        ...(pinned
+          ? { marginTop: top, marginBottom: bottom }
+          : {
+              top: `calc(var(--tab-bar-height, 40px) + ${top}px)`,
+              bottom: `calc(var(--status-bar-height, 22px) + ${bottom}px)`,
+              maxHeight: `calc(100% - var(--tab-bar-height, 40px) - var(--status-bar-height, 22px) - ${top + bottom}px)`,
+            }),
+      }}
       onKeyDown={(event) => {
+        if (event.key === 'Escape' && arrangement.current) {
+          event.preventDefault()
+          event.stopPropagation()
+          endArrangement(true)
+          return
+        }
         if (
           event.key === 'Escape' &&
           !event.defaultPrevented &&
@@ -147,7 +284,58 @@ export default function DockPanel({
         }
       }}
     >
-      <div className="dock-panel-header">
+      <div
+        className="dock-panel-header"
+        onPointerDown={beginArrangement}
+        onPointerMove={moveArrangement}
+        onPointerUp={(event) => {
+          if (arrangement.current?.pointerId === event.pointerId) {
+            moveArrangement(event)
+            endArrangement()
+          }
+        }}
+        onPointerCancel={() => endArrangement(true)}
+        onLostPointerCapture={() => endArrangement(true)}
+      >
+        {onMove && (
+          <button
+            className="dock-chrome-button dock-move-handle"
+            aria-label={`Move ${side} panel`}
+            title="Drag to move · Alt+Left / Right"
+            onClick={(event) => {
+              if (event.detail === 0) onMove(side === 'left' ? 'right' : 'left')
+            }}
+            onKeyDown={(event) => {
+              if (
+                !event.defaultPrevented &&
+                !event.nativeEvent.isComposing &&
+                event.altKey &&
+                !event.ctrlKey &&
+                !event.metaKey &&
+                (event.key === 'ArrowLeft' || event.key === 'ArrowRight')
+              ) {
+                event.preventDefault()
+                event.stopPropagation()
+                onMove(event.key === 'ArrowLeft' ? 'left' : 'right')
+              }
+            }}
+          >
+            <svg
+              viewBox="0 0 24 24"
+              width="16"
+              height="16"
+              fill="currentColor"
+              aria-hidden="true"
+            >
+              <circle cx="8" cy="6" r="1.5" />
+              <circle cx="16" cy="6" r="1.5" />
+              <circle cx="8" cy="12" r="1.5" />
+              <circle cx="16" cy="12" r="1.5" />
+              <circle cx="8" cy="18" r="1.5" />
+              <circle cx="16" cy="18" r="1.5" />
+            </svg>
+          </button>
+        )}
         <div
           className="dock-panel-tabs"
           role="tablist"
@@ -157,6 +345,8 @@ export default function DockPanel({
             <button
               key={tab.id}
               role="tab"
+              aria-label={tab.label}
+              data-icon={Boolean(tab.icon)}
               aria-selected={tab.id === activeTab}
               tabIndex={tab.id === activeTab ? 0 : -1}
               aria-controls={`${id}-content`}
@@ -237,6 +427,28 @@ export default function DockPanel({
         edge={side === 'left' ? 'right' : 'left'}
         onChange={onWidthChange}
       />
+      {onTopInsetChange && (
+        <PanelResizeHandle
+          label={`Resize ${side} panel top`}
+          edge="top"
+          value={top}
+          min={0}
+          max={maxTop}
+          defaultValue={8}
+          onChange={onTopInsetChange}
+        />
+      )}
+      {onBottomInsetChange && (
+        <PanelResizeHandle
+          label={`Resize ${side} panel bottom`}
+          edge="bottom"
+          value={bottom}
+          min={0}
+          max={maxBottom}
+          defaultValue={8}
+          onChange={onBottomInsetChange}
+        />
+      )}
     </aside>
   )
 }

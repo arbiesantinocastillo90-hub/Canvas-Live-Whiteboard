@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from 'react'
+import { baseCanvasStore, scopedCanvasRecord } from './canvasStoreScope'
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import {
   canvasFileStore,
   type CanvasFileRecord,
@@ -17,38 +18,166 @@ import {
   useRegisterFiles,
 } from './workspaceCommandsContext'
 import Icon from './Icon'
-import type { Project } from './workspace'
+import ProjectExplorer from './ProjectExplorer'
+import ProjectHierarchy from './ProjectHierarchy'
+import CanvasDestinationDialog from './CanvasDestinationDialog'
+import ProjectContextMenu from './ProjectContextMenu'
+import { projectMenuAnchor, type ProjectMenuAnchor } from './projectMenuAnchor'
+import CanvasThumbnail from './CanvasThumbnail'
+import WorkspaceIdentity from './WorkspaceIdentity'
+import { useWorkspaceBackground } from './workspaceBackground'
+import PresentationIcon from './PresentationIcon'
+import {
+  itemPresentationStyle,
+  normalizeItemPresentation,
+} from './itemPresentation'
+import {
+  workspaceBackgroundStyle,
+  normalizeWorkspaceAppearance,
+  type WorkspaceAppearance,
+} from './workspaceAppearance'
+import {
+  DEFAULT_HOME_VIEW,
+  normalizeHomeView,
+  type HomeLibraryView,
+} from './homeView'
+import { projectDescendants, type Project } from './workspace'
+import { useSessionNotifications } from './notificationSession'
+import { localLibrary, sharedCanvasFileStore } from './localLibrary'
 import './home-page.css'
 
 type HomeFile = { record: CanvasFileRecord; dirty: boolean; project: Project }
 
+/** Keep large imported hierarchies from starting hundreds of storage reads at once. */
+async function mapBounded<T, R>(
+  values: readonly T[],
+  limit: number,
+  map: (value: T) => Promise<R>,
+  cancelled: () => boolean,
+): Promise<R[]> {
+  const results: R[] = []
+  let next = 0
+  await Promise.all(
+    Array.from({ length: Math.min(limit, values.length) }, async () => {
+      while (!cancelled()) {
+        const index = next++
+        if (index >= values.length) break
+        results[index] = await map(values[index])
+      }
+    }),
+  )
+  return results
+}
+
 export default function HomePage({
+  workspaceName,
+  workspaceAppearance,
+  onCustomizeWorkspace,
+  onCustomizeProject,
+  onCustomizeFile,
+  view,
+  onViewChange,
+  projectActions,
   projects,
   selectedProjectId,
   onSelectProject,
   onNewProject,
   onRenameProject,
+  onPinProject,
+  onHideRecentProject,
+  projectRecentsCollapsed,
+  onProjectRecentsCollapsedChange,
+  allProjectsCollapsed,
+  onAllProjectsCollapsedChange,
   onOpenFile,
   onNewCanvas,
   onImport,
   onLocalImport,
   store = canvasFileStore,
+  notificationScopeId = 'home',
 }: {
+  workspaceName?: string
+  workspaceAppearance?: WorkspaceAppearance
+  onCustomizeWorkspace?: () => void
+  onCustomizeProject?: (project: Project) => void
+  onCustomizeFile?: (projectId: string, fileId: string) => void
+  view?: HomeLibraryView
+  onViewChange?: (value: HomeLibraryView) => void
+  projectActions?: ReactNode
   projects: Project[]
   selectedProjectId: string | null
   onSelectProject: (id: string | null) => void
-  onNewProject: () => void
+  onNewProject: (parentId?: string | null) => void
   onRenameProject: (project: Project) => void
+  onPinProject?: (id: string, pinned: boolean) => void
+  onHideRecentProject?: (id: string) => void
+  projectRecentsCollapsed?: boolean
+  onProjectRecentsCollapsedChange?: (collapsed: boolean) => void
+  allProjectsCollapsed?: boolean
+  onAllProjectsCollapsedChange?: (collapsed: boolean) => void
   onOpenFile: (projectId: string, fileId: string) => void
   onNewCanvas: (projectId: string) => void
-  onImport: (projectId: string, files: File[]) => void
-  onLocalImport?: (projectId: string, files: LocalCanvasImport[]) => void
+  onImport: (projectId: string | null, files: File[]) => void
+  onLocalImport?: (projectId: string | null, files: LocalCanvasImport[]) => void
   store?: CanvasFileStore
+  notificationScopeId?: string
 }) {
-  const [files, setFiles] = useState<HomeFile[]>([])
+  const [localView, setLocalView] = useState<HomeLibraryView>(() => ({
+    ...DEFAULT_HOME_VIEW,
+    openedProjectId: selectedProjectId,
+  }))
+  const [choosingCanvasProject, setChoosingCanvasProject] = useState(false)
+  const [projectMenu, setProjectMenu] = useState<ProjectMenuAnchor | null>(null)
+  const closeProjectMenu = useCallback(() => setProjectMenu(null), [])
+  const [dialogScope, setDialogScope] = useState({ store, notificationScopeId })
+  if (
+    dialogScope.store !== store ||
+    dialogScope.notificationScopeId !== notificationScopeId
+  ) {
+    setDialogScope({ store, notificationScopeId })
+    setChoosingCanvasProject(false)
+    setProjectMenu(null)
+  }
+  function newCanvas() {
+    if (projects.length) setChoosingCanvasProject(true)
+    else onNewProject()
+  }
+  const currentView = normalizeHomeView(view ?? localView)
+  const appearance = normalizeWorkspaceAppearance(workspaceAppearance)
+  const background = useWorkspaceBackground(appearance.backgroundAssetId)
+  function changeView(patch: Partial<HomeLibraryView>) {
+    const next = normalizeHomeView({ ...currentView, ...patch })
+    setLocalView(next)
+    onViewChange?.(next)
+  }
+  const projectSignature = JSON.stringify(projects)
+  const [fileSnapshot, setFileSnapshot] = useState<{
+    store: CanvasFileStore
+    projectSignature: string
+    files: HomeFile[]
+  } | null>(null)
+  // A workspace switch must never paint the previous workspace's file rows
+  // while its own scoped store is still loading.
+  const snapshotCurrent =
+    fileSnapshot?.store === store &&
+    fileSnapshot.projectSignature === projectSignature
+  const files = snapshotCurrent ? fileSnapshot.files : []
   const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
+  const { notify } = useSessionNotifications(notificationScopeId)
+  const setError = useCallback(
+    (message: string | null) => {
+      if (message) notify(message, 'error')
+    },
+    [notify],
+  )
   const [search, setSearch] = useState('')
+  const [refresh, setRefresh] = useState(0)
+  useEffect(() => {
+    const reload = () => setRefresh((value) => value + 1)
+    window.addEventListener('canvas-live-library-updated', reload)
+    return () =>
+      window.removeEventListener('canvas-live-library-updated', reload)
+  }, [])
   const importInput = useRef<HTMLInputElement>(null)
   const alive = useRef(true)
   useEffect(() => {
@@ -57,45 +186,74 @@ export default function HomePage({
       alive.current = false
     }
   }, [])
-  const projectSignature = JSON.stringify(projects)
-  const selected = projects.find((project) => project.id === selectedProjectId)
-  const targetProject = selected ?? projects[0]
+  const selected = projects.find(
+    (project) => project.id === currentView.openedProjectId,
+  )
+  const browsingProjects = currentView.perspective === 'projects' && !selected
+  const targetProject =
+    selected ??
+    projects.find((project) => project.id === selectedProjectId) ??
+    projects[0]
   useEffect(() => {
     let cancelled = false
     const snapshot = JSON.parse(projectSignature) as Project[]
-    void Promise.all(
-      snapshot.map(async (project) => {
+    void mapBounded(
+      snapshot,
+      4,
+      async (project) => {
         const recovery = await recoveryFor(store)
           .list(project.id)
           .then((drafts) => ({ drafts, error: null as string | null }))
           .catch(() => ({
             drafts: [],
             error:
-              'Draft recovery could not be loaded. Open a saved LCANVAS file if needed.',
+              'Draft recovery could not be loaded. Open a saved .CLF file if needed.',
           }))
+        if (cancelled) return { files: [], error: null }
         const drafts = mergeRecoveredDrafts(
           recovery.drafts,
           projectDrafts(store).get(project.id) ?? [],
         )
         try {
           const result = await store.list(project.id)
-          const savedEntries = await Promise.all(
-            result.value.map(async (record) => {
+          if (cancelled) return { files: [], error: null }
+          const savedEntries = await mapBounded(
+            result.value.filter((record) => record.projectId === project.id),
+            8,
+            async (record) => {
               const bound = await localFilesFor(store)
                 .get(project.id, record.id)
                 .catch(() => null)
-              const savedRecord = bound
-                ? { ...record, document: bound.savedDocument }
-                : record
+              const savedRecord = scopedCanvasRecord(
+                store,
+                bound &&
+                  !(
+                    baseCanvasStore(store) === sharedCanvasFileStore &&
+                    localLibrary.available
+                  )
+                  ? { ...record, document: bound.savedDocument }
+                  : record,
+              )
               return {
                 record: savedRecord,
                 dirty: false,
                 savedDocument: savedRecord.document,
                 persistence: result.persistence,
               }
-            }),
+            },
+            () => cancelled,
           )
-          const restored = mergeRecoveredDrafts(savedEntries, drafts)
+          const restored = mergeRecoveredDrafts(
+            savedEntries,
+            drafts.map((draft) => ({
+              ...draft,
+              record: scopedCanvasRecord(store, draft.record),
+              savedDocument: scopedCanvasRecord(store, {
+                ...draft.record,
+                document: draft.savedDocument,
+              }).document,
+            })),
+          )
           return {
             files: restored.map((draft) => ({
               record: draft.record,
@@ -115,35 +273,112 @@ export default function HomePage({
               'Some saved files could not be loaded. Your open drafts are still available.',
           }
         }
-      }),
+      },
+      () => cancelled,
     ).then((results) => {
       if (cancelled) return
-      setFiles(
-        results
+      setFileSnapshot({
+        store,
+        projectSignature,
+        files: results
           .flatMap((result) => result.files)
           .sort((a, b) => b.record.lastOpenedAt - a.record.lastOpenedAt),
-      )
+      })
       setError(results.find((result) => result.error)?.error ?? null)
       setLoading(false)
     })
     return () => {
       cancelled = true
     }
-  }, [projectSignature, store])
-  const visible = files.filter(
+  }, [projectSignature, store, setError, refresh])
+  const selectedIds = selected
+    ? projectDescendants(projects, selected.id)
+    : null
+  const query = search.trim().toLocaleLowerCase()
+  const sortedFiles = [...files].sort((a, b) =>
+    currentView.sort === 'name'
+      ? a.record.document.name.localeCompare(b.record.document.name)
+      : currentView.sort === 'created'
+        ? b.record.createdAt - a.record.createdAt
+        : currentView.sort === 'modified'
+          ? b.record.updatedAt - a.record.updatedAt
+          : b.record.lastOpenedAt - a.record.lastOpenedAt,
+  )
+  const hierarchyFiles = currentView.hierarchyShowCanvases
+    ? sortedFiles.map(({ record, project, dirty }) => ({
+        id: record.id,
+        name: record.document.name,
+        projectId: project.id,
+        dirty,
+      }))
+    : []
+  const visible = sortedFiles.filter(
     (file) =>
-      (!selected || file.project.id === selected.id) &&
+      (!selectedIds || selectedIds.has(file.project.id)) &&
       `${file.record.document.name} ${file.project.name}`
         .toLocaleLowerCase()
-        .includes(search.trim().toLocaleLowerCase()),
+        .includes(query),
   )
+  const projectModified = (project: Project) =>
+    Math.max(
+      project.updatedAt ?? project.createdAt,
+      ...files
+        .filter((file) =>
+          projectDescendants(projects, project.id).has(file.project.id),
+        )
+        .map((file) => file.record.updatedAt),
+    )
+  const sortedProjects = [...projects].sort((a, b) =>
+    currentView.sort === 'name'
+      ? a.name.localeCompare(b.name)
+      : currentView.sort === 'created'
+        ? b.createdAt - a.createdAt
+        : currentView.sort === 'modified'
+          ? projectModified(b) - projectModified(a)
+          : b.lastOpenedAt - a.lastOpenedAt,
+  )
+  const matchingProjects = sortedProjects.filter((project) =>
+    `${project.name} ${project.presentation?.description ?? ''}`
+      .toLocaleLowerCase()
+      .includes(query),
+  )
+  const recentFiles = [...files]
+    .sort((a, b) => b.record.lastOpenedAt - a.record.lastOpenedAt)
+    .slice(0, 12)
+  const canvasSidebarFiles =
+    currentView.canvasesSection === 'recent'
+      ? visible.filter((file) =>
+          recentFiles.some(
+            (recent) =>
+              recent.record.projectId === file.record.projectId &&
+              recent.record.id === file.record.id,
+          ),
+        )
+      : visible
+  function openProject(id: string) {
+    changeView({ perspective: 'projects', openedProjectId: id })
+    onSelectProject(id)
+    setSearch('')
+  }
+  function fileShortcut({ record, project }: HomeFile) {
+    return (
+      <button
+        className="home-project"
+        key={`${project.id}:${record.id}`}
+        onClick={() => onOpenFile(project.id, record.id)}
+        title={record.document.name}
+      >
+        <Icon name="canvas" />
+        <span>{record.document.name}</span>
+      </button>
+    )
+  }
   async function openImport() {
-    if (!targetProject) return
     if (supportsLocalCanvasOpen() && onLocalImport) {
       try {
         const selectedFiles = await chooseLocalCanvasFiles()
         if (alive.current && selectedFiles?.length)
-          onLocalImport(targetProject.id, selectedFiles)
+          onLocalImport(targetProject?.id ?? null, selectedFiles)
       } catch (failure) {
         if (alive.current)
           setError(
@@ -159,16 +394,14 @@ export default function HomePage({
       id: 'file.new',
       label: 'New canvas',
       category: 'Files',
-      enabled: !!targetProject,
-      execute: () => {
-        if (targetProject) onNewCanvas(targetProject.id)
-      },
+      enabled: true,
+      execute: newCanvas,
     },
     {
       id: 'file.import',
-      label: 'Import LCANVAS',
+      label: 'Import CLF',
       category: 'Files',
-      enabled: !!targetProject,
+      enabled: true,
       execute: () => {
         void openImport()
       },
@@ -184,128 +417,452 @@ export default function HomePage({
   )
 
   return (
-    <section className="home-page" aria-label="Canvas Live home">
-      <aside className="home-projects" aria-label="Home projects">
-        <div className="home-projects-heading">
-          <h2>Projects</h2>
+    <section
+      className="home-page"
+      aria-label="Canvas Live home"
+      style={workspaceBackgroundStyle(appearance, background)}
+    >
+      <div className="home-background" aria-hidden="true" />
+      <div className="home-gradient" aria-hidden="true" />
+      <div className="home-workspace-header">
+        {workspaceName && (
+          <WorkspaceIdentity
+            name={workspaceName}
+            appearance={appearance}
+            className="home-workspace-name"
+          />
+        )}
+        <div
+          className="home-perspective"
+          role="group"
+          aria-label="Library perspective"
+        >
           <button
-            className="icon-button"
-            aria-label="Create a new project"
-            title="New project"
-            onClick={onNewProject}
+            className="button secondary"
+            aria-pressed={currentView.perspective === 'projects'}
+            onClick={() => {
+              changeView({ perspective: 'projects', openedProjectId: null })
+              setSearch('')
+            }}
           >
-            <Icon name="plus" />
+            Projects
+          </button>
+          <button
+            className="button secondary"
+            aria-pressed={currentView.perspective === 'canvas'}
+            onClick={() => {
+              changeView({ perspective: 'canvas', openedProjectId: null })
+              setSearch('')
+            }}
+          >
+            Canvas
           </button>
         </div>
-        <button
-          className="home-project"
-          aria-pressed={!selected}
-          onClick={() => onSelectProject(null)}
-        >
-          <Icon name="clock" />
-          <span>Recent files</span>
-          <small>{files.length}</small>
-        </button>
-        {projects.map((project) => (
-          <div className="home-project-row" key={project.id}>
+        {onCustomizeWorkspace && (
+          <button
+            className="icon-button"
+            aria-label="Customize workspace"
+            title="Customize workspace"
+            onClick={onCustomizeWorkspace}
+          >
+            <Icon name="options" />
+          </button>
+        )}
+      </div>
+      <aside
+        className="home-projects"
+        aria-label={
+          currentView.perspective === 'projects'
+            ? 'Home projects'
+            : 'Home canvases'
+        }
+      >
+        <div className="home-projects-heading">
+          <h2>
+            {currentView.perspective === 'projects' ? 'Projects' : 'Canvases'}
+          </h2>
+          {currentView.perspective === 'projects' && (
+            <>
+              {projectActions}
+              <button
+                className="icon-button"
+                aria-label="Create a new project"
+                title="New project"
+                onClick={() => onNewProject()}
+              >
+                <Icon name="plus" />
+              </button>
+            </>
+          )}
+          {currentView.perspective === 'canvas' && (
             <button
-              className="home-project"
-              aria-label={`Open project ${project.name}`}
-              aria-pressed={selected?.id === project.id}
-              title={project.name}
-              onClick={() => onSelectProject(project.id)}
+              className="icon-button"
+              aria-label="Create a new canvas"
+              title="New canvas"
+              onClick={newCanvas}
             >
-              <Icon name="folder" />
-              <span>{project.name}</span>
-              <small>
-                {files.filter((file) => file.project.id === project.id).length}
-              </small>
+              <Icon name="plus" />
             </button>
-            <button
-              className="icon-button home-project-rename"
-              aria-label={`Rename project ${project.name}`}
-              title="Rename project"
-              onClick={() => onRenameProject(project)}
+          )}
+        </div>
+        {currentView.perspective === 'projects' ? (
+          <>
+            <ProjectExplorer
+              projects={sortedProjects}
+              selectedId={selected?.id}
+              onOpen={openProject}
+              onNewChild={onNewProject}
+              onRename={onRenameProject}
+              onPin={onPinProject}
+              onHideRecent={onHideRecentProject}
+              recentsCollapsed={projectRecentsCollapsed}
+              onRecentsCollapsedChange={onProjectRecentsCollapsedChange}
+              allProjectsCollapsed={allProjectsCollapsed}
+              onAllProjectsCollapsedChange={onAllProjectsCollapsedChange}
+              flat
+              count={(id) => {
+                const ids = projectDescendants(projects, id)
+                return files.filter((file) => ids.has(file.project.id)).length
+              }}
+            />
+            <section
+              className="home-hierarchy-section"
+              aria-label="Project hierarchy section"
             >
-              <Icon name="edit" />
-            </button>
+              <button
+                className="project-section-toggle"
+                aria-expanded={!currentView.hierarchyCollapsed}
+                onClick={() =>
+                  changeView({
+                    hierarchyCollapsed: !currentView.hierarchyCollapsed,
+                  })
+                }
+              >
+                <span aria-hidden="true">
+                  {currentView.hierarchyCollapsed ? '▸' : '▾'}
+                </span>
+                Project hierarchy
+              </button>
+              {!currentView.hierarchyCollapsed && (
+                <ProjectHierarchy
+                  key={`${notificationScopeId}:sidebar`}
+                  projects={sortedProjects}
+                  files={hierarchyFiles}
+                  showCanvases={currentView.hierarchyShowCanvases}
+                  onOpenFile={onOpenFile}
+                  closedIds={currentView.closedProjectIds}
+                  onClosedIdsChange={(closedProjectIds) =>
+                    changeView({ closedProjectIds })
+                  }
+                  selectedId={selected?.id}
+                  onOpen={openProject}
+                  onNewChild={onNewProject}
+                  onRename={onRenameProject}
+                  onCustomize={onCustomizeProject}
+                />
+              )}
+            </section>
+          </>
+        ) : (
+          <div className="home-canvas-organizer">
+            <section aria-label="Recent canvases">
+              <button
+                className="project-section-toggle"
+                aria-expanded={!currentView.recentCanvasesCollapsed}
+                onClick={() =>
+                  changeView({
+                    recentCanvasesCollapsed:
+                      !currentView.recentCanvasesCollapsed,
+                  })
+                }
+              >
+                <span aria-hidden="true">
+                  {currentView.recentCanvasesCollapsed ? '▸' : '▾'}
+                </span>
+                Recent canvases
+              </button>
+              {!currentView.recentCanvasesCollapsed && (
+                <div>
+                  {recentFiles.map(fileShortcut)}
+                  {!recentFiles.length && (
+                    <p className="project-list-empty">No recent canvases</p>
+                  )}
+                </div>
+              )}
+            </section>
+            <section aria-label="All canvases">
+              <button
+                className="project-section-toggle"
+                aria-expanded={!currentView.allCanvasesCollapsed}
+                onClick={() =>
+                  changeView({
+                    allCanvasesCollapsed: !currentView.allCanvasesCollapsed,
+                  })
+                }
+              >
+                <span aria-hidden="true">
+                  {currentView.allCanvasesCollapsed ? '▸' : '▾'}
+                </span>
+                All canvases
+              </button>
+              {!currentView.allCanvasesCollapsed && (
+                <div>{sortedFiles.map(fileShortcut)}</div>
+              )}
+            </section>
           </div>
-        ))}
+        )}
       </aside>
       <div className="home-library">
         <div className="home-library-heading">
-          <h1>{selected?.name ?? 'Canvases'}</h1>
+          <div className="home-heading-title">
+            {selected && (
+              <button
+                className="icon-button home-back"
+                aria-label="Back to projects"
+                title="Back to projects"
+                onClick={() => {
+                  changeView({ openedProjectId: null })
+                  onSelectProject(null)
+                }}
+              >
+                <Icon name="arrow" />
+              </button>
+            )}
+            <h1>
+              {selected?.name ?? (browsingProjects ? 'Projects' : 'Canvases')}
+            </h1>
+          </div>
           <div className="home-actions">
-            <button
-              className="button secondary"
-              aria-label="Import"
-              title="Import LCANVAS files"
-              disabled={!targetProject}
-              onClick={() => {
-                void openImport()
-              }}
-            >
-              <Icon name="import" />
-              <span>Import</span>
-            </button>
-            <button
-              className="button primary"
-              aria-label="New canvas"
-              disabled={!targetProject}
-              onClick={() => {
-                if (targetProject) onNewCanvas(targetProject.id)
-              }}
-            >
-              <Icon name="plus" />
-              <span>New canvas</span>
-            </button>
+            {browsingProjects ? (
+              <>
+                <button
+                  className="button secondary"
+                  aria-pressed={currentView.display === 'hierarchy'}
+                  onClick={() =>
+                    changeView({
+                      display:
+                        currentView.display === 'hierarchy'
+                          ? 'cards'
+                          : 'hierarchy',
+                    })
+                  }
+                >
+                  <Icon name="folder" />
+                  <span>Project hierarchy</span>
+                </button>
+                <button
+                  className="button primary"
+                  onClick={() => onNewProject()}
+                >
+                  <Icon name="plus" />
+                  <span>New project</span>
+                </button>
+              </>
+            ) : (
+              <>
+                <button
+                  className="button secondary"
+                  aria-label="Import"
+                  title="Import .CLF files"
+                  onClick={() => {
+                    void openImport()
+                  }}
+                >
+                  <Icon name="import" />
+                  <span>Import</span>
+                </button>
+                <button
+                  className="button primary"
+                  aria-label="New canvas"
+                  onClick={newCanvas}
+                >
+                  <Icon name="plus" />
+                  <span>New canvas</span>
+                </button>
+              </>
+            )}
           </div>
         </div>
-        <label className="search-field home-search">
-          <Icon name="search" />
-          <input
-            type="search"
-            aria-label="Search canvases"
-            placeholder="Search canvases"
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-          />
-        </label>
+        <div className="home-library-controls">
+          <label className="search-field home-search">
+            <Icon name="search" />
+            <input
+              type="search"
+              aria-label={
+                browsingProjects ? 'Search projects' : 'Search canvases'
+              }
+              placeholder={
+                browsingProjects ? 'Search projects' : 'Search canvases'
+              }
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+            />
+          </label>
+          <label className="library-order">
+            <span>Order</span>
+            <select
+              aria-label={
+                browsingProjects ? 'Order projects' : 'Order canvases'
+              }
+              value={currentView.sort}
+              onChange={(event) =>
+                changeView({
+                  sort: event.target.value as HomeLibraryView['sort'],
+                })
+              }
+            >
+              <option value="recent">Recently opened</option>
+              <option value="modified">Last modified</option>
+              <option value="created">Date created</option>
+              <option value="name">Name</option>
+            </select>
+          </label>
+        </div>
         <input
           className="file-import-input"
           type="file"
           multiple
-          accept=".lcanvas"
-          aria-label="Import LCANVAS files"
+          accept=".clf,.CLF,.lcanvas"
+          aria-label="Import CLF files"
           ref={importInput}
           onChange={(event) => {
             const selectedFiles = Array.from(event.target.files ?? [])
             event.target.value = ''
-            if (targetProject && selectedFiles.length)
-              onImport(targetProject.id, selectedFiles)
+            if (selectedFiles.length)
+              onImport(targetProject?.id ?? null, selectedFiles)
           }}
         />
-        {error && (
-          <div className="file-message" role="status">
-            {error}
-          </div>
-        )}
-        {loading ? (
+        {loading || !snapshotCurrent ? (
           <div className="home-empty" role="status">
             Loading files…
           </div>
         ) : !projects.length ? (
           <div className="home-empty">
             <span className="home-empty-mark">
-              <Icon name="canvas" />
+              <Icon name="folder" />
             </span>
             <h2>No projects yet</h2>
-            <button className="button primary" onClick={onNewProject}>
+            <p>
+              Create a project in this workspace before adding a new canvas.
+            </p>
+            <button
+              className="button secondary"
+              onClick={() => void openImport()}
+            >
+              Import canvas files
+            </button>
+            <button className="button primary" onClick={() => onNewProject()}>
               <Icon name="plus" />
               Create project
             </button>
           </div>
-        ) : !visible.length ? (
+        ) : browsingProjects ? (
+          currentView.display === 'hierarchy' ? (
+            <div className="home-main-hierarchy">
+              <label className="home-hierarchy-options">
+                <input
+                  type="checkbox"
+                  checked={currentView.hierarchyShowCanvases}
+                  onChange={(event) =>
+                    changeView({ hierarchyShowCanvases: event.target.checked })
+                  }
+                />
+                Show canvas files
+              </label>
+              <ProjectHierarchy
+                key={`${notificationScopeId}:main`}
+                projects={sortedProjects}
+                files={hierarchyFiles}
+                showCanvases={currentView.hierarchyShowCanvases}
+                onOpenFile={onOpenFile}
+                closedIds={currentView.closedProjectIds}
+                onClosedIdsChange={(closedProjectIds) =>
+                  changeView({ closedProjectIds })
+                }
+                onOpen={openProject}
+                onNewChild={onNewProject}
+                onRename={onRenameProject}
+                onCustomize={onCustomizeProject}
+                search={search}
+              />
+            </div>
+          ) : (
+            <div className="home-file-grid home-project-grid">
+              {matchingProjects.map((project) => {
+                const presentation = normalizeItemPresentation(
+                  project.presentation,
+                  'folder',
+                )
+                const count = files.filter((file) =>
+                  projectDescendants(projects, project.id).has(file.project.id),
+                ).length
+                return (
+                  <article
+                    className="home-card home-project-card"
+                    key={project.id}
+                    style={itemPresentationStyle(presentation)}
+                  >
+                    <button
+                      className="home-file"
+                      aria-label={`Browse project ${project.name}`}
+                      title={project.name}
+                      onClick={() => openProject(project.id)}
+                      aria-haspopup="menu"
+                      onContextMenu={(event) =>
+                        setProjectMenu(projectMenuAnchor(event, project.id))
+                      }
+                      onKeyDown={(event) => {
+                        const anchor = projectMenuAnchor(event, project.id)
+                        if (anchor) setProjectMenu(anchor)
+                      }}
+                    >
+                      <div className="home-project-preview" aria-hidden="true">
+                        <PresentationIcon
+                          name={presentation.icon}
+                          color={presentation.color ?? undefined}
+                          fill={presentation.fill ?? undefined}
+                        />
+                        <span>
+                          {count} {count === 1 ? 'canvas' : 'canvases'}
+                        </span>
+                      </div>
+                      <div className="home-file-name">
+                        <strong>{project.name}</strong>
+                      </div>
+                      {presentation.description && (
+                        <p className="home-card-description">
+                          {presentation.description}
+                        </p>
+                      )}
+                      <div className="home-file-details">
+                        <span>
+                          {projects.find((item) => item.id === project.parentId)
+                            ?.name ?? 'Project'}
+                        </span>
+                        <small>.CLP</small>
+                      </div>
+                    </button>
+                    {onCustomizeProject && (
+                      <button
+                        className="icon-button home-card-customize"
+                        aria-label={`Customize project ${project.name}`}
+                        title="Customize project"
+                        onClick={() => onCustomizeProject(project)}
+                      >
+                        <Icon name="options" />
+                      </button>
+                    )}
+                  </article>
+                )
+              })}
+              {!matchingProjects.length && (
+                <div className="home-empty">
+                  <h2>No matching projects</h2>
+                </div>
+              )}
+            </div>
+          )
+        ) : !canvasSidebarFiles.length ? (
           <div className="home-empty">
             <span className="home-empty-mark">
               <Icon name={search ? 'search' : 'canvas'} />
@@ -319,45 +876,98 @@ export default function HomePage({
                 Clear search
               </button>
             ) : (
-              <button
-                className="button secondary"
-                onClick={() => {
-                  if (targetProject) onNewCanvas(targetProject.id)
-                }}
-              >
+              <button className="button secondary" onClick={newCanvas}>
                 Create canvas
               </button>
             )}
           </div>
         ) : (
           <div className="home-file-grid">
-            {visible.map(({ record, project, dirty }) => (
-              <button
-                className="home-file"
-                key={record.id}
-                aria-label={`Open canvas ${record.document.name} in ${project.name}`}
-                title={`${record.document.name}.lcanvas`}
-                onClick={() => onOpenFile(project.id, record.id)}
-              >
-                <div className="home-file-preview" aria-hidden="true">
-                  <Icon name="canvas" />
-                  <span>{record.document.elements.length}</span>
-                </div>
-                <div className="home-file-name">
-                  <strong>{record.document.name}</strong>
-                  {dirty && (
-                    <span className="file-dirty" aria-label="Unsaved changes" />
+            {canvasSidebarFiles.map(({ record, project, dirty }) => {
+              const presentation = normalizeItemPresentation(
+                record.document.presentation,
+              )
+              return (
+                <article
+                  className="home-card"
+                  key={`${project.id}:${record.id}`}
+                  style={itemPresentationStyle(presentation)}
+                >
+                  <button
+                    className="home-file"
+                    aria-label={`Open canvas ${record.document.name} in ${project.name}`}
+                    title={`${record.document.name}.CLF`}
+                    onClick={() => onOpenFile(project.id, record.id)}
+                  >
+                    <div className="home-file-preview" aria-hidden="true">
+                      <CanvasThumbnail document={record.document} />
+                      <span>{record.document.elements.length}</span>
+                    </div>
+                    <div className="home-file-name">
+                      <PresentationIcon
+                        name={presentation.icon}
+                        color={presentation.color ?? undefined}
+                        size={16}
+                      />
+                      <strong>{record.document.name}</strong>
+                      {dirty && (
+                        <span
+                          className="file-dirty"
+                          aria-label="Unsaved changes"
+                        />
+                      )}
+                    </div>
+                    {presentation.description && (
+                      <p className="home-card-description">
+                        {presentation.description}
+                      </p>
+                    )}
+                    <div className="home-file-details">
+                      <span>{project.name}</span>
+                      <small>.CLF</small>
+                    </div>
+                  </button>
+                  {onCustomizeFile && (
+                    <button
+                      className="icon-button home-card-customize"
+                      aria-label={`Customize canvas ${record.document.name}`}
+                      title="Customize canvas"
+                      onClick={() => onCustomizeFile(project.id, record.id)}
+                    >
+                      <Icon name="options" />
+                    </button>
                   )}
-                </div>
-                <div className="home-file-details">
-                  <span>{project.name}</span>
-                  <small>.lcanvas</small>
-                </div>
-              </button>
-            ))}
+                </article>
+              )
+            })}
           </div>
         )}
       </div>
+      {choosingCanvasProject && projects.length > 0 && (
+        <CanvasDestinationDialog
+          projects={projects}
+          onClose={() => setChoosingCanvasProject(false)}
+          onChoose={(projectId) => {
+            if (!projects.some((project) => project.id === projectId)) return
+            setChoosingCanvasProject(false)
+            onNewCanvas(projectId)
+          }}
+        />
+      )}
+      {projectMenu &&
+        projects.some((project) => project.id === projectMenu.projectId) && (
+          <ProjectContextMenu
+            anchor={projectMenu}
+            project={projects.find(
+              (project) => project.id === projectMenu.projectId,
+            )!}
+            onClose={closeProjectMenu}
+            onOpen={openProject}
+            onNewChild={onNewProject}
+            onRename={onRenameProject}
+            onCustomize={onCustomizeProject}
+          />
+        )}
     </section>
   )
 }

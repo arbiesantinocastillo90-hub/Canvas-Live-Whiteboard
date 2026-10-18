@@ -3,7 +3,7 @@ Canvas Live
 Double-click "Canvas Live.exe" to open the website in your default browser.
 You do not need a terminal, npm, Node.js, or an internet connection to use this package.
 
-Keep this whole folder together, including "app" and the executable configuration file.
+Keep this whole folder together, including app, mcp, runtime, data, and the executable configuration files.
 You can move or copy the complete folder. Do not move only the executable.
 Close Canvas Live before moving the folder or replacing it with a newer build.
 
@@ -19,19 +19,22 @@ If that port is busy, Canvas Live chooses another local port automatically.
 This package includes Options, Projects, Work, and customizable themes.
 Appearance preferences and project names are remembered in this browser.
 Each project organizes multiple LCANVAS files with create, import, save and export.
-Canvas editing includes shapes, text, resizing, containing areas, layers and connections.
+Canvas editing includes shapes, text, resizing, layers, connections, and interactive media embeds.
 Connection arrows and paths are configurable and follow their linked objects.
 The right rail includes edit/view undo/redo, fit, zoom and fullscreen controls.
 Fullscreen focuses on the current file. Exit with the control or Escape.
-Use Properties for labels, exact geometry, area membership and layer organization.
-Save remembers changes in this browser; Export downloads the current LCANVAS v2 file.
-Existing LCANVAS v1 files remain importable. Tabs and panels can be closed and reopened.
-Files stay in this browser's local storage. Export .lcanvas copies for portable backups.
-A different browser or local port opens a separate file library.
-For optional AI editing, open "Start Canvas Live MCP.cmd" (requires Node.js 24).
-Open Workspace AI in the website, paste the companion's browser pairing code,
-and choose "Share this canvas". "Stop sharing" disconnects this file.
-Connect ChatGPT using the included CHATGPT_MCP.md setup guide.
-The companion runs only on this laptop; ChatGPT web requires a configured tunnel.
+Use Properties or right-click an object for geometry, text, style and layer adjustments.
+Save options control local saving; Export downloads a portable canvas copy.
+Older supported canvas formats remain importable. Tabs and panels can be closed and reopened.
+The native package retains its library in the data folder. Keep it when moving the USB.
+Browser permissions and unsaved browser drafts do not automatically transfer to another computer.
+For optional AI editing, open "Canvas Live MCP.exe". Its Node runtime is included.
+Open Workspace AI in the website and choose "Share this canvas".
+"Stop sharing" disconnects this file. No pairing-code copy is normally needed.
+Connect your MCP-compatible client using the included PORTABLE_MCP.md guide.
+The companion runs locally; cloud clients require their supported tunnel or HTTPS setup.
+Each AI client still requires its own account setup and connection approval.
+Client names are reported by the MCP connection; Canvas Live does not guess the AI model.
+Close the app and companion before unplugging the USB. Copy the complete folder, not just an icon.
 AI edits use the same Undo/Redo and remain unsaved until you press Save.
 Original project code is MIT licensed; keep the included license notices with the folder.

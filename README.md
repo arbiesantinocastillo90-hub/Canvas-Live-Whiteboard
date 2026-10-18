@@ -1,52 +1,88 @@
-# Canvas-Live-Whiteboard
+# Canvas Live
 
-Version of Canvas OS that multiple users and AI's could interact and collaborate on Canvas space.
+**A student-led, AI-assisted whiteboard for visual planning and explicit AI collaboration.**
 
-## Development status
+Canvas Live combines a TypeScript/SVG canvas editor, local project storage, a portable Windows launcher, and a Model Context Protocol (MCP) companion. A person can edit a board normally, share that specific canvas with an external AI client, and review or undo changes in the same editor.
 
-Canvas Live starts on a separate Home page for projects and LCANVAS files. Selecting a file opens the compact editor. It supports shapes, direct text editing, areas, layers, attached connections, group selection, eight resize handles, copy/cut/paste and duplication. Camera updates are batched to frames; Undo/Redo preserve the current view. Home and Options retain current tabs and history while pausing canvas commands and sharing. Save and Save as write physical local `.lcanvas` files in supported browsers; browser copies and draft recovery provide additional protection. Export makes a portable LCANVAS v2 backup; v1 files remain importable. See [Home, interaction and local file guide](docs/HOME_AND_LOCAL_FILES.md).
+This is a working student project under active development. The local editor and MCP protocol have been exercised together; the owner's current ChatGPT tunnel connection still needs end-to-end acceptance. Real-time multiplayer is future work.
 
-The optional MCP companion provides 15 bounded tools for the file explicitly shared through Workspace AI, including shared Undo/Redo. Ordinary AI edits tolerate completed camera navigation while preserving content conflict checks. The owner's ChatGPT plugin is installed and has read the shared canvas; confirming a live write through that account remains an acceptance step.
+![Canvas Live displaying the included architecture demo](docs/assets/portfolio-overview.png)
 
-The revised workspace centers file tabs and the canvas between a narrow icon ribbon and a fixed view rail. Left Files/Projects and right Tools/Properties/AI panels auto-close; double-click a panel tab or use its pin button to keep it open. Pinned panels sit beside the editor on wide screens. Controls show names on hover. Panel widths, contrast, interface colors, motion, commands and shortcuts remain customizable. Customize shortcuts in Options; Ctrl+P opens commands, Ctrl+O opens files and Space temporarily pans the canvas. See [Adaptable workspace](docs/ADAPTABLE_WORKSPACE.md) for controls and release activation.
+The screenshot uses the [included sample canvas](examples/portfolio-demo.CLF), with generic project data. See the [demo walkthrough](examples/README.md) to reproduce it.
 
-- [Project specification](PROJECT_SPEC.md)
-- [Agent instructions](AGENTS.md)
-- [Initial inspection and Milestone 0–1 plan](docs/INSPECTION.md)
-- [Roadmap](docs/ROADMAP.md)
-- [Setup and testing](docs/TESTING.md)
-- [Milestone 0 verification results](docs/MILESTONE_0.md)
-- [Windows executable and verification](docs/WINDOWS_LAUNCHER.md)
-- [Themes, Projects and Work](docs/UI_WORKSPACE.md)
-- [Adaptable layout, appearance, motion and keyboard shortcuts](docs/ADAPTABLE_WORKSPACE.md)
-- [Compact reference UI verification](docs/REFERENCE_UI_VERIFICATION.md)
-- [Home, canvas interactions and physical local files](docs/HOME_AND_LOCAL_FILES.md)
-- [Current home and interaction verification](docs/HOME_AND_INTERACTIONS_VERIFICATION.md)
-- [LCANVAS files and viewer](docs/LCANVAS.md)
-- [Canvas editing and controls](docs/EDITOR.md)
-- [Editor verification](docs/EDITOR_VERIFICATION.md)
-- [Connect ChatGPT through MCP](docs/CHATGPT_MCP.md)
-- [MCP verification](docs/MCP_VERIFICATION.md)
-- [Architecture](docs/ARCHITECTURE.md)
-- [Dependencies and licenses](docs/LICENSES.md)
+## What you can do
 
-Project brain: `D:\Canvas Live`. Initial AI client: ChatGPT. The MVP is local-first and single-user, with external AI editing through MCP. Multi-user collaboration is a later milestone.
+- Organize workspaces, nested projects and canvases, with explicit creation destinations and independent appearance settings.
+- Edit shapes, text, areas and attached relationships. Use group selection, text formatting, snapping, expandable layers, layer dragging and Undo/Redo.
+- Add images, GIFs, audio, video, websites and supported documents. Pause or minimize embeds; website interactivity depends on the provider's framing policy.
+- Save and recover local work, import/export validated `.CLF`, `.CLP` and `.CLW` files, and copy exact/latest local workspace links.
+- Share one canvas with an MCP client through 15 bounded tools. Edits use the same validated operations as manual editing.
+- Build a Windows package containing the local site, C# launchers and a verified Node runtime for the optional companion.
 
-## Run on Windows
+## Try it from source
 
-For the packaged version, open `release/Canvas Live` and double-click **Canvas Live.exe**. It starts the local website and opens your default browser. Keep the complete folder together, including `app/` and the executable configuration file. This package runs without Node.js or a terminal. Right-click its Windows tray icon and choose **Close Canvas Live** when finished.
+Use **Node.js 24.x, version 24.15 or newer**, and npm. No model API key is needed to edit canvases or test the local MCP server.
 
-The package contains the current workspace, themes, LCANVAS file organizer and editor. Undo/redo restore manual and AI edits and view changes. To enable the optional AI companion, open **Start Canvas Live MCP.cmd** beside the executable (requires Node.js 24), then pair and share a file through Workspace AI. ChatGPT web uses a configured Secure MCP Tunnel; a local desktop client can connect directly. See [CHATGPT_MCP.md](docs/CHATGPT_MCP.md). Browser storage belongs to a browser profile and URL origin, including the port; moving the executable does not carry your files. Export .lcanvas copies before changing browsers or ports.
-
-### Development
-
-Install Node.js 24 LTS (24.15 or newer in the 24.x line), then use PowerShell in the repository:
-
-```powershell
-npm.cmd ci
-npm.cmd run dev
+```sh
+git clone https://github.com/arbiesantinocastillo90-hub/Canvas-Live-Whiteboard.git
+cd Canvas-Live-Whiteboard
+npm ci
+npm run dev
 ```
 
-Open `http://127.0.0.1:5173`. The development server binds to loopback by default. Run `npm.cmd run mcp` in a second terminal to start the optional authenticated MCP companion at `127.0.0.1:8787`. The app requires no model API or cloud storage; ChatGPT's external connection has its own account/transport requirements.
+Open the loopback address printed by Vite, normally `http://127.0.0.1:5173`. On Windows PowerShell, use `npm.cmd` if the `npm.ps1` wrapper is blocked.
 
-Run the development checks with `npm.cmd run check`. See [TESTING.md](docs/TESTING.md) for individual commands and current coverage. The project is licensed under [MIT](LICENSE); dependencies retain their own notices.
+Create a project, choose its parent or **Workspace root**, then import [portfolio-demo.CLF](examples/portfolio-demo.CLF) from the canvas library. The app is useful without an AI connection.
+
+For the optional companion, run `npm run mcp` in another terminal and follow [MCP setup](docs/CHATGPT_MCP.md). Browser pairing codes, MCP client tokens and OpenAI tunnel runtime keys serve different purposes. ChatGPT web needs its supported tunnel or a reachable HTTPS endpoint; a local loopback URL alone is insufficient.
+
+### Portable Windows build
+
+```powershell
+npm.cmd run package:windows
+```
+
+Open `release/Canvas Live/Canvas Live.exe`; start `Canvas Live MCP.exe` for optional AI access. Keep the complete folder and its `data/` directory together. Node is bundled for the companion, and administrator installation normally isn't needed. School device policies may still restrict executable files or network connections.
+
+There is currently no published binary release. The [portable guide](docs/PORTABLE_MCP.md) explains USB startup, saving, credentials and transport limits. A second physical computer has not yet been verified.
+
+## Engineering highlights
+
+| Problem                                                        | Design choice                                                         | Where to look                                                                     |
+| -------------------------------------------------------------- | --------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| Manual and AI edits must obey the same rules                   | Validated canvas operations and shared history                        | [Operations](src/app/canvasOperations.ts), [commands](src/mcp/canvasCommands.ts)  |
+| Camera navigation should not invalidate ordinary content edits | Separate content revisions while retaining conflict checks            | [Revisions](src/mcp/canvasRevision.ts), [bridge](server/bridge.ts)                |
+| Retries must not duplicate edits                               | Stable IDs, operation IDs, atomic batches and browser acknowledgments | [Protocol tests](tests/mcp/companion.test.ts)                                     |
+| AI access needs a clear boundary                               | Explicit sharing, separate credentials and bounded tools              | [Transport](server/http.ts), [browser bridge](src/app/useMcpBridge.ts)            |
+| Local saves must handle failures                               | Draft recovery, explicit destinations and native optimistic revisions | [Recovery](src/app/canvasRecovery.ts), [native library](launcher/LocalLibrary.cs) |
+
+Read the [case study](docs/CASE_STUDY.md) for the problem, tradeoffs and lessons, or the [architecture](docs/ARCHITECTURE.md) for component boundaries.
+
+## Milestones and evidence
+
+The [timeline](docs/TIMELINE.md) links real commits and retains their timezone offsets. The [roadmap](docs/ROADMAP.md) separates delivered behavior, remaining acceptance work and future scope. Dates describe evidence and commits, not estimated effort or retroactively assigned deadlines.
+
+The October 18 verification record reports **1,041 application tests**, **64 MCP protocol tests**, and **13 isolated browser scenarios**, including a real local MCP read/edit/Undo round trip. Earlier native media and portable-launcher checks are recorded separately; overlapping runs are not added into one total. See [verification details](docs/WORKSPACE_INTERACTIONS_VERIFICATION.md) and [testing instructions](docs/TESTING.md).
+
+```sh
+npm run check
+npm run check:docs
+```
+
+GitHub Actions runs source/protocol checks and the build on Linux. Native checks require Windows and have separate commands and documented boundaries.
+
+## Project ownership and AI assistance
+
+This is a student portfolio project. Product direction, requirements, interaction feedback and acceptance decisions come from the project owner. OpenAI Codex assists with implementation, debugging, tests and documentation. The repository presents AI-assisted engineering work; it does not claim every line was written manually.
+
+The portfolio focuses on turning a product idea into testable behavior, inspecting failures, making tradeoffs and maintaining a development record. See [the development process](docs/CASE_STUDY.md#development-process-and-ai-assistance).
+
+## Current boundaries
+
+- The product is single-user with an explicitly shared AI editing session. Multiplayer and automatic concurrent document merging are not implemented.
+- Current ChatGPT account/tunnel acceptance remains pending; a local SDK round trip is separate evidence.
+- Portable builds target Windows x64 with the documented .NET requirements. Another physical computer and school compatibility remain unverified.
+- Unsaved browser drafts, browser permissions and files saved outside the USB do not automatically travel with the package.
+- Large-board performance and broader accessibility/device testing need further work. Existing bundle-size warnings remain documented.
+
+[Documentation](docs/README.md) · [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md) · [MIT license](LICENSE) · [Dependency notices](docs/LICENSES.md)

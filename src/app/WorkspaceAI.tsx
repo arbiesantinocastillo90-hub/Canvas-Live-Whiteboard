@@ -17,13 +17,11 @@ export default function WorkspaceAI({
   const [pairingCode, setPairingCode] = useState('')
   const sharing = bridge.status === 'sharing'
   const connecting = bridge.status === 'connecting'
-
-  function share(event: FormEvent) {
+  function manualShare(event: FormEvent) {
     event.preventDefault()
     void bridge.share(pairingCode)
     setPairingCode('')
   }
-
   return (
     <aside
       className="workspace-ai-panel"
@@ -44,15 +42,24 @@ export default function WorkspaceAI({
       <div className="ai-context-mark">
         <Icon name="work" />
       </div>
-      <p className="eyebrow">Current context</p>
-      <dl className="ai-context">
-        <dt>Project</dt>
-        <dd>{projectName}</dd>
-        <dt>Canvas</dt>
-        <dd>{canvasName ?? 'No canvas open'}</dd>
-        <dt>Integration</dt>
-        <dd>ChatGPT · custom MCP server</dd>
-      </dl>
+      {sharing ? (
+        <>
+          <p className="eyebrow">Shared context</p>
+          <dl className="ai-context">
+            <dt>Project</dt>
+            <dd>{projectName}</dd>
+            <dt>Canvas</dt>
+            <dd>{canvasName}</dd>
+            <dt>Connected client (reported)</dt>
+            <dd>{bridge.mcpClient ?? 'Waiting for an AI client'}</dd>
+          </dl>
+        </>
+      ) : (
+        <p className="ai-introduction">
+          Collaborate with your preferred AI on this canvas. Start{' '}
+          <strong>Canvas Live MCP</strong> from your USB, then share below.
+        </p>
+      )}
       <div className="ai-status-card" data-sharing={sharing} aria-live="polite">
         <span className="status-dot" />
         <strong>
@@ -68,7 +75,7 @@ export default function WorkspaceAI({
           {bridge.error}
         </p>
       )}
-      {bridge.lastOperation && (
+      {sharing && bridge.lastOperation && (
         <div className="ai-last-operation" role="status">
           <span>Latest MCP operation</span>
           <p>{bridge.lastOperation}</p>
@@ -82,28 +89,50 @@ export default function WorkspaceAI({
           {connecting ? 'Cancel connection' : 'Stop sharing'}
         </button>
       ) : (
-        <form className="ai-pairing-form" onSubmit={share}>
-          <label htmlFor="mcp-pairing-code">Browser pairing code</label>
-          <input
-            id="mcp-pairing-code"
-            type="password"
-            autoComplete="off"
-            spellCheck={false}
-            value={pairingCode}
-            onChange={(event) => setPairingCode(event.target.value)}
-            placeholder="Paste the companion code"
-            maxLength={256}
-            disabled={!canvasName}
-            required
-          />
+        <>
           <button
             className="button primary ai-share-button"
             title="Allow the connected AI to read and edit this canvas"
-            disabled={!canvasName || !pairingCode.trim()}
+            disabled={!canvasName}
+            onClick={() => {
+              void bridge.share()
+            }}
           >
             Share this canvas
           </button>
-        </form>
+          {!canvasName && (
+            <p className="ai-introduction">Open a canvas to share it.</p>
+          )}
+          <details className="ai-setup">
+            <summary>Use a pairing code instead</summary>
+            <form className="ai-pairing-form" onSubmit={manualShare}>
+              <label htmlFor="mcp-pairing-code">Browser pairing code</label>
+              <input
+                id="mcp-pairing-code"
+                type="password"
+                autoComplete="off"
+                spellCheck={false}
+                value={pairingCode}
+                onChange={(event) => setPairingCode(event.target.value)}
+                placeholder="Paste the companion code"
+                maxLength={256}
+                disabled={!canvasName}
+                required
+              />
+              <button
+                className="button secondary ai-share-button"
+                disabled={!canvasName || !pairingCode.trim()}
+              >
+                Pair and share
+              </button>
+              <p className="quiet-note">
+                Use the browser pairing code here. The MCP access token is for
+                your AI client. In the portable app, Share this canvas connects
+                automatically without pasting a code.
+              </p>
+            </form>
+          </details>
+        </>
       )}
       <details className="ai-setup ai-sharing-details">
         <summary>Sharing details</summary>
@@ -115,31 +144,33 @@ export default function WorkspaceAI({
         </p>
       </details>
       <details className="ai-setup">
-        <summary>ChatGPT connection setup</summary>
+        <summary>Connect your AI</summary>
         <ol>
           <li>
-            Start the Canvas Live companion in its project folder:{' '}
-            <code>npm run mcp</code>.
+            Open <strong>Canvas Live MCP.exe</strong> on your USB. Its status
+            window provides the connection address and setup steps.
           </li>
           <li>
-            Paste its browser pairing code above and select Share this canvas.
+            Add the companion in your MCP-compatible AI client, such as ChatGPT,
+            Claude, or Codex. Each client needs its own connection setup.
           </li>
           <li>
-            In ChatGPT, open Plugins → + → Add custom MCP server. Choose
-            Connection Tunnel and follow the companion setup guide to start a
-            Secure MCP Tunnel with its separate MCP access code.
+            Choose <strong>Share this canvas</strong> here. Only the canvas you
+            share becomes available to the AI.
           </li>
         </ol>
         <p>
-          The tunnel lets ChatGPT reach the local companion. A Server URL
-          connection requires a reachable HTTPS endpoint instead.
+          A cloud AI client needs a secure tunnel or a reachable HTTPS endpoint.
+          The portable companion runs locally; it does not create a cloud
+          connection automatically.
         </p>
+        <p>The client reports its name; this does not identify the model.</p>
         <a
-          href="https://developers.openai.com/api/docs/guides/custom-mcp-server"
+          href="https://developers.openai.com/plugins/deploy/connect-chatgpt"
           target="_blank"
           rel="noreferrer"
         >
-          Open ChatGPT setup instructions
+          ChatGPT connection guide
         </a>
       </details>
     </aside>

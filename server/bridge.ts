@@ -91,6 +91,7 @@ export class CanvasBridge {
   private jobs = new Map<string, Job>()
   private pending: Job | null = null
   private mcpLastSeen: number | null = null
+  private mcpClient: string | null = null
   private lastOperation: { summary: string; at: number } | null = null
   private readonly leaseMs: number
   private readonly operationMs: number
@@ -128,6 +129,16 @@ export class CanvasBridge {
   close() {
     this.revoke()
   }
+  /** MCP implementation identity is client-reported, not model detection. */
+  identifyClient(name: string | undefined) {
+    const clean = name
+      ?.split('')
+      .filter((char) => char.charCodeAt(0) >= 32 && char.charCodeAt(0) !== 127)
+      .join('')
+      .trim()
+      .slice(0, 120)
+    this.mcpClient = clean || null
+  }
   private live() {
     if (this.owner && Date.now() - this.owner.lastSeen > this.leaseMs)
       this.revoke()
@@ -140,7 +151,8 @@ export class CanvasBridge {
   }
   private status(): BridgeResponse {
     return {
-      mcpClient: this.mcpLastSeen === null ? null : 'MCP client',
+      mcpClient:
+        this.mcpLastSeen === null ? null : (this.mcpClient ?? 'MCP client'),
       mcpLastSeen: this.mcpLastSeen,
       lastOperation: this.lastOperation,
     }

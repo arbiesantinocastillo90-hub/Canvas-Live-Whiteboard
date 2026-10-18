@@ -70,10 +70,20 @@ export function createCompanion(options: CompanionOptions) {
     throw new Error('Use distinct, strong browser and MCP credentials.')
   const bridge = options.bridge ?? new CanvasBridge()
   const origins = new Set(options.origins ?? defaultOrigins)
-  const mcp = createMcpHandler(() => createCanvasMcpServer(bridge), {
-    responseMode: 'json',
-    maxRequestBodySize: MAX_MCP_BYTES,
-  })
+  const mcp = createMcpHandler(
+    () => {
+      const instance = createCanvasMcpServer(bridge)
+      instance.server.oninitialized = () => {
+        const client = instance.server.getClientVersion()
+        if (client) bridge.identifyClient(client.title || client.name)
+      }
+      return instance
+    },
+    {
+      responseMode: 'json',
+      maxRequestBodySize: MAX_MCP_BYTES,
+    },
+  )
   const handleMcp = toNodeHandler(mcp, { maxRequestBodySize: MAX_MCP_BYTES })
   let windowStarted = Date.now()
   let bridgeRequests = 0
