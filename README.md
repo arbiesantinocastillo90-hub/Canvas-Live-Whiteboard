@@ -2,6 +2,8 @@
 
 **A student-led, AI-assisted whiteboard for visual planning and explicit AI collaboration.**
 
+**Vibe coded with OpenAI Codex.** I guide the ideas, requirements and interaction design, test the app, and refine it with Codex's help.
+
 Canvas Live combines a TypeScript/SVG canvas editor, local project storage, a portable Windows launcher, and a Model Context Protocol (MCP) companion. A person can edit a board normally, share that specific canvas with an external AI client, and review or undo changes in the same editor.
 
 This is a working student project under active development. The local editor and MCP protocol have been exercised together; the owner's current ChatGPT tunnel connection still needs end-to-end acceptance. Real-time multiplayer is future work.
@@ -73,7 +75,7 @@ GitHub Actions runs source/protocol checks and the build on Linux. Native checks
 
 ## Project ownership and AI assistance
 
-This is a student portfolio project. Product direction, requirements, interaction feedback and acceptance decisions come from the project owner. OpenAI Codex assists with implementation, debugging, tests and documentation. The repository presents AI-assisted engineering work; it does not claim every line was written manually.
+This is a student portfolio project built through vibe coding with OpenAI Codex. Product direction, requirements, interaction feedback and acceptance decisions come from the project owner. Codex assists with implementation, debugging, tests and documentation. The repository presents AI-assisted engineering work; it does not claim every line was written manually.
 
 The portfolio focuses on turning a product idea into testable behavior, inspecting failures, making tradeoffs and maintaining a development record. See [the development process](docs/CASE_STUDY.md#development-process-and-ai-assistance).
 

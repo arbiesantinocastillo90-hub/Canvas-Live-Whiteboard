@@ -50,7 +50,7 @@ The current owner's ChatGPT workflow awaits tunnel runtime-key setup and a succe
 
 ## Development process and AI assistance
 
-The student owner supplies the idea, requirements, interaction annotations, priorities and acceptance feedback. OpenAI Codex assists with implementation, debugging, tests and documentation. This project makes that assistance explicit.
+This project was vibe coded with OpenAI Codex. The student owner supplies the idea, requirements, interaction annotations, priorities and acceptance feedback. Codex assists with implementation, debugging, tests and documentation. This project makes that assistance explicit.
 
 Iterations followed concrete interactions: a failed save, awkward selection, camera conflict, confusing connection or unclear destination became a bounded change and verification target. Git preserves actual delivery dates; the timeline does not convert a request date into an implementation date.
 
