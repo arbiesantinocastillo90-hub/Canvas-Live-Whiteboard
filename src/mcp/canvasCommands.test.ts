@@ -64,6 +64,58 @@ function manyObjects(count: number): CanvasDocument {
 }
 
 describe('MCP canvas command schemas', () => {
+  it('validates and persists connection endpoint sides through create and update commands', () => {
+    const created = applyCanvasCommand(
+      board(),
+      commandSchema.parse({
+        kind: 'connect',
+        fromId: 'one',
+        toId: 'two',
+        options: { id: 'edge', fromSide: 'bottom', toSide: 'top' },
+      }),
+    )
+    expect(findShape(created.document, 'edge')).toMatchObject({
+      fromSide: 'bottom',
+      toSide: 'top',
+    })
+    const updated = applyCanvasCommand(
+      created.document,
+      commandSchema.parse({
+        kind: 'update',
+        id: 'edge',
+        patch: { fromSide: 'auto', toSide: 'left' },
+      }),
+    )
+    expect(findShape(updated.document, 'edge')).toMatchObject({
+      fromSide: 'auto',
+      toSide: 'left',
+    })
+    expect(
+      commandSchema.safeParse({
+        kind: 'connect',
+        fromId: 'one',
+        toId: 'two',
+        options: { fromSide: 'center' },
+      }).success,
+    ).toBe(false)
+    expect(
+      commandSchema.safeParse({
+        kind: 'update',
+        id: 'edge',
+        patch: { toSide: 'outside' },
+      }).success,
+    ).toBe(false)
+    expect(() =>
+      applyCanvasCommand(
+        board(),
+        commandSchema.parse({
+          kind: 'update',
+          id: 'one',
+          patch: { fromSide: 'right' },
+        }),
+      ),
+    ).toThrow('unsupported')
+  })
   it.each([
     { ...shape('rectangle'), type: 'rectangle' },
     { ...shape('ellipse'), type: 'ellipse' },

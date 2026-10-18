@@ -321,6 +321,14 @@
   background: transparent;
   color: var(--muted);
   font-size: 11px;
+  min-width: 0;
+  flex: 1 1 0;
+}
+.dock-panel-tabs button[data-icon='true'] {
+  padding-inline: 3px;
+}
+.dock-panel-tabs button[data-icon='true'] > span {
+  display: none;
 }
 .dock-panel-tabs button[aria-selected='true'] {
   color: var(--ink);
@@ -334,7 +342,8 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 25px;
+  width: 24px;
+  flex: 0 0 24px;
   height: 28px;
   padding: 4px;
   border: 0;
@@ -555,28 +564,75 @@
 @keyframes dock-reveal {
   from {
     opacity: 0;
-    transform: translateX(calc(var(--motion-distance) * var(--dock-direction)));
+    transform: translateX(calc(var(--motion-distance) * var(--dock-direction)))
+      scale(var(--motion-enter-scale));
   }
   to {
     opacity: 1;
-    transform: translateX(0);
+    transform: translateX(0) scale(1);
   }
 }
-@media (max-width: 900px) {
-  .dock-panel[data-pinned='true'] {
-    position: absolute;
-    top: 40px;
-    bottom: 0;
-    max-width: calc(100% - 42px);
-    box-shadow: 0 8px 28px #00000024;
-  }
-  .dock-panel[data-pinned='true'][data-dock-side='left'] {
-    left: 0;
-  }
-  .dock-panel[data-pinned='true'][data-dock-side='right'] {
-    right: 42px;
-  }
+
+/* Physical placement is independent of which collection lives in the dock. */
+.workspace-deck > .dock-panel[data-dock-side='left'] {
+  order: 0;
 }
+.workspace-deck > .canvas-column {
+  order: 1;
+}
+.workspace-deck > .dock-panel[data-dock-side='right'] {
+  order: 2;
+}
+.app-shell .workspace-ribbon .nav-item,
+.app-shell .workspace-ribbon .icon-button,
+.app-shell .canvas-view-rail button {
+  background: var(--rail-button-bg, var(--panel));
+  border: 1px solid var(--rail-button-line, var(--line));
+}
+.app-shell .workspace-ribbon .nav-item:hover:not(:disabled),
+.app-shell .workspace-ribbon .icon-button:hover:not(:disabled),
+.app-shell .canvas-view-rail button:hover:not(:disabled),
+.app-shell .canvas-view-rail button[aria-expanded='true'],
+.app-shell .canvas-view-rail button[aria-pressed='true'] {
+  background: var(--tint);
+  border-color: var(--line);
+  color: var(--accent-text);
+}
+.dock-move-handle {
+  cursor: grab;
+  touch-action: none;
+}
+.dock-move-handle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.dock-panel[data-arranging='true'] {
+  outline: 2px dashed var(--accent);
+  outline-offset: -2px;
+  opacity: 0.86;
+  animation: none;
+}
+.dock-panel[data-arranging='true'] .dock-panel-header,
+.dock-panel[data-arranging='true'] .dock-move-handle {
+  cursor: grabbing;
+  user-select: none;
+}
+.workspace-deck:has(.dock-panel[data-arranging='true'])::after {
+  content: '';
+  position: absolute;
+  pointer-events: none;
+  z-index: 11;
+  inset-block: 40px 0;
+  left: 0;
+  width: min(32%, 300px);
+  background: var(--tint);
+  border: 2px dashed var(--accent);
+}
+.workspace-deck:has(.dock-panel[data-drop-side='right'])::after {
+  left: auto;
+  right: 42px;
+}
+
 @media (max-width: 480px) {
   .workspace-tab-actions {
     gap: 0;
@@ -588,9 +644,6 @@
   .dock-panel-tabs button {
     padding-inline: 4px;
     gap: 3px;
-  }
-  .dock-panel-tabs .icon {
-    display: none;
   }
   .file-statusbar > span:last-child {
     display: none;

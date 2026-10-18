@@ -9,6 +9,7 @@ New-Item -ItemType Directory -Path $taskReleaseRoot -Force | Out-Null
 $taskStage = Join-Path $taskReleaseRoot ('.stage-' + [Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $taskStage | Out-Null
 Copy-Item -LiteralPath (Join-Path $taskRoot 'dist') -Destination (Join-Path $taskStage 'app') -Recurse
+Copy-Item -LiteralPath (Join-Path $taskRoot 'launcher/canvas-live.ico') -Destination (Join-Path $taskStage 'app/canvas-live.ico')
 Copy-Item -LiteralPath (Join-Path $taskRoot 'LICENSE') -Destination (Join-Path $taskStage 'LICENSE.txt')
 Copy-Item -LiteralPath (Join-Path $taskRoot 'docs/THIRD_PARTY_NOTICES.md') -Destination (Join-Path $taskStage 'THIRD_PARTY_NOTICES.txt')
 Copy-Item -LiteralPath (Join-Path $taskRoot 'launcher/README.txt') -Destination (Join-Path $taskStage 'README.txt')
@@ -19,7 +20,7 @@ Copy-Item -LiteralPath (Join-Path $taskRoot 'launcher/Start Canvas Live MCP.cmd'
 Copy-Item -LiteralPath (Join-Path $taskRoot 'docs/CHATGPT_MCP.md') -Destination (Join-Path $taskStage 'CHATGPT_MCP.md')
 Copy-Item -LiteralPath (Join-Path $taskRoot 'scripts/start-chatgpt-tunnel.ps1') -Destination $taskStage
 Copy-Item -LiteralPath (Join-Path $taskRoot 'plugins/canvas-live') -Destination (Join-Path $taskStage 'plugin') -Recurse
-& $taskCompiler '/nologo' '/target:winexe' '/platform:anycpu' '/optimize+' '/reference:System.Windows.Forms.dll' '/reference:System.Drawing.dll' ('/out:' + (Join-Path $taskStage 'Canvas Live.exe')) (Join-Path $taskRoot 'launcher/CanvasLiveLauncher.cs')
+& $taskCompiler '/nologo' '/target:winexe' '/platform:anycpu' '/optimize+' '/reference:System.Windows.Forms.dll' '/reference:System.Drawing.dll' '/reference:System.Web.Extensions.dll' ('/win32icon:' + (Join-Path $taskRoot 'launcher/canvas-live.ico')) ('/out:' + (Join-Path $taskStage 'Canvas Live.exe')) (Join-Path $taskRoot 'launcher/CanvasLiveLauncher.cs') (Join-Path $taskRoot 'launcher/LocalLibrary.cs')
 if ($LASTEXITCODE -ne 0) { throw 'Launcher compilation failed. The staged files have been retained for inspection.' }
 Copy-Item -LiteralPath (Join-Path $taskRoot 'launcher/Canvas Live.exe.config') -Destination $taskStage
 foreach ($taskMovePath in @($taskOutput, $taskStage)) {

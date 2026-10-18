@@ -2,7 +2,7 @@
 
 ## Projects and saving
 
-A project organizes multiple `.lcanvas` files. Work returns to the latest project and its most recently opened file. Open files appear as tabs. Closing a tab or panel never deletes a file; the file explorer reopens it.
+A project logically organizes multiple `.lcanvas` files and can have child projects without moving physical files. Work resumes the selected saved workspace's project, open tabs and active file. Closing a tab or panel never deletes a file; All files reopens it. Named UI snapshots use `.lworkspace` separately from canvas content.
 
 - **New canvas** creates and stores a blank file in the current project.
 - **Import** validates supported files and stores new copies in that project.
@@ -10,13 +10,15 @@ A project organizes multiple `.lcanvas` files. Work returns to the latest projec
 - **Save** stores the entire document: objects, layers, membership, connections and viewport. The indicator reports unsaved changes or failed storage.
 - **Export** downloads a portable copy of the current state, including unsaved changes.
 
-Edits and navigation require explicit Save. Unsaved drafts survive section/project navigation in the current tab; the app warns before page unload when drafts remain. They are not a durable backup. Opening a different file starts a fresh undo session. See [EDITOR.md](EDITOR.md) for tools, fullscreen, layers and connections.
+Save/Save as write a chosen local LCANVAS file. Bound automatic saving uses already granted permission; browser copies and independent draft recovery assist reopening. Valid property edits commit without clicking Apply. The app warns before page unload when unsaved drafts remain. Physical files remain independent of browser data. Opening a different file starts a fresh undo session; content Undo/Redo retains the latest camera. See [HOME_AND_LOCAL_FILES.md](HOME_AND_LOCAL_FILES.md) and [BUGS_ERRORS_REVISION.md](BUGS_ERRORS_REVISION.md).
 
 Project names and appearance preferences retain their existing browser metadata. Individual files use project-scoped IndexedDB, with validated ownership on every read/write. Failed writes retain a clearly labelled session overlay. There is no arbitrary per-project file-count cap; browser quota and device memory are practical limits.
 
 Browser data belongs to its profile and URL origin, including the port. Moving the executable folder does not carry browser documents. Export important files and import them into another browser or origin. Clearing site data removes local records. A downloaded file and a saved browser record are separate copies. There is no cross-tab conflict resolution yet.
 
 ## Version 2 format
+
+Connections accept optional `fromSide` and `toSide` values `auto`, `top`, `right`, `bottom` or `left`. Older files without them remain valid; loading materializes fixed sides from initial geometry in memory. Explicit Auto tracks the boundary dynamically. Saving includes the chosen sides; merely opening a file does not rewrite its physical bytes.
 
 LCANVAS is UTF-8 JSON with exact root fields `format`, `version`, `name`, `viewport`, `layers` and `elements`. Extra fields, external resource URLs, executable markup and unsupported payloads are rejected. It is an independent Canvas Live format. A complete blank file is:
 
@@ -68,4 +70,4 @@ Valid version 1 files are still supported. Their original root fields are `forma
 
 Reads return v2 models in memory. Opening an old browser record updates recency while preserving its original stored v1 payload. Save and export write v2. Original disk files are never overwritten by import. Portable documents contain no project IDs, local record IDs or timestamps.
 
-Undo/redo history is session state, excluded from portable files. Content and viewport share at most 100 retained snapshots and an estimated 32 MiB history budget. The optional MCP companion operates on the explicitly shared open document through the editor and does not change the file format or save automatically. See the historical [viewer verification](LCANVAS_VERIFICATION.md), [editor verification](EDITOR_VERIFICATION.md) and subsequent [MCP verification](MCP_VERIFICATION.md).
+Undo/redo history is session state, excluded from portable files. Content history preserves the current viewport, with at most 100 retained snapshots and an estimated 32 MiB history budget. The optional MCP companion operates on the explicitly shared open document through the editor. Its committed edits follow the same explicit Save or granted-permission bound autosave path as manual edits; MCP receives no arbitrary filesystem access. See the historical [viewer verification](LCANVAS_VERIFICATION.md), [editor verification](EDITOR_VERIFICATION.md) and subsequent [MCP verification](MCP_VERIFICATION.md).

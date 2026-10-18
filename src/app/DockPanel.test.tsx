@@ -3,7 +3,17 @@ import { act, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import DockPanel from './DockPanel'
 
-function Harness({ initialPinned = false }: { initialPinned?: boolean }) {
+function Harness({
+  initialPinned = false,
+  autoHide = true,
+  autoHideDelay = 280,
+  onMove,
+}: {
+  initialPinned?: boolean
+  autoHide?: boolean
+  autoHideDelay?: number
+  onMove?: (side: 'left' | 'right') => void
+}) {
   const [open, setOpen] = useState(true)
   const [pinned, setPinned] = useState(initialPinned)
   const [width, setWidth] = useState(260)
@@ -29,6 +39,9 @@ function Harness({ initialPinned = false }: { initialPinned?: boolean }) {
         onClose={() => setOpen(false)}
         onPin={setPinned}
         onWidthChange={setWidth}
+        autoHide={autoHide}
+        autoHideDelay={autoHideDelay}
+        onMove={onMove}
       >
         <input aria-label="Draft" defaultValue="Draft text" />
       </DockPanel>
@@ -37,7 +50,10 @@ function Harness({ initialPinned = false }: { initialPinned?: boolean }) {
 }
 
 describe('transient workspace docks', () => {
-  afterEach(() => vi.useRealTimers())
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.unstubAllGlobals()
+  })
 
   it('auto-closes after the pointer leaves, retains its draft, and ignores its trigger', () => {
     vi.useFakeTimers()
@@ -185,5 +201,87 @@ describe('transient workspace docks', () => {
     fireEvent.pointerMove(screen.getByRole('button', { name: 'Canvas' }))
     act(() => vi.advanceTimersByTime(400))
     expect(screen.queryByRole('complementary')).toBeNull()
+  })
+
+  it('uses the configured auto-hide delay and lets users disable automatic closing', () => {
+    vi.useFakeTimers()
+    const view = render(<Harness autoHideDelay={640} />)
+    fireEvent.pointerMove(screen.getByRole('button', { name: 'Canvas' }))
+    act(() => vi.advanceTimersByTime(639))
+    expect(screen.getByRole('complementary')).toBeVisible()
+    act(() => vi.advanceTimersByTime(1))
+    expect(screen.queryByRole('complementary')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Files trigger' }))
+    view.rerender(<Harness autoHide={false} />)
+    fireEvent.pointerMove(screen.getByRole('button', { name: 'Canvas' }))
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Canvas' }))
+    act(() => vi.advanceTimersByTime(3000))
+    expect(screen.getByRole('complementary')).toBeVisible()
+    fireEvent.click(screen.getByRole('button', { name: 'Close left panel' }))
+    expect(screen.queryByRole('complementary')).toBeNull()
+  })
+
+  it('moves a header to the opposite physical side without closing or losing its contents', () => {
+    vi.stubGlobal('PointerEvent', MouseEvent)
+    vi.useFakeTimers()
+    const move = vi.fn()
+    render(<Harness onMove={move} />)
+    const grip = screen.getByRole('button', { name: 'Move left panel' })
+    const header = grip.closest('.dock-panel-header')!
+    fireEvent.change(screen.getByLabelText('Draft'), {
+      target: { value: 'Still here' },
+    })
+    fireEvent.pointerDown(grip, { button: 0, clientX: 100 })
+    expect(screen.getByRole('complementary')).toHaveAttribute(
+      'data-arranging',
+      'true',
+    )
+    fireEvent.pointerMove(header, { clientX: window.innerWidth - 10 })
+    fireEvent.pointerMove(screen.getByRole('button', { name: 'Canvas' }))
+    act(() => vi.advanceTimersByTime(1000))
+    expect(screen.getByRole('complementary')).toBeVisible()
+    fireEvent.pointerUp(header, { clientX: window.innerWidth - 10 })
+    expect(move).toHaveBeenCalledExactlyOnceWith('right')
+    expect(screen.getByRole('complementary')).toHaveAttribute(
+      'data-arranging',
+      'false',
+    )
+    expect(screen.getByLabelText('Draft')).toHaveValue('Still here')
+  })
+
+  it('cancels panel rearrangement with Escape and offers the same placement through keyboard controls', () => {
+    vi.stubGlobal('PointerEvent', MouseEvent)
+    const move = vi.fn()
+    render(<Harness onMove={move} />)
+    const grip = screen.getByRole('button', { name: 'Move left panel' })
+    const header = grip.closest('.dock-panel-header')!
+    fireEvent.pointerDown(grip, { button: 0, clientX: 100 })
+    fireEvent.pointerMove(header, { clientX: window.innerWidth - 10 })
+    fireEvent.keyDown(grip, { key: 'Escape' })
+    fireEvent.pointerUp(header, { clientX: window.innerWidth - 10 })
+    expect(move).not.toHaveBeenCalled()
+    expect(screen.getByRole('complementary')).toBeVisible()
+    fireEvent.keyDown(grip, { key: 'ArrowRight', altKey: true })
+    expect(move).toHaveBeenLastCalledWith('right')
+    fireEvent.keyDown(grip, { key: 'ArrowLeft', altKey: true })
+    expect(move).toHaveBeenLastCalledWith('left')
+    fireEvent.click(grip, { detail: 0 })
+    expect(move).toHaveBeenLastCalledWith('right')
+  })
+
+  it('retains tab activation and double-click pinning instead of dragging interactive header buttons', () => {
+    vi.stubGlobal('PointerEvent', MouseEvent)
+    const move = vi.fn()
+    render(<Harness onMove={move} />)
+    const files = screen.getByRole('tab', { name: 'Files' })
+    const header = files.closest('.dock-panel-header')!
+    fireEvent.pointerDown(files, { button: 0, clientX: 100 })
+    fireEvent.pointerMove(header, { clientX: window.innerWidth - 10 })
+    fireEvent.pointerUp(header, { clientX: window.innerWidth - 10 })
+    expect(move).not.toHaveBeenCalled()
+    fireEvent.doubleClick(files)
+    expect(
+      screen.getByRole('button', { name: 'Unpin left panel' }),
+    ).toHaveAttribute('aria-pressed', 'true')
   })
 })

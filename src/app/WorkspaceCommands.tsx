@@ -240,19 +240,21 @@ export function WorkspaceCommandsProvider({
   return <Context.Provider value={value}>{children}</Context.Provider>
 }
 
-export function WorkspaceLauncher() {
+export function WorkspaceLauncher({ commands = true }: { commands?: boolean }) {
   const context = useContext(Context)
   if (!context) return null
   return (
     <div className="workspace-launcher">
-      <button
-        className="icon-button"
-        aria-label="Open command palette"
-        title={`Commands · ${shortcutLabel(shortcutFor('app.palette', context.overrides))}`}
-        onClick={() => context.open('commands')}
-      >
-        <span aria-hidden="true">⌘</span>
-      </button>
+      {commands && (
+        <button
+          className="icon-button"
+          aria-label="Open command palette"
+          title={`Commands · ${shortcutLabel(shortcutFor('app.palette', context.overrides))}`}
+          onClick={() => context.open('commands')}
+        >
+          <span aria-hidden="true">⌘</span>
+        </button>
+      )}
       <button
         className="icon-button"
         aria-label="Open quick file switcher"

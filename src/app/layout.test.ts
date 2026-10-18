@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   DEFAULT_LAYOUT,
+  boundedChromeSize,
   LAYOUT_STORAGE_KEY,
   loadLayout,
   parseLayout,
@@ -29,6 +30,48 @@ describe('independent workspace layout', () => {
       'existing projects',
     )
     expect(localStorage.getItem(LAYOUT_STORAGE_KEY)).not.toBeNull()
+  })
+  it('persists independent chrome visibility and dimensions without changing old layout defaults', () => {
+    expect(parseLayout(JSON.stringify({ filesWidth: 300 }))).toEqual({
+      ...DEFAULT_LAYOUT,
+      filesWidth: 300,
+    })
+    const layout = {
+      ...DEFAULT_LAYOUT,
+      autoHideTabs: true,
+      autoHideStatus: true,
+      ribbonWidth: 60,
+      controlsWidth: 56,
+      tabBarHeight: 54,
+      statusBarHeight: 32,
+    }
+    expect(persistLayout(layout)).toBe(true)
+    expect(loadLayout()).toEqual(layout)
+  })
+  it('normalizes imported chrome sizes and rejects truthy auto-hide strings', () => {
+    expect(
+      parseLayout(
+        JSON.stringify({
+          autoHideTabs: 'true',
+          autoHideStatus: 1,
+          ribbonWidth: 900,
+          controlsWidth: -100,
+          tabBarHeight: 55.7,
+          statusBarHeight: 'tall',
+        }),
+      ),
+    ).toEqual({
+      ...DEFAULT_LAYOUT,
+      ribbonWidth: 76,
+      controlsWidth: 34,
+      tabBarHeight: 56,
+    })
+    expect(boundedChromeSize(Number.NaN, 'ribbonWidth')).toBe(44)
+    expect(boundedChromeSize(Number.POSITIVE_INFINITY, 'controlsWidth')).toBe(
+      42,
+    )
+    expect(boundedChromeSize(-20, 'statusBarHeight')).toBe(22)
+    expect(boundedChromeSize(999, 'tabBarHeight')).toBe(68)
   })
   it('recovers each invalid field while clamping oversized panels', () => {
     expect(
@@ -98,5 +141,37 @@ describe('independent workspace layout', () => {
         }),
       ),
     ).toEqual(DEFAULT_LAYOUT)
+  })
+  it('migrates old layouts safely and remembers arrangement, workspaces and auto-hide settings', () => {
+    const legacy = JSON.stringify({ filesWidth: 310, leftPinned: true })
+    expect(parseLayout(legacy)).toEqual({
+      ...DEFAULT_LAYOUT,
+      filesWidth: 310,
+      leftPinned: true,
+    })
+    const customized = {
+      ...DEFAULT_LAYOUT,
+      panelsSwapped: true,
+      autoHidePanels: false,
+      autoHideDelay: 640,
+      leftPanel: 'workspaces' as const,
+    }
+    expect(persistLayout(customized)).toBe(true)
+    expect(loadLayout()).toEqual(customized)
+    expect(
+      parseLayout(
+        JSON.stringify({
+          panelsSwapped: 'true',
+          autoHidePanels: 'false',
+          autoHideDelay: 'slow',
+        }),
+      ),
+    ).toEqual(DEFAULT_LAYOUT)
+    expect(
+      parseLayout(JSON.stringify({ autoHideDelay: 9000 })).autoHideDelay,
+    ).toBe(2000)
+    expect(
+      parseLayout(JSON.stringify({ autoHideDelay: -30 })).autoHideDelay,
+    ).toBe(0)
   })
 })

@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { fireEvent, render, screen, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import { CanvasInspector } from './CanvasInspector'
 import {
@@ -68,6 +68,178 @@ function mount(document = fixture(), selectedId: string | null = 'shape-one') {
 }
 
 describe('canvas properties and layers', () => {
+  it('commits valid tweaks before clearing selection without Apply', () => {
+    const { changed, onDocumentChange } = mount()
+    fireEvent.change(screen.getByLabelText('Width'), {
+      target: { value: '275' },
+    })
+    fireEvent.change(screen.getByLabelText('Text inside shape'), {
+      target: { value: 'Remember this' },
+    })
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Clear object selection' }),
+    )
+    expect(changed().elements[0]).toMatchObject({
+      width: 275,
+      text: 'Remember this',
+    })
+    expect(onDocumentChange).toHaveBeenCalledOnce()
+    expect(screen.getByText('No selection')).toBeVisible()
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Select Remember this on Main' }),
+    )
+    expect(screen.getByLabelText('Width')).toHaveValue(275)
+  })
+
+  it('debounces a valid draft without replacing its focused field', () => {
+    vi.useFakeTimers()
+    try {
+      const { changed, onDocumentChange } = mount()
+      const field = screen.getByLabelText('Text inside shape')
+      field.focus()
+      fireEvent.change(field, { target: { value: 'First' } })
+      act(() => vi.advanceTimersByTime(200))
+      fireEvent.change(field, { target: { value: 'First and second' } })
+      act(() => vi.advanceTimersByTime(299))
+      expect(onDocumentChange).not.toHaveBeenCalled()
+      act(() => vi.advanceTimersByTime(1))
+      expect(changed().elements[0]).toMatchObject({ text: 'First and second' })
+      expect(onDocumentChange).toHaveBeenCalledOnce()
+      expect(screen.getByLabelText('Text inside shape')).toBe(field)
+      expect(field).toHaveFocus()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('preserves the last valid object when an incomplete geometry draft loses selection', () => {
+    const { onDocumentChange } = mount()
+    fireEvent.change(screen.getByLabelText('Width'), { target: { value: '' } })
+    fireEvent.change(screen.getByLabelText('Text inside shape'), {
+      target: { value: 'Must stay draft' },
+    })
+    fireEvent.blur(screen.getByLabelText('Width'))
+    expect(onDocumentChange).not.toHaveBeenCalled()
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Clear object selection' }),
+    )
+    expect(onDocumentChange).not.toHaveBeenCalled()
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Select Rectangle on Main' }),
+    )
+    expect(screen.getByLabelText('Width')).toHaveValue(100)
+    expect(screen.getByLabelText('Text inside shape')).toHaveValue('')
+  })
+
+  it('cancels delayed properties when external edits or locking replace the source', () => {
+    vi.useFakeTimers()
+    try {
+      const onDocumentChange = vi.fn()
+      const document = fixture()
+      const props = {
+        selectedId: 'shape-one',
+        activeLayerId: DEFAULT_LAYER_ID,
+        onSelect: vi.fn(),
+        onActiveLayerChange: vi.fn(),
+        onDocumentChange,
+      }
+      const test = render(<CanvasInspector {...props} document={document} />)
+      fireEvent.change(screen.getByLabelText('Text inside shape'), {
+        target: { value: 'Stale draft' },
+      })
+      const updated = {
+        ...document,
+        elements: [{ ...shape(), text: 'AI version' }],
+      }
+      test.rerender(<CanvasInspector {...props} document={updated} />)
+      act(() => vi.advanceTimersByTime(500))
+      expect(onDocumentChange).not.toHaveBeenCalled()
+      expect(screen.getByLabelText('Text inside shape')).toHaveValue(
+        'AI version',
+      )
+      fireEvent.change(screen.getByLabelText('Width'), {
+        target: { value: '250' },
+      })
+      test.rerender(
+        <CanvasInspector
+          {...props}
+          document={{
+            ...updated,
+            layers: [{ ...document.layers[0], locked: true }],
+          }}
+        />,
+      )
+      act(() => vi.advanceTimersByTime(500))
+      expect(onDocumentChange).not.toHaveBeenCalled()
+      expect(screen.getByLabelText('Width')).toHaveValue(100)
+      expect(screen.getByLabelText('Width')).toBeDisabled()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('keeps pending properties across a camera-only replacement and commits the latest view', () => {
+    vi.useFakeTimers()
+    try {
+      const document = fixture()
+      const onDocumentChange = vi.fn()
+      const props = {
+        selectedId: 'shape-one',
+        activeLayerId: DEFAULT_LAYER_ID,
+        onSelect: vi.fn(),
+        onActiveLayerChange: vi.fn(),
+        onDocumentChange,
+      }
+      const test = render(<CanvasInspector {...props} document={document} />)
+      const field = screen.getByLabelText('Width')
+      field.focus()
+      fireEvent.change(field, { target: { value: '275' } })
+      const updated = {
+        ...structuredClone(document),
+        viewport: { x: 125, y: -70, zoom: 1.5 },
+      }
+      test.rerender(<CanvasInspector {...props} document={updated} />)
+      expect(screen.getByLabelText('Width')).toBe(field)
+      expect(field).toHaveFocus()
+      expect(field).toHaveValue(275)
+      act(() => vi.advanceTimersByTime(300))
+      expect(onDocumentChange).toHaveBeenCalledOnce()
+      expect(onDocumentChange.mock.lastCall?.[0]).toMatchObject({
+        viewport: updated.viewport,
+        elements: [{ width: 275 }],
+      })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('auto applies connection source and target sides on blur', () => {
+    const document = fixture()
+    document.elements.push(shape('shape-two', 260), {
+      id: 'connection',
+      type: 'connection',
+      fromId: 'shape-one',
+      toId: 'shape-two',
+      style: 'straight',
+      startArrow: false,
+      endArrow: true,
+      color: '#334455',
+      layerId: DEFAULT_LAYER_ID,
+      areaId: null,
+    })
+    const { changed } = mount(document, 'connection')
+    fireEvent.change(screen.getByLabelText('Source side'), {
+      target: { value: 'bottom' },
+    })
+    fireEvent.change(screen.getByLabelText('Target side'), {
+      target: { value: 'top' },
+    })
+    fireEvent.blur(screen.getByLabelText('Target side'))
+    expect(changed().elements[2]).toMatchObject({
+      fromSide: 'bottom',
+      toSide: 'top',
+    })
+  })
   it('applies text and geometry together as one document change', () => {
     const { onDocumentChange, changed } = mount()
     fireEvent.change(screen.getByLabelText('Text inside shape'), {

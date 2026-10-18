@@ -78,6 +78,8 @@ const connectionFields = {
   style: z.enum(['straight', 'elbow']).optional(),
   startArrow: z.boolean().optional(),
   endArrow: z.boolean().optional(),
+  fromSide: z.enum(['auto', 'top', 'right', 'bottom', 'left']).optional(),
+  toSide: z.enum(['auto', 'top', 'right', 'bottom', 'left']).optional(),
 }
 
 export const newElementSchema = z.discriminatedUnion('type', [
@@ -131,6 +133,8 @@ export const elementPatchSchema = z
     style: z.enum(['straight', 'elbow']).optional(),
     startArrow: z.boolean().optional(),
     endArrow: z.boolean().optional(),
+    fromSide: z.enum(['auto', 'top', 'right', 'bottom', 'left']).optional(),
+    toSide: z.enum(['auto', 'top', 'right', 'bottom', 'left']).optional(),
   })
   .refine(
     (patch) => Object.keys(patch).length > 0,

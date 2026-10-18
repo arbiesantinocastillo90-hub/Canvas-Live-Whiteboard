@@ -5,6 +5,7 @@ import {
   type CanvasFileStore,
 } from './canvasFiles'
 import type { CanvasDocument } from './lcanvas'
+import { sharedCanvasFileStore } from './localLibrary'
 
 export type CanvasDraft = {
   record: CanvasFileRecord
@@ -16,6 +17,7 @@ export type CanvasDraft = {
 const drafts = new WeakMap<CanvasFileStore, Map<string, CanvasDraft[]>>()
 
 export function projectDrafts(store: CanvasFileStore) {
+  if (store === sharedCanvasFileStore) return projectDrafts(canvasFileStore)
   let cached = drafts.get(store)
   if (!cached) {
     cached = new Map()

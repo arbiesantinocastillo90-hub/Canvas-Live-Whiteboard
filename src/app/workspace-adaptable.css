@@ -4,6 +4,8 @@
   --motion-distance: 3px;
   --motion-lift: -1px;
   --motion-easing: cubic-bezier(0.2, 0, 0.2, 1);
+  --motion-enter-scale: 1;
+  --motion-hover-scale: 1;
   transition: grid-template-columns var(--motion-duration) var(--motion-easing);
 }
 
@@ -20,9 +22,16 @@
     transform var(--motion-duration) var(--motion-easing);
 }
 
-.app-shell .button:hover,
-.app-shell .project-card:hover {
-  transform: translateY(var(--motion-lift));
+.app-shell .button:hover:not(:disabled),
+.app-shell .icon-button:hover:not(:disabled),
+.app-shell .nav-item:hover:not(:disabled),
+.app-shell .canvas-view-rail button:hover:not(:disabled),
+.app-shell .canvas-edit-toolbar button:hover:not(:disabled),
+.app-shell .dock-chrome-button:hover:not(:disabled),
+.app-shell .dock-panel-tabs button:hover:not(:disabled),
+.app-shell .project-card:hover,
+.app-shell .home-file:hover {
+  transform: translateY(var(--motion-lift)) scale(var(--motion-hover-scale));
 }
 .app-shell .project-card {
   transition:
@@ -48,11 +57,12 @@
 @keyframes workspace-enter {
   from {
     opacity: 0;
-    transform: translateY(var(--motion-distance));
+    transform: translateY(var(--motion-distance))
+      scale(var(--motion-enter-scale));
   }
   to {
     opacity: 1;
-    transform: translateY(0);
+    transform: translateY(0) scale(1);
   }
 }
 
@@ -317,6 +327,16 @@
   border-radius: 5px;
   padding: 8px 10px;
   font: inherit;
+}
+.option-inline-toggle {
+  margin-top: 22px;
+}
+.motion-preview {
+  min-width: 90px;
+  margin: 6px 0 0;
+}
+.range-control > span:last-child {
+  text-align: right;
 }
 .appearance-preview {
   border: 1px solid var(--line);
@@ -682,6 +702,8 @@
     --motion-fast: 0ms !important;
     --motion-distance: 0px !important;
     --motion-lift: 0px !important;
+    --motion-enter-scale: 1 !important;
+    --motion-hover-scale: 1 !important;
   }
 }
 .app-shell[data-motion='reduced'] *,

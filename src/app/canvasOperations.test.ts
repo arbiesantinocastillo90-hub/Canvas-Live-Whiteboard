@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   connectionEndpoints,
+  connectionPath,
   createCanvasDocument,
   elementBounds,
   serializeLCANVAS,
@@ -58,6 +59,67 @@ function organized() {
 }
 
 describe('validated canvas operations', () => {
+  it('keeps default connection sides fixed when either object crosses the other', () => {
+    const original = connectElements(board(), 'one', 'two', { id: 'edge' })
+    const edge = original.elements.at(-1)!
+    if (edge.type !== 'connection') throw new Error('Missing connection')
+    expect(edge).toMatchObject({ fromSide: 'right', toSide: 'left' })
+    const moved = moveElement(original, 'two', -350, 400)
+    expect(connectionEndpoints(moved, edge)).toEqual({
+      x1: 100,
+      y1: 40,
+      x2: -350,
+      y2: 440,
+    })
+    const resized = resizeElement(moved, 'one', 200, 160)
+    expect(connectionEndpoints(resized, edge)).toEqual({
+      x1: 200,
+      y1: 80,
+      x2: -350,
+      y2: 440,
+    })
+    expect(moved.elements.at(-1)).toMatchObject({
+      fromSide: 'right',
+      toSide: 'left',
+    })
+  })
+
+  it('supports independent side choices and elbow paths departing those sides', () => {
+    const document = connectElements(board(), 'one', 'two', {
+      id: 'edge',
+      fromSide: 'top',
+      toSide: 'bottom',
+      style: 'elbow',
+    })
+    const edge = document.elements.at(-1)!
+    if (edge.type !== 'connection') throw new Error('Missing connection')
+    expect(connectionEndpoints(document, edge)).toEqual({
+      x1: 50,
+      y1: 0,
+      x2: 350,
+      y2: 80,
+    })
+    expect(connectionPath(document, edge)).toMatch(/^M 50 0 L 50 -24 /u)
+    expect(connectionPath(document, edge)).toMatch(/V 104 L 350 80$/u)
+    const auto = updateElement(document, 'edge', {
+      fromSide: 'auto',
+      toSide: 'auto',
+    })
+    const autoEdge = auto.elements.at(-1)!
+    if (autoEdge.type !== 'connection') throw new Error('Missing connection')
+    expect(connectionEndpoints(auto, autoEdge)).toEqual({
+      x1: 100,
+      y1: 40,
+      x2: 300,
+      y2: 40,
+    })
+    expect(() => updateElement(document, 'one', { fromSide: 'right' })).toThrow(
+      'unsupported',
+    )
+    expect(() =>
+      updateElement(document, 'edge', { fromSide: 'center' } as never),
+    ).toThrow('invalid')
+  })
   it('creates shapes, shape labels, text and area fields with safe defaults and stable identity', () => {
     let document = board()
     document = createElement(document, {

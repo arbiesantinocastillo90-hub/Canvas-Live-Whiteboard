@@ -1,0 +1,209 @@
+/* Floating panels reveal the canvas through their perimeter. Pinned panels stay in flow. */
+.app-shell .workspace-deck > .dock-panel {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 10px 34px #00000028;
+}
+.app-shell .workspace-deck > .dock-panel[data-pinned='false'] {
+  top: calc(var(--tab-bar-height, 40px) + 8px);
+  bottom: calc(var(--status-bar-height, 22px) + 8px);
+  max-height: calc(
+    100% - var(--tab-bar-height, 40px) - var(--status-bar-height, 22px) - 16px
+  );
+  max-width: calc(100% - var(--controls-width, 42px) - 16px);
+}
+.app-shell
+  .workspace-deck
+  > .dock-panel[data-pinned='false'][data-dock-side='left'] {
+  left: 8px;
+}
+.app-shell[data-separate-rails='true']
+  .workspace-deck
+  > .dock-panel[data-pinned='false'][data-dock-side='left'] {
+  left: calc(var(--ribbon-width, 44px) + 8px);
+  max-width: calc(100% - var(--ribbon-width, 44px) - 16px);
+}
+.app-shell
+  .workspace-deck
+  > .dock-panel[data-pinned='false'][data-dock-side='right'] {
+  right: calc(var(--controls-width, 42px) + 8px);
+}
+.app-shell .workspace-deck > .dock-panel[data-pinned='true'] {
+  position: relative;
+  inset: auto;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: min(420px, 34%);
+  align-self: stretch;
+  margin: 8px;
+  box-shadow: none;
+}
+.app-shell[data-separate-rails='true']
+  .workspace-deck
+  > .dock-panel[data-pinned='true'][data-dock-side='left'] {
+  margin-left: calc(var(--ribbon-width, 44px) + 8px);
+}
+.app-shell .workspace-deck > .canvas-column {
+  flex: 1 1 0;
+  min-width: 0;
+}
+.app-shell .dock-panel-content {
+  min-width: 0;
+  min-height: 0;
+}
+.app-shell .dock-panel-header {
+  border-radius: 11px 11px 0 0;
+}
+.outer-header {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 12px;
+}
+.outer-header .brand {
+  min-width: 0;
+}
+.outer-header .brand strong {
+  color: var(--accent-text);
+}
+.outer-header nav {
+  display: flex;
+  margin-left: 0;
+}
+.outer-header nav .nav-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.resume-work-button {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  min-width: 132px;
+  min-height: 43px;
+  padding: 9px 24px;
+  border: 1px solid var(--accent);
+  border-radius: 11px;
+  color: var(--accent-ink);
+  background: var(--accent);
+  font-size: 16px;
+  font-weight: 650;
+  box-shadow: 0 3px 14px color-mix(in srgb, var(--accent) 15%, transparent);
+}
+.resume-work-button:hover {
+  filter: brightness(1.07);
+}
+.options-stack {
+  width: min(100%, 1160px);
+  margin: 0 auto;
+  padding: 32px clamp(16px, 3vw, 40px) 64px;
+}
+.options-stack > section,
+.options-stack > .workspace-appearance-target {
+  width: 100%;
+  max-width: none;
+  margin: 0 0 32px;
+  padding: 0;
+}
+.options-stack .workspace-appearance-options {
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  max-width: none;
+}
+.options-stack > .options-view {
+  width: 100%;
+  max-width: none;
+  margin: 0 0 32px;
+  padding: 0;
+}
+.create-item-menu {
+  position: fixed;
+  left: calc(var(--ribbon-width, 44px) + 6px);
+  top: 120px;
+  z-index: 90;
+  min-width: 170px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+  padding: 6px;
+  box-shadow: 0 8px 28px #00000030;
+}
+.create-item-menu button {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  border: 0;
+  border-radius: 6px;
+  padding: 10px;
+  background: transparent;
+  text-align: left;
+}
+.create-item-menu button:hover,
+.create-item-menu button:focus-visible {
+  background: var(--tint);
+}
+@media (max-width: 900px) {
+  .outer-header {
+    padding: 12px 16px;
+    gap: 8px;
+  }
+  .outer-header .brand {
+    font-size: 15px;
+    gap: 6px;
+  }
+  .outer-header nav {
+    gap: 0;
+  }
+  .outer-header nav .nav-item {
+    padding: 6px;
+    font-size: 12px;
+  }
+  .outer-header nav .icon {
+    display: none;
+  }
+  .resume-work-button {
+    position: static;
+    transform: none;
+    grid-row: 2;
+    grid-column: 1 / -1;
+    justify-self: center;
+    min-height: 38px;
+    min-width: 156px;
+    font-size: 15px;
+  }
+  .outer-header nav {
+    grid-row: 1;
+    grid-column: 2;
+  }
+  .outer-header > .workspace-launcher {
+    grid-row: 1;
+    grid-column: 3;
+  }
+}
+@media (max-width: 600px) {
+  .app-shell .dock-panel-header {
+    gap: 0;
+    padding-inline: 2px;
+  }
+  .app-shell .dock-panel-header .dock-move-handle {
+    display: none;
+  }
+  .app-shell .dock-panel-header .dock-chrome-button {
+    width: 20px;
+    min-width: 20px;
+    padding: 2px;
+  }
+  .app-shell .dock-panel-tabs button {
+    padding-inline: 1px;
+  }
+  .app-shell .dock-panel-tabs .icon {
+    width: 14px;
+  }
+}

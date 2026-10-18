@@ -1,0 +1,92 @@
+/* The board continues behind the chrome while pinned panels keep their space. */
+.canvas-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+  user-select: none;
+  background-color: var(--panel);
+  background-size: var(--canvas-grid-size) var(--canvas-grid-size);
+  background-position: var(--canvas-grid-x) var(--canvas-grid-y);
+}
+.canvas-backdrop,
+.canvas-backdrop * {
+  pointer-events: none !important;
+}
+.canvas-backdrop[data-grid='dots'] {
+  background-image: radial-gradient(var(--grid) 1px, transparent 1px);
+}
+.canvas-backdrop[data-grid='lines'] {
+  background-image:
+    linear-gradient(var(--grid) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+}
+.canvas-backdrop-drawing {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.app-shell .workspace-deck:has(> .canvas-backdrop) {
+  isolation: isolate;
+}
+.app-shell .workspace-deck:has(> .canvas-backdrop) > .canvas-column {
+  z-index: 1;
+  background: transparent;
+}
+.app-shell
+  .workspace-deck:has(> .canvas-backdrop)
+  .canvas-editor[data-dock-mode='true'] {
+  background: transparent;
+}
+.app-shell .workspace-deck:has(> .canvas-backdrop) .workspace-tab-bar,
+.app-shell .workspace-deck:has(> .canvas-backdrop) .file-statusbar {
+  background: transparent;
+  border-color: transparent;
+}
+.app-shell .workspace-deck:has(> .canvas-backdrop) .workspace-tab-bar {
+  padding-right: calc(var(--controls-width, 42px) + 4px);
+}
+.app-shell .workspace-deck:has(> .canvas-backdrop) .canvas-tab,
+.app-shell
+  .workspace-deck:has(> .canvas-backdrop)
+  .workspace-tab-actions
+  > button,
+.app-shell
+  .workspace-deck:has(> .canvas-backdrop)
+  .file-statusbar
+  > span:not(.save-dot),
+.app-shell .workspace-deck:has(> .canvas-backdrop) .file-statusbar > output,
+.app-shell .workspace-deck:has(> .canvas-backdrop) .file-statusbar > button {
+  background-color: var(--panel);
+}
+.app-shell .workspace-deck > .canvas-view-rail.canvas-deck-rail {
+  position: absolute;
+  inset: 8px var(--deck-rail-right, 0px) 8px auto;
+  z-index: 25;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  width: var(--controls-width, 42px);
+  padding: 0 4px;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  pointer-events: none;
+}
+.app-shell .workspace-deck > .canvas-view-rail.canvas-deck-rail button {
+  width: calc(var(--controls-width, 42px) - 10px);
+  height: calc(var(--controls-width, 42px) - 10px);
+  min-height: calc(var(--controls-width, 42px) - 10px);
+  max-height: 56px;
+  padding: 6px;
+  border-radius: 5px;
+  pointer-events: auto;
+}
+.app-shell
+  .workspace-deck
+  > .canvas-view-rail.canvas-deck-rail
+  .canvas-rail-divider {
+  background: transparent;
+}

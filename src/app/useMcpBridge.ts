@@ -13,7 +13,10 @@ type Options = {
   projectId: string
   fileId: string | null
   projectName: string
-  getController: () => CanvasEditorController | null
+  getController: () => Pick<
+    CanvasEditorController,
+    'getDocument' | 'execute'
+  > | null
   baseUrl?: string
 }
 type Ack = {

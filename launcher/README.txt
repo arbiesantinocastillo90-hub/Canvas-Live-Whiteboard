@@ -3,7 +3,7 @@ Canvas Live
 Double-click "Canvas Live.exe" to open the website in your default browser.
 You do not need a terminal, npm, Node.js, or an internet connection to use this package.
 
-Keep this whole folder together, including "app" and the executable configuration file.
+Keep this whole folder together, including "app", "data" and the executable configuration file.
 You can move or copy the complete folder. Do not move only the executable.
 Close Canvas Live before moving the folder or replacing it with a newer build.
 
@@ -16,18 +16,29 @@ Requires Windows 11 with its included .NET Framework 4.8 or newer runtime.
 The local website normally uses http://127.0.0.1:4173/.
 If that port is busy, Canvas Live chooses another local port automatically.
 
-This package includes Options, Projects, Work, and customizable themes.
-Appearance preferences and project names are remembered in this browser.
-Each project organizes multiple LCANVAS files with create, import, save and export.
-Canvas editing includes shapes, text, resizing, containing areas, layers and connections.
-Connection arrows and paths are configurable and follow their linked objects.
-The right rail includes edit/view undo/redo, fit, zoom and fullscreen controls.
-Fullscreen focuses on the current file. Exit with the control or Escape.
-Use Properties for labels, exact geometry, area membership and layer organization.
-Save remembers changes in this browser; Export downloads the current LCANVAS v2 file.
-Existing LCANVAS v1 files remain importable. Tabs and panels can be closed and reopened.
-Files stay in this browser's local storage. Export .lcanvas copies for portable backups.
-A different browser or local port opens a separate file library.
+This package includes Home, Projects, Work, Options and customizable themes.
+Each project organizes multiple .CLF canvas files. .CLP copies contain projects
+and their files; .CLW copies contain workspace layout, preferences and references.
+Legacy .lcanvas and .lworkspace files remain importable.
+
+Canvas editing includes shapes, multiline text, resizing, areas, layers and
+connections. Text can grow shapes or fit smaller shapes; adjust it in Options.
+The view controls include undo/redo, fit, zoom and fullscreen.
+Side panels auto-close unless pinned; floating rail buttons remain visible.
+The bottom bell holds session notifications and five-second dismissible messages.
+
+The packaged app saves its shared local library in data/library.json beside
+this executable, with the previous successful version in data/library.previous.json.
+Keep and back up the data folder. Save as can also bind a physical .CLF file;
+Export downloads a portable copy. Save document edits before expecting another
+view to see them. Overlapping edits are protected and reported, not overwritten.
+
+The link button offers Copy exact view and Copy latest view. Exact links remember
+tabs/camera/layout while showing current saved files. Latest links follow the
+most recently remembered workspace view. Options > Canvas Live Links customizes
+copy modes and automatic startup resume. Links reference data on this device;
+they do not upload or publish files. Older frozen snapshot URLs remain compatible.
+
 For optional AI editing, open "Start Canvas Live MCP.cmd" (requires Node.js 24).
 Open Workspace AI in the website, paste the companion's browser pairing code,
 and choose "Share this canvas". "Stop sharing" disconnects this file.

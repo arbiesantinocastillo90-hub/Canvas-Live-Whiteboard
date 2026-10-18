@@ -1,5 +1,7 @@
 # Setup and testing
 
+The 2026-10-15 Bugs, Errors & Revision update passed 552 application tests, 63 MCP tests and 22 isolated Chrome checks, with visual review across four widths. Production/type/license/lint/format checks pass. See [BUGS_ERRORS_REVISION_VERIFICATION.md](BUGS_ERRORS_REVISION_VERIFICATION.md) for source scope, final assets, resolved visual findings and acceptance boundaries.
+
 The Home/local-file revision passed 470 application tests, 63 MCP tests, production/license/lint/format checks, 40 actual browser scenarios (18 UI, 9 SDK camera, 13 file streams) and 23 updater fixtures. See [HOME_AND_INTERACTIONS_VERIFICATION.md](HOME_AND_INTERACTIONS_VERIFICATION.md) for exact assets, resolved findings and the Windows chooser boundary.
 
 ## Windows prerequisites

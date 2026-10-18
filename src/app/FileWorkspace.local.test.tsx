@@ -16,6 +16,10 @@ import {
 import { localFilesFor, type LocalCanvasHandle } from './canvasLocalFiles'
 import { createCanvasDocument, parseLCANVAS, serializeLCANVAS } from './lcanvas'
 import { DEFAULT_PREFERENCES, type Project } from './workspace'
+import {
+  WorkspaceCommandsProvider,
+  WorkspaceOverlays,
+} from './WorkspaceCommands'
 
 const project: Project = {
   id: 'local-project',
@@ -67,15 +71,18 @@ function physicalFile(name = 'Roadmap.lcanvas') {
 
 async function mount(store: CanvasFileStore) {
   const view = render(
-    <FileWorkspace
-      project={project}
-      preferences={DEFAULT_PREFERENCES}
-      onRenameProject={vi.fn()}
-      store={store}
-    />,
+    <WorkspaceCommandsProvider>
+      <FileWorkspace
+        project={project}
+        preferences={DEFAULT_PREFERENCES}
+        onRenameProject={vi.fn()}
+        store={store}
+      />
+      <WorkspaceOverlays />
+    </WorkspaceCommandsProvider>,
   )
   await screen.findByRole('tab', { name: 'Roadmap' })
-  fireEvent.click(screen.getByRole('button', { name: 'Open canvas tools' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Open right panel' }))
   return view
 }
 
@@ -93,10 +100,27 @@ async function prepare() {
 }
 
 function addRectangle() {
+  if (!screen.queryByRole('button', { name: 'Add rectangle' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Open right panel' }))
   fireEvent.click(screen.getByRole('button', { name: 'Add rectangle' }))
 }
 function save() {
-  fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+  openSaveOptions()
+  fireEvent.click(screen.getByRole('button', { name: 'Save now' }))
+}
+function openSaveOptions() {
+  if (!screen.queryByRole('dialog', { name: 'Save options' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Save options' }))
+}
+function toggleAutosave() {
+  openSaveOptions()
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Autosave' }))
+}
+function renameCanvas() {
+  fireEvent.keyDown(document.body, { key: 'p', code: 'KeyP', ctrlKey: true })
+  fireEvent.click(
+    screen.getByRole('option', { name: /^Rename current canvas/ }),
+  )
 }
 
 beforeEach(() => {
@@ -109,6 +133,134 @@ afterEach(() => {
 })
 
 describe('smart physical file saving in the workspace', () => {
+  it('keeps Save options available before a file destination exists and removes redundant toolbar icons', async () => {
+    const store = await prepare()
+    const picker = vi.fn()
+    vi.stubGlobal('showSaveFilePicker', picker)
+    const { container } = await mount(store)
+    const actions = container.querySelector(
+      '.workspace-tab-actions',
+    ) as HTMLElement
+    expect(
+      within(actions).queryByRole('button', { name: 'New canvas' }),
+    ).toBeNull()
+    expect(
+      within(actions).queryByRole('button', { name: 'Rename canvas' }),
+    ).toBeNull()
+    expect(within(actions).queryByRole('button', { name: 'Save' })).toBeNull()
+    expect(
+      within(actions).queryByRole('button', { name: 'Save as' }),
+    ).toBeNull()
+    openSaveOptions()
+    expect(screen.getByLabelText('Save destination')).toHaveTextContent(
+      'No local file selected',
+    )
+    expect(
+      screen.getByRole('button', { name: 'Choose location' }),
+    ).toBeEnabled()
+    expect(picker).not.toHaveBeenCalled()
+  })
+
+  it('uses the configured bound-file autosave interval and remembers it with the handle', async () => {
+    const store = await prepare()
+    const file = physicalFile()
+    await localFilesFor(store).set(project.id, 'roadmap', {
+      handle: file.handle,
+      autoSave: true,
+      savedDocument: file.read(),
+    })
+    await mount(store)
+    openSaveOptions()
+    fireEvent.change(
+      screen.getByRole('spinbutton', { name: 'Autosave interval in seconds' }),
+      { target: { value: '5' } },
+    )
+    await waitFor(async () =>
+      expect(
+        (await localFilesFor(store).get(project.id, 'roadmap'))
+          ?.autoSaveIntervalMs,
+      ).toBe(5000),
+    )
+    vi.useFakeTimers()
+    addRectangle()
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(4999)
+    })
+    expect(file.handle.createWritable).not.toHaveBeenCalled()
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1)
+    })
+    expect(file.read().elements).toHaveLength(1)
+  })
+
+  it('pauses after a deleted autosave destination and waits for an explicit replacement picker', async () => {
+    const store = await prepare()
+    const deleted = physicalFile()
+    const replacement = physicalFile('Replacement.CLF')
+    await localFilesFor(store).set(project.id, 'roadmap', {
+      handle: deleted.handle,
+      autoSave: true,
+      savedDocument: deleted.read(),
+    })
+    vi.mocked(deleted.handle.getFile).mockRejectedValue(
+      new DOMException('Gone', 'NotFoundError'),
+    )
+    const picker = vi.fn(async () => replacement.handle)
+    vi.stubGlobal('showSaveFilePicker', picker)
+    await mount(store)
+    addRectangle()
+    await waitFor(
+      () =>
+        expect(screen.getByRole('alert')).toHaveTextContent('moved or deleted'),
+      { timeout: 2500 },
+    )
+    expect(picker).not.toHaveBeenCalled()
+    expect(deleted.handle.createWritable).not.toHaveBeenCalled()
+    expect(screen.getByText('Unsaved changes')).toBeInTheDocument()
+    openSaveOptions()
+    expect(
+      screen.getByRole('dialog', { name: 'Save options' }),
+    ).toHaveTextContent('Choose a new location')
+    fireEvent.click(screen.getByRole('button', { name: 'Choose location' }))
+    // The chooser is invoked in the initiating click, before any awaited file work.
+    expect(picker).toHaveBeenCalledOnce()
+    await waitFor(() => expect(replacement.read().elements).toHaveLength(1))
+    expect(
+      (await localFilesFor(store).get(project.id, 'roadmap'))?.handle,
+    ).toBe(replacement.handle)
+    expect(screen.queryByText('Unsaved changes')).toBeNull()
+  })
+
+  it('keeps the missing-file draft and old binding when a replacement chooser is cancelled', async () => {
+    const store = await prepare()
+    const deleted = physicalFile()
+    await localFilesFor(store).set(project.id, 'roadmap', {
+      handle: deleted.handle,
+      autoSave: false,
+      savedDocument: deleted.read(),
+    })
+    vi.mocked(deleted.handle.getFile).mockRejectedValue(
+      new DOMException('Gone', 'NotFoundError'),
+    )
+    const picker = vi.fn(async () => {
+      throw new DOMException('Cancelled', 'AbortError')
+    })
+    vi.stubGlobal('showSaveFilePicker', picker)
+    await mount(store)
+    addRectangle()
+    openSaveOptions()
+    await screen.findByText(/saved file was moved or deleted/u)
+    save()
+    expect(picker).toHaveBeenCalledOnce()
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Save now' })).toBeEnabled(),
+    )
+    expect(screen.getByText('Unsaved changes')).toBeInTheDocument()
+    expect(
+      (await localFilesFor(store).get(project.id, 'roadmap'))?.handle,
+    ).toBe(deleted.handle)
+    expect(deleted.handle.createWritable).not.toHaveBeenCalled()
+  })
   it('chooses a real file once, reuses the handle, and saves a separate copy with Save as', async () => {
     const store = await prepare()
     const first = physicalFile()
@@ -121,18 +273,15 @@ describe('smart physical file saving in the workspace', () => {
     await screen.findByText('Saved to file')
     expect(first.read().elements).toHaveLength(1)
     expect(picker).toHaveBeenCalledOnce()
-    fireEvent.click(
-      screen.getByRole('button', { name: 'Auto-save local file' }),
-    )
-    expect(
-      screen.getByRole('button', { name: 'Auto-save local file' }),
-    ).toHaveAttribute('aria-pressed', 'false')
+    toggleAutosave()
+    expect(screen.getByRole('checkbox', { name: 'Autosave' })).not.toBeChecked()
     addRectangle()
     save()
     await waitFor(() => expect(first.read().elements).toHaveLength(2))
     expect(picker).toHaveBeenCalledOnce()
     picker.mockResolvedValueOnce(copy.handle)
-    fireEvent.click(screen.getByRole('button', { name: 'Save as' }))
+    openSaveOptions()
+    fireEvent.click(screen.getByRole('button', { name: 'Choose location' }))
     await waitFor(() => expect(copy.read().elements).toHaveLength(2))
     expect(
       (await localFilesFor(store).get(project.id, 'roadmap'))?.handle,
@@ -153,7 +302,7 @@ describe('smart physical file saving in the workspace', () => {
     addRectangle()
     save()
     await waitFor(() =>
-      expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled(),
+      expect(screen.getByRole('button', { name: 'Save now' })).toBeEnabled(),
     )
     expect(screen.getByText('Unsaved changes')).toBeInTheDocument()
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
@@ -223,9 +372,7 @@ describe('smart physical file saving in the workspace', () => {
     expect(
       (await store.get(project.id, 'roadmap')).value?.document.elements,
     ).toHaveLength(1)
-    fireEvent.click(
-      screen.getByRole('button', { name: 'Auto-save local file' }),
-    )
+    toggleAutosave()
     save()
     await screen.findByText('Saved to file')
     expect(file.read().elements).toHaveLength(2)
@@ -325,10 +472,8 @@ describe('smart physical file saving in the workspace', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Import' }))
     await screen.findByRole('tab', { name: 'Roadmap' })
     expect(screen.getByText('Saved to file')).toBeInTheDocument()
-    fireEvent.click(
-      screen.getByRole('button', { name: 'Auto-save local file' }),
-    )
-    fireEvent.click(screen.getByRole('button', { name: 'Open canvas tools' }))
+    toggleAutosave()
+    fireEvent.click(screen.getByRole('button', { name: 'Open right panel' }))
     addRectangle()
     fireEvent.click(screen.getByRole('button', { name: 'Import' }))
     await screen.findByText(
@@ -353,7 +498,7 @@ describe('smart physical file saving in the workspace', () => {
       vi.fn(async () => file.handle),
     )
     await mount(store)
-    fireEvent.click(screen.getByRole('button', { name: 'Rename canvas' }))
+    renameCanvas()
     const dialog = screen.getByRole('dialog', { name: 'Rename your canvas' })
     fireEvent.change(within(dialog).getByLabelText('Canvas name'), {
       target: { value: 'Renamed roadmap' },
@@ -387,13 +532,12 @@ describe('smart physical file saving in the workspace', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Export' }))
     expect(makeUrl).toHaveBeenCalledWith(expect.any(Blob))
     expect((click.mock.instances[0] as HTMLAnchorElement).download).toBe(
-      'Roadmap.lcanvas',
+      'Roadmap.CLF',
     )
     expect(screen.getByText('Unsaved changes')).toBeInTheDocument()
-    expect(screen.getByText(/^Download copy requested\./)).toHaveAttribute(
-      'role',
-      'status',
-    )
+    expect(
+      screen.getByText(/^Download copy requested\./).closest('[role="status"]'),
+    ).toHaveTextContent('Download copy requested.')
     act(() => {
       vi.advanceTimersByTime(1000)
     })
@@ -473,10 +617,9 @@ describe('smart physical file saving in the workspace', () => {
     save()
     await screen.findByText('Saved to file')
     expect(file.read().elements).toHaveLength(1)
-    expect(screen.getByText(/^The local file is saved\./)).toHaveAttribute(
-      'role',
-      'status',
-    )
+    expect(
+      screen.getByText(/^The local file is saved\./).closest('[role="status"]'),
+    ).toHaveTextContent('The local file is saved.')
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
     expect(screen.queryByText('Unsaved changes')).not.toBeInTheDocument()
     view.unmount()

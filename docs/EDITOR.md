@@ -4,7 +4,7 @@
 
 Open an LCANVAS file in Work. The drawing toolbar adds rectangles, ellipses, diamonds, standalone text and containment areas. New objects appear near the center of the current view on the active layer. Select an object and drag it to move; use eight handles to resize, keeping the opposite edge fixed and Shift to preserve proportions. Shift-click or drag a marquee selects a group; dragging/nudging moves the selection together. Double-click text, a shape or an area to edit its label inline. Enter adds a line, Ctrl/Cmd+Enter applies and Escape cancels. Properties edits exact position/dimensions, colors, layers and containing areas. Text inside a shape belongs to that shape, moves with it and stays inside its bounds.
 
-Properties are drafts until **Apply properties**. Applying several changes together creates one undo step. Invalid dimensions, missing references and unsupported values are rejected with a visible error. Deleting a selected object is bounded; deleting a shape also removes its attached connections. Deleting an area preserves its members and removes their area assignment.
+Valid Properties drafts commit automatically when focus leaves a field or after a short pause. Selecting another object and Save flush pending valid fields first; Apply properties remains available as an immediate commit. A combined commit creates one undo step. Invalid dimensions, missing references and unsupported values retain the last valid document and show an error. External object edits and locks replace stale drafts. Deleting a selected object is bounded; deleting a shape also removes its attached connections. Deleting an area preserves its members and removes their area assignment.
 
 **Full screen canvas** focuses on the current file, hides the project navigation, file explorer, tabs and auxiliary panels, and fits its visible objects into the available view. The canvas tools, save action, undo/redo, zoom and exit control remain available. The browser's native full-screen view is used when supported; the same focused app layout works when it is unavailable. Exit with the control or Escape to restore the surrounding layout.
 
@@ -22,7 +22,7 @@ Area membership and layer membership are independent. They are explicit LCANVAS 
 
 ## Connections
 
-Choose **Connect objects**, then select a source and target shape, text item or area. Choose a straight or elbow path and no arrows, an end arrow, a start arrow or arrows at both ends. The connection tracks both objects as they move or resize. Selected connections expose the same path and arrow choices in Properties. Connection endpoints are stable object identifiers, not screen coordinates.
+Choose **Connect objects**, then select a source and target shape, text item or area. Choose a straight or elbow path and no arrows, an end arrow, a start arrow or arrows at both ends. Properties can independently set each endpoint to Top, Right, Bottom, Left or Auto. Fixed sides retain their origin relative to the node while another node moves. New and legacy connections acquire fixed sides from their initial geometry; explicit Auto remains dynamic. Endpoint references use stable object identifiers.
 
 ## Saving and format compatibility
 
@@ -34,7 +34,7 @@ Each document remains limited to 10 MiB and 5,000 objects, with at most 100 laye
 
 ## Implementation boundary
 
-`CanvasEditor.tsx` renders and handles pointer/keyboard interactions. `CanvasInspector.tsx` implements controlled properties and layer management. Both use the validated pure functions in `canvasOperations.ts`; transport code does not own canvas business logic. `editorHistory.ts` records document and view transactions with at most 100 prior snapshots and an estimated 32 MiB retained-history budget. Large documents can retain fewer steps.
+`CanvasEditor.tsx` renders and handles pointer/keyboard interactions. `CanvasInspector.tsx` implements controlled properties and layer management. Both use the validated pure functions in `canvasOperations.ts`; transport code does not own canvas business logic. `editorHistory.ts` retains content transactions at the current camera, with at most 100 prior snapshots and an estimated 32 MiB retained-history budget. Large documents can retain fewer steps. Scoped workspace and tab controls are documented in [BUGS_ERRORS_REVISION.md](BUGS_ERRORS_REVISION.md).
 
 The manual editor milestone uses the application's original SVG renderer, system fonts and existing React dependencies. It adds no drawing-engine, font, icon or model package. Group selection, clipboard copy/cut/paste and duplication are supported. Freehand drawing, rich text, images, nested areas, layer deletion and collaboration remain outside this step. The subsequent optional MCP companion uses the same validated operations and history. Workspace AI reports explicit sharing and MCP client access; actual ChatGPT account pairing is a separate acceptance step. See [CHATGPT_MCP.md](CHATGPT_MCP.md).
 

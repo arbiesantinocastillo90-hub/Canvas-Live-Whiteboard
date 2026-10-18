@@ -1,11 +1,13 @@
 import { fireEvent, render, screen, within } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import HomePage from './HomePage'
+import { DEFAULT_HOME_VIEW } from './homeView'
 import { createCanvasFileRecord, type CanvasFileStore } from './canvasFiles'
 import { projectDrafts } from './canvasDrafts'
 import { createCanvasDocument } from './lcanvas'
 import type { Project } from './workspace'
 import { localFilesFor } from './canvasLocalFiles'
+import { NotificationBell, NotificationsProvider } from './SessionNotifications'
 
 const projects: Project[] = [
   { id: 'alpha', name: 'Alpha', createdAt: 1, lastOpenedAt: 2 },
@@ -32,6 +34,7 @@ function setup() {
   }
   const props = {
     projects,
+    view: { ...DEFAULT_HOME_VIEW, perspective: 'canvas' as const },
     selectedProjectId: null,
     store,
     onSelectProject: vi.fn(),
@@ -44,6 +47,121 @@ function setup() {
   return { props, records, store }
 }
 describe('home project and file library', () => {
+  it('shows the current workspace above the library while keeping the selected project heading', async () => {
+    const { props } = setup()
+    render(
+      <HomePage
+        {...props}
+        workspaceName="Writing desk"
+        selectedProjectId="alpha"
+        view={{ ...DEFAULT_HOME_VIEW, openedProjectId: 'alpha' }}
+      />,
+    )
+    await screen.findByRole('button', { name: 'Open canvas Roadmap in Alpha' })
+    expect(
+      screen.getByRole('heading', { name: 'Current workspace' }),
+    ).toHaveTextContent('Writing desk')
+    expect(
+      screen.getByRole('heading', { level: 1, name: 'Alpha' }),
+    ).toBeInTheDocument()
+    expect(screen.getByTitle('Roadmap.CLF')).toHaveTextContent('.CLF')
+  })
+
+  it('forwards the independent All projects disclosure without hiding recent shortcuts or files', async () => {
+    const { props } = setup()
+    const onAllProjectsCollapsedChange = vi.fn()
+    const view = render(
+      <HomePage
+        {...props}
+        view={{ ...DEFAULT_HOME_VIEW, openedProjectId: 'alpha' }}
+        allProjectsCollapsed={false}
+        onAllProjectsCollapsedChange={onAllProjectsCollapsedChange}
+      />,
+    )
+    await screen.findByRole('button', { name: 'Open canvas Roadmap in Alpha' })
+    fireEvent.click(screen.getByRole('button', { name: 'All projects' }))
+    expect(onAllProjectsCollapsedChange).toHaveBeenCalledWith(true)
+    view.rerender(
+      <HomePage
+        {...props}
+        view={{ ...DEFAULT_HOME_VIEW, openedProjectId: 'alpha' }}
+        allProjectsCollapsed
+        onAllProjectsCollapsedChange={onAllProjectsCollapsedChange}
+      />,
+    )
+    expect(
+      screen.queryByRole('button', { name: 'Open project Alpha' }),
+    ).toBeNull()
+    expect(
+      screen.getByRole('button', { name: 'Select recent project Alpha' }),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: 'Open canvas Roadmap in Alpha' }),
+    ).toBeInTheDocument()
+  })
+  it('includes descendant files when browsing a parent organizer while preserving each file project', async () => {
+    const { props, store } = setup()
+    const nestedProjects: Project[] = [
+      { ...projects[0], name: 'Finance' },
+      { ...projects[1], name: 'Savings', parentId: 'alpha' },
+    ]
+    render(
+      <HomePage
+        {...props}
+        projects={nestedProjects}
+        selectedProjectId="alpha"
+        view={{ ...DEFAULT_HOME_VIEW, openedProjectId: 'alpha' }}
+      />,
+    )
+    const childFile = await screen.findByRole('button', {
+      name: 'Open canvas Ideas in Savings',
+    })
+    expect(
+      screen.getByRole('button', { name: 'Open canvas Roadmap in Finance' }),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('heading', { level: 1, name: 'Finance' }),
+    ).toBeInTheDocument()
+    fireEvent.click(childFile)
+    expect(props.onOpenFile).toHaveBeenCalledWith('beta', 'ideas')
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Create project inside Finance' }),
+    )
+    expect(props.onNewProject).toHaveBeenCalledWith('alpha')
+    fireEvent.click(screen.getByRole('button', { name: 'New canvas' }))
+    expect(props.onNewCanvas).toHaveBeenCalledWith('alpha')
+    expect(store.save).not.toHaveBeenCalled()
+  })
+
+  it('forwards project shortcut actions without opening or deleting the associated files', async () => {
+    const { props, store } = setup()
+    const onPinProject = vi.fn(),
+      onHideRecentProject = vi.fn(),
+      onProjectRecentsCollapsedChange = vi.fn()
+    render(
+      <HomePage
+        {...props}
+        view={{ ...DEFAULT_HOME_VIEW, openedProjectId: 'alpha' }}
+        onPinProject={onPinProject}
+        onHideRecentProject={onHideRecentProject}
+        onProjectRecentsCollapsedChange={onProjectRecentsCollapsedChange}
+      />,
+    )
+    await screen.findByRole('button', { name: 'Open canvas Roadmap in Alpha' })
+    fireEvent.click(screen.getByRole('button', { name: 'Pin project Alpha' }))
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: 'Remove project Alpha from recent list',
+      }),
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Recent projects' }))
+    expect(onPinProject).toHaveBeenCalledWith('alpha', true)
+    expect(onHideRecentProject).toHaveBeenCalledWith('alpha')
+    expect(onProjectRecentsCollapsedChange).toHaveBeenCalledWith(true)
+    expect(props.onOpenFile).not.toHaveBeenCalled()
+    expect(props.onSelectProject).not.toHaveBeenCalled()
+    expect(store.save).not.toHaveBeenCalled()
+  })
   it('shows the physical save baseline when the older browser copy could not be updated', async () => {
     const { props, records, store } = setup()
     await localFilesFor(store).set('alpha', records[0].id, {
@@ -91,7 +209,13 @@ describe('home project and file library', () => {
     )
     expect(props.onOpenFile).toHaveBeenCalledWith('beta', 'ideas')
     fireEvent.change(screen.getByRole('searchbox'), { target: { value: '' } })
-    view.rerender(<HomePage {...props} selectedProjectId="alpha" />)
+    view.rerender(
+      <HomePage
+        {...props}
+        selectedProjectId="alpha"
+        view={{ ...DEFAULT_HOME_VIEW, openedProjectId: 'alpha' }}
+      />,
+    )
     expect(
       screen.queryByRole('button', { name: 'Open canvas Ideas in Beta' }),
     ).toBeNull()
@@ -150,21 +274,32 @@ describe('home project and file library', () => {
         persistence: 'browser',
       },
     ])
-    render(<HomePage {...props} />)
+    render(
+      <NotificationsProvider>
+        <HomePage {...props} />
+        <NotificationBell scopeId="home" />
+      </NotificationsProvider>,
+    )
     await screen.findByRole('button', { name: 'Open canvas Roadmap in Alpha' })
-    expect(screen.getByRole('status')).toHaveTextContent(
+    expect(screen.getByRole('alert')).toHaveTextContent(
       'Some saved files could not be loaded',
     )
   })
   it('requests import into the chosen project and lets projects be browsed without entering the editor', async () => {
     const { props } = setup()
-    render(<HomePage {...props} selectedProjectId="beta" />)
+    render(
+      <HomePage
+        {...props}
+        selectedProjectId="beta"
+        view={{ ...DEFAULT_HOME_VIEW, openedProjectId: 'beta' }}
+      />,
+    )
     await screen.findByRole('button', { name: 'Open canvas Ideas in Beta' })
     fireEvent.click(screen.getByRole('button', { name: 'Open project Alpha' }))
     expect(props.onSelectProject).toHaveBeenCalledWith('alpha')
     expect(props.onOpenFile).not.toHaveBeenCalled()
     const file = new File(['{}'], 'import.lcanvas')
-    fireEvent.change(screen.getByLabelText('Import LCANVAS files'), {
+    fireEvent.change(screen.getByLabelText('Import CLF files'), {
       target: { files: [file] },
     })
     expect(props.onImport).toHaveBeenCalledWith('beta', [file])
