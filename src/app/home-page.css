@@ -630,6 +630,22 @@
   border-radius: 12px;
   background: var(--panel);
 }
+.home-hierarchy-options {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 12px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 12px;
+}
+.home-hierarchy-options input {
+  accent-color: var(--accent);
+}
+.project-tree-file .project-open {
+  color: var(--muted);
+}
 .home-main-hierarchy .project-tree-row {
   padding-left: calc(var(--project-depth, 0) * 24px);
 }

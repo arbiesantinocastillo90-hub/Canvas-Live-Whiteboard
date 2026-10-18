@@ -20,6 +20,9 @@ function createNamedProject(name: string) {
   fireEvent.change(within(dialog).getByLabelText('Project name'), {
     target: { value: name },
   })
+  fireEvent.change(within(dialog).getByLabelText('Parent project'), {
+    target: { value: '' },
+  })
   fireEvent.click(
     within(dialog).getByRole('button', { name: 'Create project' }),
   )
@@ -38,6 +41,19 @@ async function createEditableCanvas() {
     ).toBeEnabled(),
   )
   fireEvent.click(screen.getAllByRole('button', { name: 'New canvas' })[0])
+  const destination = within(
+    screen.getByRole('dialog', { name: 'Choose a canvas destination' }),
+  )
+  fireEvent.change(destination.getByLabelText('Destination project'), {
+    target: {
+      value: (
+        destination.getByRole('option', {
+          name: 'Editing project',
+        }) as HTMLOptionElement
+      ).value,
+    },
+  })
+  fireEvent.click(destination.getByRole('button', { name: 'Continue' }))
   fireEvent.change(await screen.findByLabelText('Canvas name'), {
     target: { value: 'Editing canvas' },
   })
@@ -471,6 +487,9 @@ describe('workspace navigation and appearance', () => {
       screen.getByRole('button', { name: 'Create a new project' }),
     )
     expect(screen.getByLabelText('Project name')).toHaveFocus()
+    fireEvent.change(screen.getByLabelText('Parent project'), {
+      target: { value: '' },
+    })
     fireEvent.click(
       within(screen.getByRole('dialog')).getByRole('button', {
         name: 'Create project',

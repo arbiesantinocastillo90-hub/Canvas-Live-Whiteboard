@@ -11,11 +11,15 @@ export type WorkspaceLayout = {
   sidebarWidth: number
   filesOpen: boolean
   filesWidth: number
+  filesTopInset: number
+  filesBottomInset: number
   leftPanel: 'files' | 'projects' | 'workspaces'
   leftPinned: boolean
   rightPanel: 'none' | 'ai' | 'properties' | 'tools'
   rightPinned: boolean
   rightWidth: number
+  rightTopInset: number
+  rightBottomInset: number
   panelsSwapped: boolean
   autoHidePanels: boolean
   autoHideDelay: number
@@ -47,11 +51,15 @@ export const DEFAULT_LAYOUT: WorkspaceLayout = {
   sidebarWidth: PANEL_LIMITS.sidebar.default,
   filesOpen: false,
   filesWidth: PANEL_LIMITS.files.default,
+  filesTopInset: 8,
+  filesBottomInset: 8,
   leftPanel: 'files',
   leftPinned: false,
   rightPanel: 'none',
   rightPinned: false,
   rightWidth: PANEL_LIMITS.right.default,
+  rightTopInset: 8,
+  rightBottomInset: 8,
   panelsSwapped: false,
   autoHidePanels: true,
   autoHideDelay: 280,
@@ -81,6 +89,11 @@ export function boundedAutoHideDelay(value: number) {
     ? Math.round(Math.max(0, Math.min(2000, value)))
     : DEFAULT_LAYOUT.autoHideDelay
 }
+export function boundedPanelInset(value: unknown) {
+  return typeof value === 'number' && Number.isFinite(value)
+    ? Math.round(Math.max(0, Math.min(800, value)))
+    : 8
+}
 
 export function boundedPanelWidth(
   value: number,
@@ -100,6 +113,10 @@ export function parseLayout(raw: string | null): WorkspaceLayout {
       return { ...DEFAULT_LAYOUT }
     const candidate = value as Record<string, unknown>
     return {
+      filesTopInset: boundedPanelInset(candidate.filesTopInset),
+      filesBottomInset: boundedPanelInset(candidate.filesBottomInset),
+      rightTopInset: boundedPanelInset(candidate.rightTopInset),
+      rightBottomInset: boundedPanelInset(candidate.rightBottomInset),
       allProjectsCollapsed: candidate.allProjectsCollapsed === true,
       homeView: normalizeHomeView(candidate.homeView),
       workspaceView: normalizeWorkspaceLibraryView(candidate.workspaceView),

@@ -1,17 +1,17 @@
 # Connect Canvas Live to ChatGPT
 
-Canvas Live provides a local MCP companion for the LCANVAS file you explicitly share from the browser. The companion runs at `http://127.0.0.1:8787/mcp`. It exposes validated canvas operations and waits for the browser to acknowledge changes. It does not use a model API or save files automatically.
+Canvas Live provides a local MCP companion for the LCANVAS file you explicitly share from the browser. Repository startup defaults to `http://127.0.0.1:8787/mcp`; the portable Windows launcher chooses an available port shown in its status window. It exposes validated canvas operations and waits for the browser to acknowledge changes. It does not use a model API or save files automatically.
 
 For ChatGPT on the web, connect through OpenAI Secure MCP Tunnel. This route keeps the companion on loopback and gives ChatGPT an authenticated tunnel to it. A desktop client can instead connect locally. Local protocol tests do not establish that a ChatGPT account has connected successfully; complete the live acceptance steps below.
 
 ## Start and share a file
 
-1. Open Canvas Live, choose a project and open an LCANVAS file. In the packaged folder, open **Canvas Live.exe** before starting its companion so the companion can recognize the website's actual address if the preferred port is occupied.
-2. Open a terminal in the repository and run `npm run mcp`. In the packaged Windows folder, you can instead open **Start Canvas Live MCP.cmd**. Keep the companion running while using the integration. It requires Node.js 24; the repository command also requires the installed dependencies. **Canvas Live.exe** continues to open the website without Node.js, while MCP is an optional companion.
-3. Open the Workspace AI panel. Enter the browser pairing code printed by the companion, then select **Share this canvas**.
+1. Open **Canvas Live.exe**, choose a project and open an LCANVAS file.
+2. Open **Canvas Live MCP.exe** from the packaged Windows folder or its portable USB root icon. Its verified Node runtime is included; no host Node installation is needed. The MCP launcher starts Canvas Live if needed. Keep it running while using the integration. Repository developers can instead run `npm run mcp` with Node.js 24 and installed dependencies.
+3. Open Workspace AI and select **Share this canvas**. The packaged website discovers its own companion automatically. For repository development or manual recovery, expand **Use a pairing code instead**, paste the code printed by the companion and choose **Pair and share**.
 4. Check the shared file name before making an AI request. **Stop sharing** revokes the browser connection. Switching files or leaving Work also stops sharing; closing the AI panel keeps that file shared.
 
-The pairing code authorizes a browser tab. The separate `mcpToken` authorizes an MCP client. Neither is an OpenAI API key. The companion stores its current connection details in the ignored `.canvas-live/mcp-session.json` file; this file contains secrets and stays on this computer. Do not paste its contents into a conversation or commit it. Restarting the companion regenerates its credentials, so pair the browser again and update the desktop client's credential or restart the tunnel helper. If restarting the website launcher changes its port, restart the companion after opening the website to recognize that exact address.
+The pairing code authorizes a browser tab. The separate `mcpToken` authorizes an MCP client. Neither is an OpenAI API key. The companion stores its current connection details in the ignored `.canvas-live/mcp-session.json` file inside its portable folder; this file contains secrets. Do not paste its contents into a conversation or commit it. Restarting the companion regenerates its credentials, so choose Share again and update the desktop client's current address/credential or restart the tunnel helper. **Copy MCP access token** in the status window copies the current bearer token only when you explicitly click it. If restarting the website launcher changes its port, restart the companion after opening the website to recognize that exact address.
 
 The active shared file can include unsaved changes. AI edits join the editor's undo history and remain unsaved until you choose **Save**. The `undo_operation` and `redo_operation` MCP tools use this same history: Undo can reverse the latest manual or AI action. An atomic batch is one undo step. Export creates a portable LCANVAS backup through the browser; MCP does not save or export files. Other projects and files are outside this connection's authority.
 
@@ -58,7 +58,7 @@ $canvasMcpSession = Get-Content -LiteralPath '.canvas-live/mcp-session.json' -Ra
 $env:CANVAS_MCP_AUTHORIZATION = 'Bearer ' + $canvasMcpSession.mcpToken
 $canvasTunnelProfiles = Join-Path (Get-Location).Path '.canvas-live/tunnel-profiles'
 & 'C:\Tools\tunnel-client\tunnel-client.exe' init --sample sample_mcp_remote_no_auth --profile canvas-live --profile-dir $canvasTunnelProfiles --force --tunnel-id 'tunnel_your_complete_identifier' --mcp-server-url $canvasMcpSession.url
-& 'C:\Tools\tunnel-client\tunnel-client.exe' doctor --profile canvas-live --profile-dir $canvasTunnelProfiles --explain
+& 'C:\Tools\tunnel-client\tunnel-client.exe' doctor --profile canvas-live --profile-dir $canvasTunnelProfiles --explain --mcp.extra-headers 'Authorization: env:CANVAS_MCP_AUTHORIZATION'
 & 'C:\Tools\tunnel-client\tunnel-client.exe' run --profile canvas-live --profile-dir $canvasTunnelProfiles --mcp.extra-headers 'Authorization: env:CANVAS_MCP_AUTHORIZATION'
 ```
 
@@ -88,7 +88,7 @@ url = "http://127.0.0.1:8787/mcp"
 bearer_token_env_var = "CANVAS_LIVE_MCP_TOKEN"
 ```
 
-Set that variable in the local client's environment to the `mcpToken` from the session file before starting the client. The local package points to port 8787; for a custom companion port, update the client connection URL to match. A hosted ChatGPT web conversation does not read local Codex configuration. Desktop support and credential entry must be checked in the installed client; configuration examples are not proof of a completed account connection.
+Set that variable in the local client's environment to the `mcpToken` from the session file before starting the client. The local plugin and example above point to development port 8787; for the portable companion, replace that URL with the current address shown in its status window. A hosted ChatGPT web conversation does not read local Codex configuration. Desktop support and credential entry must be checked in the installed client; configuration examples are not proof of a completed account connection.
 
 ## Live acceptance
 

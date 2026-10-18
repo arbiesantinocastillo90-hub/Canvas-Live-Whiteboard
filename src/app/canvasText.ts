@@ -1,4 +1,4 @@
-import type { CanvasDocument, CanvasElement } from './lcanvas'
+import type { CanvasDocument, CanvasElement, TextFormat } from './lcanvas'
 import { COORDINATE_LIMIT } from './lcanvas'
 import { isElementEditable, updateElement } from './canvasOperations'
 
@@ -26,11 +26,28 @@ export type TextLayout = {
   overflow: boolean
 }
 
-const FONT_FAMILY = '"Segoe UI", system-ui, sans-serif'
+export function canvasFontFamily(
+  element: Pick<TextFormat, 'fontFamily'>,
+): string {
+  switch (element.fontFamily) {
+    case 'serif':
+      return 'Georgia, "Times New Roman", serif'
+    case 'mono':
+      return 'Consolas, "Courier New", monospace'
+    case 'cursive':
+      return '"Comic Sans MS", cursive'
+    default:
+      return '"Segoe UI", system-ui, sans-serif'
+  }
+}
 let measureContext: OffscreenCanvasRenderingContext2D | null | undefined
 
 /** Measurement is local. The fallback also works without a browser canvas. */
-function glyphWidth(text: string, fontSize: number): number {
+function glyphWidth(
+  text: string,
+  fontSize: number,
+  format: TextFormat = {},
+): number {
   if (measureContext === undefined) {
     try {
       measureContext =
@@ -42,15 +59,18 @@ function glyphWidth(text: string, fontSize: number): number {
     }
   }
   if (measureContext) {
-    measureContext.font = `${fontSize}px ${FONT_FAMILY}`
+    measureContext.font = `${format.fontStyle ?? 'normal'} ${format.fontWeight ?? 'normal'} ${fontSize}px ${canvasFontFamily(format)}`
     // A small allowance keeps SVG and textarea wrapping safely in agreement.
     return measureContext.measureText(text).width * 1.025
   }
-  if (/^\s+$/u.test(text)) return fontSize * 0.34
+  if (format.fontFamily === 'mono') return fontSize * 0.62
+  const weight = format.fontWeight === 'bold' ? 1.08 : 1
+  if (/^\s+$/u.test(text)) return fontSize * 0.34 * weight
   if (/^[ilI.,'`:;!|]$/u.test(text)) return fontSize * 0.3
   if (/^[MW@#%]$/u.test(text)) return fontSize * 0.9
   return (
     fontSize *
+    weight *
     (Array.from(text).some((character) => character.codePointAt(0)! > 0x24f)
       ? 1
       : 0.56)
@@ -64,13 +84,14 @@ export function wrapCanvasText(
   text: string,
   width: number,
   fontSize: number,
+  format: TextFormat = {},
 ): string[] {
   const available = Math.max(1, width)
   const cache = new Map<string, number>()
   const measured = (value: string) => {
     let result = cache.get(value)
     if (result === undefined) {
-      result = glyphWidth(value, fontSize)
+      result = glyphWidth(value, fontSize, format)
       cache.set(value, result)
     }
     return result
@@ -122,11 +143,21 @@ export function normalizeTextOptions(
 
 function insetFactor(element: TextElement) {
   // These centered rectangles stay within the sloped/curved outline.
-  return element.type === 'diamond'
-    ? 0.5
-    : element.type === 'ellipse'
-      ? Math.SQRT1_2
-      : 1
+  return element.type === 'star'
+    ? 0.35
+    : element.type === 'triangle'
+      ? 0.45
+      : ['pentagon', 'hexagon', 'parallelogram', 'trapezoid'].includes(
+            element.type,
+          )
+        ? 0.65
+        : element.type === 'cylinder'
+          ? 0.75
+          : element.type === 'diamond'
+            ? 0.5
+            : element.type === 'ellipse'
+              ? Math.SQRT1_2
+              : 1
 }
 
 export function canvasTextBox(element: TextElement): TextBox {
@@ -149,7 +180,7 @@ function measureCanvasTextLayout(
   const settings = normalizeTextOptions(options)
   const box = canvasTextBox(element)
   const make = (fontSize: number) => {
-    const lines = wrapCanvasText(element.text, box.width, fontSize)
+    const lines = wrapCanvasText(element.text, box.width, fontSize, element)
     const lineHeight = fontSize * 1.3
     const height = lines.length * lineHeight
     const widths = new Map<string, number>()
@@ -157,7 +188,7 @@ function measureCanvasTextLayout(
       let width = 0
       for (const { segment } of segmenter.segment(line)) {
         if (!widths.has(segment))
-          widths.set(segment, glyphWidth(segment, fontSize))
+          widths.set(segment, glyphWidth(segment, fontSize, element))
         width += widths.get(segment)!
       }
       return width
@@ -213,6 +244,38 @@ export function layoutCanvasText(
   return measured
 }
 
+/** SVG and the text editor share the same horizontal and vertical anchors. */
+export function canvasTextPlacement(element: TextElement, layout: TextLayout) {
+  const horizontal =
+    element.textAlign ?? (element.type === 'text' ? 'left' : 'center')
+  const vertical =
+    element.verticalAlign ?? (element.type === 'text' ? 'top' : 'middle')
+  const x =
+    layout.box.x +
+    (horizontal === 'right'
+      ? layout.box.width
+      : horizontal === 'center'
+        ? layout.box.width / 2
+        : 0)
+  const y =
+    layout.box.y +
+    (vertical === 'bottom'
+      ? Math.max(0, layout.box.height - layout.height)
+      : vertical === 'middle'
+        ? Math.max(0, (layout.box.height - layout.height) / 2)
+        : 0)
+  return {
+    x,
+    y,
+    textAnchor:
+      horizontal === 'left'
+        ? ('start' as const)
+        : horizontal === 'right'
+          ? ('end' as const)
+          : ('middle' as const),
+  }
+}
+
 /** Grow from the anchored top-left only while content/font changes, never on drag. */
 export function growCanvasText(
   element: TextElement,
@@ -230,6 +293,7 @@ export function growCanvasText(
     element.text,
     Math.max(1, width * factor - padding * 2),
     element.fontSize,
+    element,
   )
   const height = Math.min(
     COORDINATE_LIMIT,
@@ -262,7 +326,10 @@ export function adaptCanvasText(
       old &&
       'text' in old &&
       old.text === element.text &&
-      old.fontSize === element.fontSize
+      old.fontSize === element.fontSize &&
+      old.fontFamily === element.fontFamily &&
+      old.fontWeight === element.fontWeight &&
+      old.fontStyle === element.fontStyle
     )
       continue
     const grown = growCanvasText(element, options)

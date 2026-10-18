@@ -87,11 +87,14 @@ import {
 } from './workspaceSessions'
 
 type Entry = CanvasDraft
-type FilePrompt = { kind: 'create' } | { kind: 'rename'; id: string }
+type FilePrompt =
+  | { kind: 'create'; destinationConfirmed?: boolean }
+  | { kind: 'rename'; id: string }
 export type WorkspaceOpenRequest = {
   sequence: number
   fileId?: string
   action?: 'create'
+  destinationConfirmed?: boolean
   imports?: File[]
   localImports?: LocalCanvasImport[]
 }
@@ -1553,7 +1556,11 @@ export default function FileWorkspace({
 
   const handleOpenRequest = useEffectEvent((request: WorkspaceOpenRequest) => {
     handledOpenRequest.current = request.sequence
-    if (request.action === 'create') setPrompt({ kind: 'create' })
+    if (request.action === 'create')
+      setPrompt({
+        kind: 'create',
+        destinationConfirmed: request.destinationConfirmed,
+      })
     else if (request.localImports) void importBoundFiles(request.localImports)
     else if (request.imports) void importSelectedFiles(request.imports)
     else if (request.fileId) {
@@ -2242,6 +2249,14 @@ export default function FileWorkspace({
           open={filesOpen && !focused}
           pinned={layout.leftPinned}
           width={layout.filesWidth}
+          topInset={layout.filesTopInset}
+          bottomInset={layout.filesBottomInset}
+          onTopInsetChange={(filesTopInset) =>
+            changeLayout({ ...layout, filesTopInset })
+          }
+          onBottomInsetChange={(filesBottomInset) =>
+            changeLayout({ ...layout, filesBottomInset })
+          }
           min={PANEL_LIMITS.files.min}
           max={PANEL_LIMITS.files.max}
           defaultWidth={PANEL_LIMITS.files.default}
@@ -2702,6 +2717,14 @@ export default function FileWorkspace({
           open={rightPanel !== 'none'}
           pinned={rightPinned}
           width={layout.rightWidth}
+          topInset={layout.rightTopInset}
+          bottomInset={layout.rightBottomInset}
+          onTopInsetChange={(rightTopInset) =>
+            changeLayout({ ...layout, rightTopInset })
+          }
+          onBottomInsetChange={(rightBottomInset) =>
+            changeLayout({ ...layout, rightBottomInset })
+          }
           min={PANEL_LIMITS.right.min}
           max={PANEL_LIMITS.right.max}
           defaultWidth={PANEL_LIMITS.right.default}
@@ -2753,6 +2776,11 @@ export default function FileWorkspace({
         <ProjectDialog
           entity="file"
           kind={prompt.kind}
+          projectParents={[project]}
+          initialParentId={project.id}
+          initialDestinationConfirmed={
+            prompt.kind === 'rename' || prompt.destinationConfirmed === true
+          }
           initialName={
             prompt.kind === 'rename'
               ? (entries.find((entry) => entry.record.id === prompt.id)?.record

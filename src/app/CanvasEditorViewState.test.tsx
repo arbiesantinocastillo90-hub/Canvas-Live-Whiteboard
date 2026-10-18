@@ -147,13 +147,13 @@ describe('copied canvas view state', () => {
     expect(container.querySelector('.canvas-view-status')).toBeNull()
     expect(onStatusChange).toHaveBeenLastCalledWith({
       instructions:
-        'Drag to move · Corner to resize · Double-click to edit · Scroll to zoom',
+        'Drag to move · Edge to resize · Side handle to connect · Right-click for properties · Scroll to zoom',
       selection: 'rectangle · Main',
       visibleCount: 1,
       zoom: 1.25,
     })
     expect(stage).toHaveAccessibleDescription(
-      'Drag to move · Corner to resize · Double-click to edit · Scroll to zoom',
+      'Drag to move · Edge to resize · Side handle to connect · Right-click for properties · Scroll to zoom',
     )
     fireEvent.click(screen.getByRole('button', { name: 'Pan canvas' }))
     expect(controller().getViewState().tool).toBe('pan')

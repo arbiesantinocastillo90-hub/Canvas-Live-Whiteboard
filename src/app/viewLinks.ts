@@ -15,7 +15,7 @@ import {
 
 export type ViewLinkConnection = {
   arrowStyle: 'end' | 'none' | 'both' | 'start'
-  style: 'straight' | 'elbow'
+  style: 'straight' | 'elbow' | 'curve' | 'step'
   sourceSide: ConnectionSide | 'fixed'
   targetSide: ConnectionSide | 'fixed'
 }
@@ -84,7 +84,7 @@ function connection(value: unknown): ViewLinkConnection | undefined {
   if (
     !record(value) ||
     !['end', 'none', 'both', 'start'].includes(String(value.arrowStyle)) ||
-    !['straight', 'elbow'].includes(String(value.style)) ||
+    !['straight', 'elbow', 'curve', 'step'].includes(String(value.style)) ||
     ![...CONNECTION_SIDES, 'fixed'].includes(String(value.sourceSide)) ||
     ![...CONNECTION_SIDES, 'fixed'].includes(String(value.targetSide))
   )

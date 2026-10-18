@@ -85,6 +85,9 @@ async function create(name: string) {
   fireEvent.change(within(dialog).getByLabelText('Canvas name'), {
     target: { value: name },
   })
+  fireEvent.change(within(dialog).getByLabelText('Destination project'), {
+    target: { value: project.id },
+  })
   fireEvent.click(within(dialog).getByRole('button', { name: 'Create canvas' }))
   await screen.findByRole('tab', { name })
   await waitFor(() =>
@@ -118,6 +121,27 @@ describe('LCANVAS project workspace', () => {
   afterEach(() => {
     vi.useRealTimers()
     vi.unstubAllGlobals()
+  })
+
+  it('requires confirming the parent project before a direct canvas creation and creates nothing on cancel', async () => {
+    const store = createCanvasFileStore({ indexedDB: null })
+    await mount(store)
+    fireEvent.click(screen.getAllByRole('button', { name: 'New canvas' })[0])
+    const dialog = screen.getByRole('dialog', { name: 'Create a canvas file' })
+    fireEvent.change(within(dialog).getByLabelText('Canvas name'), {
+      target: { value: 'Uncreated canvas' },
+    })
+    expect(
+      within(dialog).getByRole('button', { name: 'Create canvas' }),
+    ).toBeDisabled()
+    fireEvent.change(within(dialog).getByLabelText('Destination project'), {
+      target: { value: project.id },
+    })
+    expect(
+      within(dialog).getByRole('button', { name: 'Create canvas' }),
+    ).toBeEnabled()
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }))
+    expect((await store.list(project.id)).value).toEqual([])
   })
 
   it('keeps the canvas central while file and tool panels peek, pin and change without editing the document', async () => {
@@ -198,11 +222,17 @@ describe('LCANVAS project workspace', () => {
     vi.stubGlobal('fetch', fetchMock)
     const view = await mount(store)
     openPanel('AI')
+    fireEvent.click(screen.getByText('Use a pairing code instead'))
     fireEvent.change(screen.getByLabelText('Browser pairing code'), {
       target: { value: 'browser-pairing-code-for-tests-only' },
     })
-    fireEvent.click(screen.getByRole('button', { name: 'Share this canvas' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Pair and share' }))
     await screen.findByText('This canvas is shared')
+    const sharedContext = within(
+      screen.getByRole('complementary', { name: 'Workspace AI' }),
+    )
+    expect(sharedContext.getByText(project.name)).toBeVisible()
+    expect(sharedContext.getByText('Second canvas')).toBeVisible()
     fireEvent.click(screen.getByRole('button', { name: 'Close right panel' }))
     expect(screen.getByText('MCP sharing')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Open right panel' }))
@@ -230,6 +260,7 @@ describe('LCANVAS project workspace', () => {
     await store.save(canvas('First canvas', 'first'))
     await mount(store)
     openPanel('AI')
+    fireEvent.click(screen.getByText('Use a pairing code instead'))
     fireEvent.change(screen.getByLabelText('Browser pairing code'), {
       target: { value: 'unsubmitted-test-pairing-code' },
     })
@@ -426,7 +457,7 @@ describe('LCANVAS project workspace', () => {
     expect((await store.list(project.id)).value).toHaveLength(125)
   })
 
-  it('keeps the right rail visible and scopes AI context to the active project and file', async () => {
+  it('keeps the right rail visible and hides AI context until the active canvas is shared', async () => {
     const store = createCanvasFileStore({ indexedDB: null })
     await store.save(canvas('First canvas', 'first', project.id, 100))
     await store.save(canvas('Second canvas', 'second', project.id, 200))
@@ -434,14 +465,19 @@ describe('LCANVAS project workspace', () => {
     openPanel('AI')
     fireEvent.click(screen.getByRole('button', { name: 'Pin right panel' }))
     const panel = screen.getByRole('complementary', { name: 'Workspace AI' })
-    expect(within(panel).getByText(project.name)).toBeInTheDocument()
-    expect(within(panel).getByText('Second canvas')).toBeInTheDocument()
+    expect(within(panel).queryByText(project.name)).not.toBeInTheDocument()
+    expect(within(panel).queryByText('Second canvas')).not.toBeInTheDocument()
     expect(within(panel).getByText('Canvas is not shared')).toBeInTheDocument()
+    fireEvent.click(within(panel).getByText('Use a pairing code instead'))
     expect(within(panel).getByLabelText('Browser pairing code')).toBeEnabled()
     fireEvent.click(
       screen.getByRole('button', { name: 'Open canvas First canvas' }),
     )
-    expect(within(panel).getByText('First canvas')).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: 'First canvas' })).toHaveAttribute(
+      'aria-selected',
+      'true',
+    )
+    expect(within(panel).queryByText('First canvas')).not.toBeInTheDocument()
     expect(within(panel).queryByText('Second canvas')).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Close right panel' }))
     expect(
@@ -459,7 +495,7 @@ describe('LCANVAS project workspace', () => {
     expect(
       within(
         screen.getByRole('complementary', { name: 'Workspace AI' }),
-      ).getByText('No canvas open'),
+      ).getByText('Open a canvas to share it.'),
     ).toBeInTheDocument()
     expect(
       screen.queryByRole('region', { name: /canvas view$/ }),
@@ -679,8 +715,8 @@ describe('LCANVAS project workspace', () => {
     expect(
       within(
         screen.getByRole('complementary', { name: 'Workspace AI' }),
-      ).getByText(projectB.name),
-    ).toBeInTheDocument()
+      ).queryByText(projectB.name),
+    ).not.toBeInTheDocument()
     expect(store.list).toHaveBeenCalledWith(project.id)
     expect(store.list).toHaveBeenCalledWith(projectB.id)
   })

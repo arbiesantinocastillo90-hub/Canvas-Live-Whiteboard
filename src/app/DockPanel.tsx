@@ -20,6 +20,10 @@ type Props = {
   min: number
   max: number
   defaultWidth: number
+  topInset?: number
+  bottomInset?: number
+  onTopInsetChange?: (value: number) => void
+  onBottomInsetChange?: (value: number) => void
   tabs: { id: string; label: string; icon?: ReactNode }[]
   activeTab: string
   onSelect: (id: string) => void
@@ -42,6 +46,10 @@ export default function DockPanel({
   min,
   max,
   defaultWidth,
+  topInset = 8,
+  bottomInset = 8,
+  onTopInsetChange,
+  onBottomInsetChange,
   tabs,
   activeTab,
   onSelect,
@@ -54,6 +62,39 @@ export default function DockPanel({
   children,
 }: Props) {
   const root = useRef<HTMLElement>(null)
+  const [availableHeight, setAvailableHeight] = useState(() =>
+    Math.max(160, window.innerHeight - (pinned ? 0 : 62)),
+  )
+  useEffect(() => {
+    const deck = root.current?.closest('.workspace-deck')
+    if (!deck) return
+    const measure = () => {
+      const style = getComputedStyle(deck)
+      const chrome = pinned
+        ? 0
+        : (parseFloat(style.getPropertyValue('--tab-bar-height')) || 40) +
+          (parseFloat(style.getPropertyValue('--status-bar-height')) || 22)
+      setAvailableHeight(
+        Math.max(
+          160,
+          (deck.getBoundingClientRect().height || window.innerHeight) - chrome,
+        ),
+      )
+    }
+    measure()
+    const observer =
+      typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(measure)
+    observer?.observe(deck)
+    window.addEventListener('resize', measure)
+    return () => {
+      observer?.disconnect()
+      window.removeEventListener('resize', measure)
+    }
+  }, [pinned, open])
+  const maxTop = Math.max(0, Math.min(800, availableHeight - bottomInset - 160))
+  const top = Math.max(0, Math.min(topInset, maxTop))
+  const maxBottom = Math.max(0, Math.min(800, availableHeight - top - 160))
+  const bottom = Math.max(0, Math.min(bottomInset, maxBottom))
   const arrangement = useRef<{
     pointerId: number
     startX: number
@@ -211,7 +252,16 @@ export default function DockPanel({
       data-open={open}
       data-arranging={dropSide !== null}
       data-drop-side={dropSide ?? undefined}
-      style={{ width }}
+      style={{
+        width,
+        ...(pinned
+          ? { marginTop: top, marginBottom: bottom }
+          : {
+              top: `calc(var(--tab-bar-height, 40px) + ${top}px)`,
+              bottom: `calc(var(--status-bar-height, 22px) + ${bottom}px)`,
+              maxHeight: `calc(100% - var(--tab-bar-height, 40px) - var(--status-bar-height, 22px) - ${top + bottom}px)`,
+            }),
+      }}
       onKeyDown={(event) => {
         if (event.key === 'Escape' && arrangement.current) {
           event.preventDefault()
@@ -377,6 +427,28 @@ export default function DockPanel({
         edge={side === 'left' ? 'right' : 'left'}
         onChange={onWidthChange}
       />
+      {onTopInsetChange && (
+        <PanelResizeHandle
+          label={`Resize ${side} panel top`}
+          edge="top"
+          value={top}
+          min={0}
+          max={maxTop}
+          defaultValue={8}
+          onChange={onTopInsetChange}
+        />
+      )}
+      {onBottomInsetChange && (
+        <PanelResizeHandle
+          label={`Resize ${side} panel bottom`}
+          edge="bottom"
+          value={bottom}
+          min={0}
+          max={maxBottom}
+          defaultValue={8}
+          onChange={onBottomInsetChange}
+        />
+      )}
     </aside>
   )
 }

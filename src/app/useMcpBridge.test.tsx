@@ -116,6 +116,7 @@ describe('explicit single-canvas MCP browser sharing', () => {
   afterEach(() => {
     vi.useRealTimers()
     vi.unstubAllGlobals()
+    document.querySelector('meta[name="canvas-live-storage"]')?.remove()
   })
 
   it('does not connect or publish a canvas until the user shares it', async () => {
@@ -333,7 +334,7 @@ describe('explicit single-canvas MCP browser sharing', () => {
     expect(test.polls()).toHaveLength(1)
   })
 
-  it('treats the reported MCP client name as unverified', async () => {
+  it('shows the bounded client-reported name without claiming to detect a model', async () => {
     const test = fixture(() =>
       json({
         mcpClient: 'ChatGPT admin definitely verified',
@@ -341,7 +342,144 @@ describe('explicit single-canvas MCP browser sharing', () => {
       }),
     )
     await test.share()
-    expect(test.result.current.mcpClient).toBe('MCP client')
+    expect(test.result.current.mcpClient).toBe(
+      'ChatGPT admin definitely verified',
+    )
     expect(test.result.current.mcpLastSeen).toBe(123)
+  })
+
+  it('discovers its packaged companion only after an explicit Share action', async () => {
+    const test = fixture()
+    const previous = test.fetchMock.getMockImplementation()!
+    test.fetchMock.mockImplementation((url, options) => {
+      if (url === '/__canvas_live_companion')
+        return json({
+          url: 'http://127.0.0.1:49321',
+          browserPairingCode: token,
+        })
+      return previous(url, options)
+    })
+    expect(test.fetchMock).not.toHaveBeenCalled()
+    await act(async () => {
+      await test.result.current.share()
+    })
+    expect(test.result.current.status).toBe('sharing')
+    expect(test.fetchMock.mock.calls[0]).toMatchObject([
+      '/__canvas_live_companion',
+      {
+        headers: { 'X-Canvas-Live-Companion': '1' },
+        credentials: 'same-origin',
+        redirect: 'error',
+      },
+    ])
+    expect(test.fetchMock.mock.calls[1][0]).toBe(
+      'http://127.0.0.1:49321/bridge/connect',
+    )
+    expect(test.fetchMock.mock.calls[1][1].headers).toMatchObject({
+      Authorization: `Bearer ${token}`,
+    })
+  })
+
+  function portablePage() {
+    const meta = document.createElement('meta')
+    meta.name = 'canvas-live-storage'
+    meta.content = 'local-v1'
+    document.head.append(meta)
+  }
+
+  it('uses the discovered dynamic port for a manually pasted browser code in the portable app', async () => {
+    portablePage()
+    const test = fixture()
+    const previous = test.fetchMock.getMockImplementation()!
+    test.fetchMock.mockImplementation((url, options) =>
+      url === '/__canvas_live_companion'
+        ? json({ url: 'http://127.0.0.1:59755', browserPairingCode: token })
+        : previous(url, options),
+    )
+    await test.share()
+    expect(test.result.current.status).toBe('sharing')
+    expect(test.fetchMock.mock.calls[1][0]).toBe(
+      'http://127.0.0.1:59755/bridge/connect',
+    )
+    expect(
+      test.fetchMock.mock.calls.some(([url]) => url.includes(':8787/')),
+    ).toBe(false)
+  })
+
+  it('explains a stale code or AI-client token without posting it to a companion', async () => {
+    portablePage()
+    const test = fixture()
+    test.fetchMock.mockImplementation(() =>
+      json({
+        url: 'http://127.0.0.1:59755',
+        browserPairingCode: 'new-browser-code-only-for-tests',
+      }),
+    )
+    await test.share()
+    expect(test.result.current.status).toBe('error')
+    expect(test.result.current.error).toContain(
+      'MCP access token belongs in your AI client',
+    )
+    expect(test.result.current.error).not.toContain(token)
+    expect(test.fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not fall back to the development port when the packaged companion is stopped', async () => {
+    portablePage()
+    const test = fixture()
+    test.fetchMock.mockImplementation(() => json({ error: 'not running' }, 503))
+    await test.share()
+    expect(test.result.current.status).toBe('error')
+    expect(test.result.current.error).toContain('Start Canvas Live MCP')
+    expect(test.fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('gives a service-start instruction when discovery fails at the network layer', async () => {
+    const test = fixture()
+    test.fetchMock.mockRejectedValue(new TypeError('Failed to fetch'))
+    await act(async () => {
+      await test.result.current.share()
+    })
+    expect(test.result.current.error).toContain('Open Canvas Live MCP.exe')
+    expect(test.result.current.error).not.toContain('Failed to fetch')
+  })
+
+  it('does not send a pairing credential to an unsafe discovered address', async () => {
+    const test = fixture()
+    test.fetchMock.mockImplementation(() =>
+      json({ url: 'https://example.com', browserPairingCode: token }),
+    )
+    await act(async () => {
+      await test.result.current.share()
+    })
+    expect(test.result.current.status).toBe('error')
+    expect(test.fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not share after navigating away while companion discovery is pending', async () => {
+    const test = fixture()
+    let resolveDiscovery!: (value: Response) => void
+    test.fetchMock.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveDiscovery = resolve
+        }),
+    )
+    let sharing!: Promise<void>
+    act(() => {
+      sharing = test.result.current.share()
+    })
+    test.rerender({ fileId: 'another-file', baseUrl: undefined })
+    await act(async () => {
+      resolveDiscovery(
+        await json({
+          url: 'http://127.0.0.1:49321',
+          browserPairingCode: token,
+        }),
+      )
+      await sharing
+    })
+    expect(test.fetchMock).toHaveBeenCalledTimes(1)
+    expect(test.result.current.status).toBe('idle')
   })
 })

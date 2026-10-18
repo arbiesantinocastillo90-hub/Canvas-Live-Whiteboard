@@ -49,3 +49,20 @@ Old **.lcanvas** and **.lworkspace** files remain importable. Save continues wri
 A .CLP file is limited to 25 MiB of UTF-8 JSON, 100 projects, and 500 canvas files. Each canvas retains its existing validated limits. Invalid references, duplicate identifiers, cycles, unsupported formats, invalid dates, malformed documents, and oversized archives are rejected before import; oversized archives are never truncated. Export smaller subprojects or individual canvases if an archive exceeds the limits.
 
 Downloads are explicit local backup files. Browser file associations and automatic opening by double-click in Windows are not changed by this format update.
+
+## Rich objects and media references
+
+Version-two canvas documents also support triangle, pentagon, hexagon, star,
+cylinder, parallelogram and trapezoid shapes. Shape/text records may carry
+optional bounded font, alignment and font-color fields. Connections retain the
+legacy arrow booleans while adding curve/step paths, line patterns and separate
+pointer types. Existing documents without these fields retain their earlier
+appearance.
+
+An `embed` record stores a media kind, HTTPS URL or `media:<SHA-256>` reference,
+title, geometry, layer, paused state and minimized state. It does not store file
+paths, HTML source, credentials or large media byte strings. Native binary
+media lives in `data/media/` and browser-only media in IndexedDB. Exported `.CLF`
+and `.CLP` files preserve references; they do not bundle these binaries. Copy
+the complete portable app folder or its full `data/` directory when moving an
+installed library with local embeds. See [Rich canvas controls](RICH_CANVAS.md).

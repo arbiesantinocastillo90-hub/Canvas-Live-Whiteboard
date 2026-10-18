@@ -76,7 +76,7 @@ try {
     if ($LASTEXITCODE -ne 0) {
         throw 'The tunnel-client profile setup failed. The tunnel was not started.'
     }
-    & $canvasTunnelClient doctor --profile canvas-live --profile-dir $canvasProfileDirectory --explain
+    & $canvasTunnelClient doctor --profile canvas-live --profile-dir $canvasProfileDirectory --explain --mcp.extra-headers 'Authorization: env:CANVAS_MCP_AUTHORIZATION'
     if ($LASTEXITCODE -ne 0) {
         throw 'The tunnel-client configuration check failed. Correct the reported issue before starting it.'
     }

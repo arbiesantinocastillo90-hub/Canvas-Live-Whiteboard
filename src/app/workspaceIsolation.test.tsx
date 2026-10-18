@@ -90,6 +90,9 @@ function createProjectInHome(name: string) {
   fireEvent.change(within(dialog).getByLabelText('Project name'), {
     target: { value: name },
   })
+  fireEvent.change(within(dialog).getByLabelText('Parent project'), {
+    target: { value: '' },
+  })
   fireEvent.click(
     within(dialog).getByRole('button', { name: 'Create project' }),
   )

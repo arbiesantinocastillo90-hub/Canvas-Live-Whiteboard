@@ -76,10 +76,11 @@ describe('canvas content thumbnails', () => {
     expect(
       view.container.querySelector('[data-thumbnail-object="diamond"]'),
     ).not.toBeNull()
-    expect(view.container.querySelector('path')).toHaveAttribute(
-      'd',
-      'M 100 50 H 220 V 260 H 340',
-    )
+    // Thumbnail relationships share the live outline attachment, rather than
+    // starting in a shape's center and covering its label.
+    expect(
+      view.container.querySelector('[data-connection-path]')?.getAttribute('d'),
+    ).toMatch(/^M 157\.14285714285714 100 L /u)
     expect(view.container.textContent).toContain('<script>unsafe()</script>')
     expect(view.container.textContent).not.toContain('Hidden text')
     expect(view.container.querySelector('script')).toBeNull()

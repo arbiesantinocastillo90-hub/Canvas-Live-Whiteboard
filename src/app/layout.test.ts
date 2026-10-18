@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   DEFAULT_LAYOUT,
   boundedChromeSize,
+  boundedPanelInset,
   LAYOUT_STORAGE_KEY,
   loadLayout,
   parseLayout,
@@ -12,6 +13,18 @@ describe('independent workspace layout', () => {
   beforeEach(() => {
     localStorage.clear()
     vi.restoreAllMocks()
+  })
+  it('persists canvas visibility separately in each workspace home layout', () => {
+    const visible = {
+      ...DEFAULT_LAYOUT,
+      homeView: { ...DEFAULT_LAYOUT.homeView, hierarchyShowCanvases: true },
+    }
+    expect(persistLayout(visible)).toBe(true)
+    expect(loadLayout().homeView.hierarchyShowCanvases).toBe(true)
+    expect(
+      parseLayout(JSON.stringify(DEFAULT_LAYOUT)).homeView
+        .hierarchyShowCanvases,
+    ).toBe(false)
   })
   it('remembers bounded widths and panel visibility in its own storage key', () => {
     localStorage.setItem('canvas-live.workspace.v1', 'existing projects')
@@ -173,5 +186,110 @@ describe('independent workspace layout', () => {
     expect(
       parseLayout(JSON.stringify({ autoHideDelay: -30 })).autoHideDelay,
     ).toBe(0)
+  })
+
+  it('persists independent top and bottom insets for both panels across pins and swapped sides', () => {
+    const layout = {
+      ...DEFAULT_LAYOUT,
+      filesTopInset: 36,
+      filesBottomInset: 70,
+      rightTopInset: 110,
+      rightBottomInset: 24,
+      leftPinned: true,
+      rightPinned: false,
+      panelsSwapped: true,
+    }
+    expect(persistLayout(layout)).toBe(true)
+    expect(loadLayout()).toEqual(layout)
+    expect(
+      parseLayout(
+        JSON.stringify({ ...layout, panelsSwapped: false, rightPinned: true }),
+      ),
+    ).toMatchObject({
+      filesTopInset: 36,
+      filesBottomInset: 70,
+      rightTopInset: 110,
+      rightBottomInset: 24,
+      panelsSwapped: false,
+      rightPinned: true,
+    })
+  })
+
+  it('bounds imported inset values and uses eight-pixel legacy defaults without coercing invalid fields', () => {
+    expect(
+      parseLayout(
+        JSON.stringify({
+          filesTopInset: -20,
+          filesBottomInset: 9000,
+          rightTopInset: 16.7,
+          rightBottomInset: '40',
+        }),
+      ),
+    ).toMatchObject({
+      filesTopInset: 0,
+      filesBottomInset: 800,
+      rightTopInset: 17,
+      rightBottomInset: 8,
+    })
+    for (const invalid of [
+      undefined,
+      null,
+      '20',
+      {},
+      [],
+      true,
+      Number.NaN,
+      Number.POSITIVE_INFINITY,
+    ])
+      expect(boundedPanelInset(invalid)).toBe(8)
+    expect(boundedPanelInset(-1)).toBe(0)
+    expect(boundedPanelInset(8000)).toBe(800)
+    expect(parseLayout(JSON.stringify({ filesWidth: 310 }))).toMatchObject({
+      filesTopInset: 8,
+      filesBottomInset: 8,
+      rightTopInset: 8,
+      rightBottomInset: 8,
+    })
+    const legacy = JSON.stringify({ filesWidth: 310, rightPanel: 'ai' })
+    localStorage.setItem('canvas-live.layout.v1', legacy)
+    expect(loadLayout()).toMatchObject({
+      filesTopInset: 8,
+      filesBottomInset: 8,
+      rightTopInset: 8,
+      rightBottomInset: 8,
+    })
+    expect(localStorage.getItem('canvas-live.layout.v1')).toBe(legacy)
+    expect(localStorage.getItem(LAYOUT_STORAGE_KEY)).toBeNull()
+  })
+
+  it('normalizes inset bounds before writing storage without mutating supplied preferences', () => {
+    const layout = {
+      ...DEFAULT_LAYOUT,
+      filesTopInset: 9999,
+      filesBottomInset: -90,
+      rightTopInset: 700,
+      rightBottomInset: 650,
+    }
+    expect(persistLayout(layout)).toBe(true)
+    expect(loadLayout()).toMatchObject({
+      filesTopInset: 800,
+      filesBottomInset: 0,
+      rightTopInset: 700,
+      rightBottomInset: 650,
+    })
+    expect(JSON.parse(localStorage.getItem(LAYOUT_STORAGE_KEY)!)).toMatchObject(
+      {
+        filesTopInset: 800,
+        filesBottomInset: 0,
+        rightTopInset: 700,
+        rightBottomInset: 650,
+      },
+    )
+    expect(layout).toMatchObject({
+      filesTopInset: 9999,
+      filesBottomInset: -90,
+      rightTopInset: 700,
+      rightBottomInset: 650,
+    })
   })
 })

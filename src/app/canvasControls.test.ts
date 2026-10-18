@@ -13,6 +13,15 @@ import {
 } from './canvasControls'
 
 describe('canvas precision settings', () => {
+  it('keeps grid and object snapping independent and requires explicit booleans', () => {
+    expect(normalizeCanvasControls({ snapToObjects: true })).toMatchObject({
+      snapToObjects: true,
+      snapToGrid: false,
+    })
+    expect(
+      normalizeCanvasControls({ snapToGrid: true, snapToObjects: 'true' }),
+    ).toMatchObject({ snapToObjects: false, snapToGrid: true })
+  })
   it('keeps old workspaces compatible and bounds imported settings', () => {
     expect(normalizeCanvasControls(null)).toEqual(DEFAULT_CANVAS_CONTROLS)
     expect(

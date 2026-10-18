@@ -1,4 +1,9 @@
+import { useId } from 'react'
 import type { CanvasDocument, CanvasElement } from './lcanvas'
+import { canvasFontFamily } from './canvasText'
+import { ConnectionDrawing, ShapeOutline } from './RichObject'
+import { lineDash } from './canvasDrawing'
+import EmbedObject from './EmbedObject'
 import { orderedVisibleElements } from './canvasOperations'
 import Icon from './Icon'
 
@@ -7,6 +12,7 @@ export default function CanvasThumbnail({
 }: {
   document: CanvasDocument
 }) {
+  const prefix = useId()
   const visible = orderedVisibleElements(document)
   const positioned = visible.filter((item) => item.type !== 'connection')
   if (!positioned.length) return <Icon name="canvas" />
@@ -32,27 +38,19 @@ export default function CanvasThumbnail({
   )
   const padding = Math.max(16, Math.max(right - left, bottom - top) * 0.08)
   const box = `${left - padding} ${top - padding} ${Math.max(1, right - left) + padding * 2} ${Math.max(1, bottom - top) + padding * 2}`
-  const center = (id: string) => {
-    const item = positioned.find((element) => element.id === id)
-    return item && item.type !== 'line'
-      ? { x: item.x + item.width / 2, y: item.y + item.height / 2 }
-      : null
-  }
   function object(item: CanvasElement) {
-    if (item.type === 'connection') {
-      const from = center(item.fromId),
-        to = center(item.toId)
-      return from && to ? (
-        <path
+    if (item.type === 'connection')
+      return (
+        <ConnectionDrawing
           key={item.id}
-          d={`M ${from.x} ${from.y} ${item.style === 'elbow' ? `H ${(from.x + to.x) / 2} V ${to.y} H ${to.x}` : `L ${to.x} ${to.y}`}`}
-          fill="none"
-          stroke={item.color}
-          strokeWidth="1.4"
-          vectorEffect="non-scaling-stroke"
+          document={document}
+          element={item}
+          prefix={`${prefix}-${item.id}`}
+          hitTarget={false}
         />
-      ) : null
-    }
+      )
+    if (item.type === 'embed')
+      return <EmbedObject key={item.id} element={item} interactive={false} />
     if (item.type === 'line')
       return (
         <line
@@ -63,6 +61,7 @@ export default function CanvasThumbnail({
           y2={item.y2}
           stroke={item.color}
           strokeWidth="1.4"
+          strokeDasharray={lineDash(item.linePattern)}
           vectorEffect="non-scaling-stroke"
         />
       )
@@ -82,41 +81,30 @@ export default function CanvasThumbnail({
       .map((line) => (line.length > 46 ? `${line.slice(0, 45)}…` : line))
     return (
       <g key={item.id} data-thumbnail-object={item.type}>
-        {item.type === 'ellipse' ? (
-          <ellipse
-            cx={item.x + item.width / 2}
-            cy={item.y + item.height / 2}
-            rx={item.width / 2}
-            ry={item.height / 2}
-            fill={fill}
-            stroke={item.color}
-            vectorEffect="non-scaling-stroke"
-          />
-        ) : item.type === 'diamond' ? (
-          <polygon
-            points={`${item.x + item.width / 2},${item.y} ${item.x + item.width},${item.y + item.height / 2} ${item.x + item.width / 2},${item.y + item.height} ${item.x},${item.y + item.height / 2}`}
-            fill={fill}
-            stroke={item.color}
-            vectorEffect="non-scaling-stroke"
-          />
-        ) : item.type !== 'text' ? (
+        {item.type === 'area' ? (
           <rect
             x={item.x}
             y={item.y}
             width={item.width}
             height={item.height}
-            rx={item.type === 'area' ? 0 : 5}
             fill={fill}
             stroke={item.color}
-            strokeDasharray={item.type === 'area' ? '4 3' : undefined}
+            strokeDasharray="4 3"
             vectorEffect="non-scaling-stroke"
           />
+        ) : item.type !== 'text' ? (
+          <ShapeOutline element={item} strokeWidth={1.4} />
         ) : null}
         {text && (
           <text
             x={item.x + item.width / 2}
             y={item.y + item.height / 2 - (lines.length - 1) * fontSize * 0.6}
-            fill={item.color}
+            fill={
+              'textColor' in item ? (item.textColor ?? item.color) : item.color
+            }
+            fontFamily={'text' in item ? canvasFontFamily(item) : undefined}
+            fontWeight={'fontWeight' in item ? item.fontWeight : undefined}
+            fontStyle={'fontStyle' in item ? item.fontStyle : undefined}
             fontSize={Math.max(1, fontSize)}
             textAnchor="middle"
             dominantBaseline="middle"

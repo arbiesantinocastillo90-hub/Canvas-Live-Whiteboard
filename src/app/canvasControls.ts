@@ -2,6 +2,7 @@ import type { CanvasViewport, ElementBounds } from './lcanvas'
 
 export type CanvasControlSettings = {
   snapToGrid: boolean
+  snapToObjects: boolean
   gridSpacing: number
   rulers: boolean
   rulerUnit: 'px' | 'mm' | 'cm' | 'in'
@@ -16,6 +17,7 @@ export type CanvasControlSettings = {
 
 export const DEFAULT_CANVAS_CONTROLS: CanvasControlSettings = {
   snapToGrid: false,
+  snapToObjects: false,
   gridSpacing: 24,
   rulers: false,
   rulerUnit: 'px',
@@ -48,6 +50,7 @@ export function normalizeCanvasControls(value: unknown): CanvasControlSettings {
       : {}
   return {
     snapToGrid: candidate.snapToGrid === true,
+    snapToObjects: candidate.snapToObjects === true,
     gridSpacing: bounded(candidate.gridSpacing, 24, 2, 1000),
     rulers: candidate.rulers === true,
     rulerUnit: ['px', 'mm', 'cm', 'in'].includes(candidate.rulerUnit ?? '')

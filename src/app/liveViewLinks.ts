@@ -122,7 +122,7 @@ function activeEditorView(value: unknown): LiveViewState['activeView'] {
     if (
       !record(source) ||
       !['end', 'none', 'both', 'start'].includes(String(source.arrowStyle)) ||
-      !['straight', 'elbow'].includes(String(source.style)) ||
+      !['straight', 'elbow', 'curve', 'step'].includes(String(source.style)) ||
       ![...CONNECTION_SIDES, 'fixed'].includes(String(source.sourceSide)) ||
       ![...CONNECTION_SIDES, 'fixed'].includes(String(source.targetSide))
     )

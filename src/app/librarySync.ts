@@ -25,6 +25,23 @@ import {
 function record(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
 }
+function sameStoredValue(left: unknown, right: unknown): boolean {
+  if (Object.is(left, right)) return true
+  if (Array.isArray(left) && Array.isArray(right))
+    return (
+      left.length === right.length &&
+      left.every((value, index) => sameStoredValue(value, right[index]))
+    )
+  if (!record(left) || !record(right)) return false
+  const keys = Object.keys(left)
+  return (
+    keys.length === Object.keys(right).length &&
+    keys.every(
+      (key) =>
+        Object.hasOwn(right, key) && sameStoredValue(left[key], right[key]),
+    )
+  )
+}
 /** Apply this view's changed fields without discarding independent nested choices. */
 function mergeLocalFields<T extends object>(remote: T, before: T, after: T): T {
   const next = { ...remote }
@@ -110,13 +127,20 @@ export function parseLibrarySessions(value: unknown): WorkspaceSessions | null {
       )
       for (const key of Object.keys(
         item.layout,
-      ) as (keyof typeof parsed.layout)[])
+      ) as (keyof typeof parsed.layout)[]) {
+        let stored: unknown = item.layout[key]
+        if (
+          key === 'homeView' &&
+          record(stored) &&
+          !Object.hasOwn(stored, 'hierarchyShowCanvases')
+        )
+          stored = { ...stored, hierarchyShowCanvases: false }
         if (
           key in parsed.layout &&
-          JSON.stringify(item.layout[key]) !==
-            JSON.stringify(parsed.layout[key])
+          !sameStoredValue(stored, parsed.layout[key])
         )
           throw new Error('Invalid workspace layout.')
+      }
       return parsed
     })
     if (

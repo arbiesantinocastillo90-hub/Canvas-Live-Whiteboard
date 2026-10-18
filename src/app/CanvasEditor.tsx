@@ -15,12 +15,16 @@ import {
 } from 'react'
 import { createPortal } from 'react-dom'
 import {
-  connectionPath,
   elementBounds,
   type CanvasDocument,
   type CanvasElement,
   type CanvasViewport,
   type ConnectionSide,
+  type ConnectionStyle,
+  type ShapeType,
+  type EmbedKind,
+  type EmbedElement,
+  SHAPE_TYPES,
 } from './lcanvas'
 import {
   connectElements,
@@ -91,6 +95,19 @@ import {
   type CanvasControlSettings,
 } from './canvasControls'
 import './canvas-precision.css'
+import { ShapeOutline, CanvasObjectText, ConnectionDrawing } from './RichObject'
+import { lineDash } from './canvasDrawing'
+import EmbedObject from './EmbedObject'
+import CanvasQuickProperties from './CanvasQuickProperties'
+import CanvasEmbedInsert from './CanvasEmbedInsert'
+import { useCanvasMedia } from './canvasMedia'
+import {
+  snapMoveToObjects,
+  snapResizeToObjects,
+  type ObjectSnapGuide,
+} from './canvasObjectSnapping'
+import { canvasFontFamily, canvasTextPlacement } from './canvasText'
+import './canvas-quick-panel.css'
 
 export type CanvasEditorProps = {
   active?: boolean
@@ -127,7 +144,7 @@ export type EditorViewState = EditorSession & {
   selectedIds: string[]
   connection?: {
     arrowStyle: 'end' | 'none' | 'both' | 'start'
-    style: 'straight' | 'elbow'
+    style: ConnectionStyle
     sourceSide: ConnectionSide | 'fixed'
     targetSide: ConnectionSide | 'fixed'
   }
@@ -147,14 +164,31 @@ export type CanvasEditorController = {
 }
 
 type Mode = 'select' | 'pan' | 'connect'
-type SizedType = 'rectangle' | 'ellipse' | 'diamond' | 'text' | 'area'
+type SizedType = ShapeType | 'text' | 'area'
 type ResizeHandle = 'nw' | 'n' | 'ne' | 'e' | 'se' | 's' | 'sw' | 'w'
 type Point = { x: number; y: number }
 type Box = Point & { width: number; height: number }
+
+function intersectsAreaBorder(area: Box, selection: Box) {
+  const right = selection.x + selection.width
+  const bottom = selection.y + selection.height
+  const areaRight = area.x + area.width
+  const areaBottom = area.y + area.height
+  const crossesVertical = bottom >= area.y && selection.y <= areaBottom
+  const crossesHorizontal = right >= area.x && selection.x <= areaRight
+  return (
+    (crossesVertical &&
+      ((selection.x <= area.x && right >= area.x) ||
+        (selection.x <= areaRight && right >= areaRight))) ||
+    (crossesHorizontal &&
+      ((selection.y <= area.y && bottom >= area.y) ||
+        (selection.y <= areaBottom && bottom >= areaBottom)))
+  )
+}
 type PointerSample = Point & { shiftKey: boolean; altKey: boolean }
 type InlineEdit = { id: string; value: string; original: string }
 type Gesture = {
-  kind: 'pan' | 'move' | 'resize' | 'marquee'
+  kind: 'pan' | 'move' | 'resize' | 'marquee' | 'connect'
   pointerId: number
   x: number
   y: number
@@ -166,6 +200,7 @@ type Gesture = {
   copyOnDrag?: boolean
   copyDocument?: CanvasDocument
   copyIds?: string[]
+  fromSide?: ConnectionSide
 }
 
 const resizeHandles: {
@@ -233,6 +268,33 @@ function resizedBounds(
   }
 }
 
+function nearestSide(box: Box, point: Point): Exclude<ConnectionSide, 'auto'> {
+  return (
+    [
+      ['left', Math.abs(point.x - box.x)],
+      ['right', Math.abs(point.x - box.x - box.width)],
+      ['top', Math.abs(point.y - box.y)],
+      ['bottom', Math.abs(point.y - box.y - box.height)],
+    ] as const
+  ).reduce((a, b) => (b[1] < a[1] ? b : a))[0]
+}
+function sidePoint(box: Box, side: ConnectionSide): Point {
+  return {
+    x:
+      side === 'left'
+        ? box.x
+        : side === 'right'
+          ? box.x + box.width
+          : box.x + box.width / 2,
+    y:
+      side === 'top'
+        ? box.y
+        : side === 'bottom'
+          ? box.y + box.height
+          : box.y + box.height / 2,
+  }
+}
+
 function ToolIcon({ children }: { children: ReactNode }) {
   return (
     <svg
@@ -251,215 +313,103 @@ function ToolIcon({ children }: { children: ReactNode }) {
   )
 }
 
-function ObjectText({
-  element,
-  prefix,
-  centered,
-  textOptions,
-}: {
-  element: Extract<CanvasElement, { text: string }>
-  prefix: string
-  centered: boolean
-  textOptions: TextLayoutOptions
-}) {
-  const layout = layoutCanvasText(element, textOptions)
-  const { box, lines, fontSize, lineHeight } = layout
-  const x = centered ? box.x + box.width / 2 : box.x
-  const y =
-    box.y + (centered ? Math.max(0, (box.height - layout.height) / 2) : 0)
-  const clipId = `${prefix}-text`
-  return (
-    <g pointerEvents="none">
-      <defs>
-        <clipPath id={clipId}>
-          <rect
-            x={Math.min(box.x, centered ? x - layout.width / 2 : x)}
-            y={y}
-            width={Math.max(box.width, layout.width)}
-            height={Math.max(box.height, layout.height)}
-          />
-        </clipPath>
-      </defs>
-      <text
-        x={x}
-        y={y}
-        fill={element.color}
-        fontSize={fontSize}
-        fontFamily="'Segoe UI', system-ui, sans-serif"
-        textAnchor={centered ? 'middle' : 'start'}
-        dominantBaseline="text-before-edge"
-        clipPath={`url(#${clipId})`}
-        aria-label={element.text}
-        data-text-overflow={layout.overflow}
-        xmlSpace="preserve"
-      >
-        {lines.map((line, index) => (
-          <tspan key={index} x={x} dy={index === 0 ? 0 : lineHeight}>
-            {line || '\u00a0'}
-          </tspan>
-        ))}
-      </text>
-    </g>
-  )
-}
-
 export function EditorObject({
   document,
   element,
   prefix,
   editing = false,
   textOptions = DEFAULT_TEXT_OPTIONS,
+  interactive = false,
+  onPatch,
+  resolveMedia,
+  onMove,
+  onSelect,
 }: {
   document: CanvasDocument
   element: CanvasElement
   prefix: string
   editing?: boolean
   textOptions?: TextLayoutOptions
+  interactive?: boolean
+  onPatch?: (patch: import('./canvasOperations').ElementPatch) => void
+  resolveMedia?: (src: string) => string | undefined
+  onMove?: (event: PointerEvent) => void
+  onSelect?: () => void
 }) {
-  const common = {
-    stroke: element.color,
-    strokeWidth: 2,
-    vectorEffect: 'non-scaling-stroke' as const,
-  }
-  switch (element.type) {
-    case 'rectangle':
-    case 'ellipse':
-    case 'diamond': {
-      const fill = element.fill ?? 'none'
-      return (
-        <>
-          {element.type === 'rectangle' ? (
-            <rect
-              x={element.x}
-              y={element.y}
-              width={element.width}
-              height={element.height}
-              rx="6"
-              fill={fill}
-              {...common}
-            />
-          ) : element.type === 'ellipse' ? (
-            <ellipse
-              cx={element.x + element.width / 2}
-              cy={element.y + element.height / 2}
-              rx={element.width / 2}
-              ry={element.height / 2}
-              fill={fill}
-              {...common}
-            />
-          ) : (
-            <polygon
-              points={`${element.x + element.width / 2},${element.y} ${element.x + element.width},${element.y + element.height / 2} ${element.x + element.width / 2},${element.y + element.height} ${element.x},${element.y + element.height / 2}`}
-              fill={fill}
-              {...common}
-            />
-          )}
-          {!editing && (
-            <ObjectText
-              element={element}
-              prefix={prefix}
-              centered
-              textOptions={textOptions}
-            />
-          )}
-        </>
-      )
-    }
-    case 'area':
-      return (
-        <>
-          <rect
-            x={element.x}
-            y={element.y}
-            width={element.width}
-            height={element.height}
-            rx="12"
-            fill={element.fill ?? 'none'}
-            fillOpacity="0.3"
-            strokeDasharray="7 5"
-            {...common}
+  if ('text' in element)
+    return (
+      <>
+        {element.type !== 'text' && <ShapeOutline element={element} />}
+        {!editing && (
+          <CanvasObjectText
+            element={element}
+            prefix={prefix}
+            textOptions={textOptions}
           />
-          {!editing && (
-            <text
-              x={element.x + 14}
-              y={element.y + 24}
-              fill={element.color}
-              fontFamily="'Segoe UI', system-ui, sans-serif"
-              fontSize="14"
-              pointerEvents="none"
-            >
-              {element.name}
-            </text>
-          )}
-        </>
-      )
-    case 'text':
-      return editing ? null : (
-        <ObjectText
-          element={element}
-          prefix={prefix}
-          centered={false}
-          textOptions={textOptions}
-        />
-      )
-    case 'line':
-      return (
-        <line
-          x1={element.x}
-          y1={element.y}
-          x2={element.x2}
-          y2={element.y2}
-          {...common}
-        />
-      )
-    case 'connection': {
-      const path = connectionPath(document, element)
-      const start = `${prefix}-start`
-      const end = `${prefix}-end`
-      return (
-        <>
-          <defs>
-            <marker
-              id={start}
-              viewBox="0 0 10 10"
-              refX="9"
-              refY="5"
-              markerWidth="7"
-              markerHeight="7"
-              orient="auto-start-reverse"
-            >
-              <path d="M 0 0 L 10 5 L 0 10 z" fill={element.color} />
-            </marker>
-            <marker
-              id={end}
-              viewBox="0 0 10 10"
-              refX="9"
-              refY="5"
-              markerWidth="7"
-              markerHeight="7"
-              orient="auto"
-            >
-              <path d="M 0 0 L 10 5 L 0 10 z" fill={element.color} />
-            </marker>
-          </defs>
-          <path
-            d={path}
-            fill="none"
-            markerStart={element.startArrow ? `url(#${start})` : undefined}
-            markerEnd={element.endArrow ? `url(#${end})` : undefined}
-            {...common}
-          />
-          <path
-            d={path}
-            fill="none"
-            stroke="transparent"
-            strokeWidth="16"
-            vectorEffect="non-scaling-stroke"
-          />
-        </>
-      )
-    }
-  }
+        )}
+      </>
+    )
+  if (element.type === 'embed')
+    return (
+      <EmbedObject
+        element={element}
+        interactive={interactive}
+        onPatch={onPatch}
+        resolveMedia={resolveMedia}
+        onMove={onMove}
+        onSelect={onSelect}
+      />
+    )
+  if (element.type === 'connection')
+    return (
+      <ConnectionDrawing
+        document={document}
+        element={element}
+        prefix={prefix}
+      />
+    )
+  if (element.type === 'line')
+    return (
+      <line
+        x1={element.x}
+        y1={element.y}
+        x2={element.x2}
+        y2={element.y2}
+        stroke={element.color}
+        strokeWidth="2"
+        strokeDasharray={lineDash(element.linePattern)}
+        strokeLinecap={element.linePattern === 'dotted' ? 'round' : undefined}
+        vectorEffect="non-scaling-stroke"
+      />
+    )
+  return (
+    <g pointerEvents="none">
+      <rect
+        x={element.x}
+        y={element.y}
+        width={element.width}
+        height={element.height}
+        rx="12"
+        fill={element.fill ?? 'none'}
+        fillOpacity="0.3"
+        strokeDasharray="7 5"
+        stroke={element.color}
+        strokeWidth="2"
+        vectorEffect="non-scaling-stroke"
+      />
+      {!editing && (
+        <text
+          x={element.x + 14}
+          y={element.y + 24}
+          fill={element.color}
+          fontSize="14"
+          pointerEvents="none"
+        >
+          {element.name}
+        </text>
+      )}
+    </g>
+  )
 }
 
 function objectLabel(element: CanvasElement) {
@@ -525,6 +475,19 @@ export default function CanvasEditor({
   })
   const selectedId = selectedIds.at(-1) ?? null
   const [marquee, setMarquee] = useState<Box | null>(null)
+  const [quickPanel, setQuickPanel] = useState<{
+    x: number
+    y: number
+    point: Point
+    ids: string[]
+    embed?: boolean
+  } | null>(null)
+  const [snapGuides, setSnapGuides] = useState<ObjectSnapGuide[]>([])
+  const [connectionPreview, setConnectionPreview] = useState<{
+    from: Point
+    to: Point
+  } | null>(null)
+  const quickPanelRef = useRef<HTMLDivElement>(null)
   const [inlineEdit, setInlineEdit] = useState<InlineEdit | null>(null)
   const inlineEditRef = useRef<InlineEdit | null>(null)
   const textInput = useRef<HTMLTextAreaElement>(null)
@@ -559,7 +522,7 @@ export default function CanvasEditor({
   const [arrowStyle, setArrowStyle] = useState<
     'end' | 'none' | 'both' | 'start'
   >(initialViewState?.connection?.arrowStyle ?? 'end')
-  const [connectionStyle, setConnectionStyle] = useState<'straight' | 'elbow'>(
+  const [connectionStyle, setConnectionStyle] = useState<ConnectionStyle>(
     initialViewState?.connection?.style ?? 'straight',
   )
   const [sourceSide, setSourceSide] = useState<ConnectionSide | 'fixed'>(
@@ -586,6 +549,14 @@ export default function CanvasEditor({
       : history.present
   const view = board.viewport
   const visible = orderedVisibleElements(board)
+  const mediaUrls = useCanvasMedia(
+    visible
+      .filter(
+        (e): e is EmbedElement =>
+          e.type === 'embed' && !e.paused && !e.minimized,
+      )
+      .map((e) => e.src),
+  )
   const selected = board.elements.find((element) => element.id === selectedId)
   const selectedVisible = visible.some((element) => element.id === selectedId)
   const activeLayerId = board.layers.some((layer) => layer.id === layerId)
@@ -604,7 +575,9 @@ export default function CanvasEditor({
       .filter((element) => element.type !== 'connection')
       .every(
         (element) =>
-          element.type !== 'line' && isElementEditable(board, element.id),
+          element.type !== 'line' &&
+          !(element.type === 'embed' && element.minimized) &&
+          isElementEditable(board, element.id),
       )
   function setSelectedId(id: string | null) {
     propertyFlusher.current?.()
@@ -618,7 +591,7 @@ export default function CanvasEditor({
       ? 'Drag to pan'
       : mode === 'connect'
         ? 'Choose two shapes to connect'
-        : 'Drag to move · Corner to resize · Double-click to edit'
+        : 'Drag to move · Edge to resize · Side handle to connect · Right-click for properties'
   } · Scroll to zoom`
   const selectionDescription = selected
     ? `${selected.type} · ${board.layers.find((layer) => layer.id === selected.layerId)?.name ?? 'Layer'}`
@@ -939,7 +912,7 @@ export default function CanvasEditor({
     })
   }
 
-  function add(type: SizedType) {
+  function add(type: SizedType, position?: Point) {
     if (propertyFlusher.current?.() === false) return
     flushWheel()
     safely(() => {
@@ -953,8 +926,12 @@ export default function CanvasEditor({
           .length %
           5) *
         28
-      const x = (middle.x - viewport.x) / viewport.zoom - width / 2 + offset
-      const y = (middle.y - viewport.y) / viewport.zoom - height / 2 + offset
+      const x =
+        position?.x ??
+        (middle.x - viewport.x) / viewport.zoom - width / 2 + offset
+      const y =
+        position?.y ??
+        (middle.y - viewport.y) / viewport.zoom - height / 2 + offset
       const next = createElement(document, {
         type,
         x: controls.snapToGrid ? snapCoordinate(x, controls.gridSpacing) : x,
@@ -971,6 +948,105 @@ export default function CanvasEditor({
     })
   }
 
+  function addLine(position?: Point) {
+    runCanvas(() => {
+      const current = currentHistory.current.present
+      const middle = center()
+      const point = position ?? {
+        x: (middle.x - current.viewport.x) / current.viewport.zoom - 90,
+        y: (middle.y - current.viewport.y) / current.viewport.zoom,
+      }
+      const next = createElement(current, {
+        type: 'line',
+        ...point,
+        x2: point.x + 180,
+        y2: point.y,
+        layerId: activeLayerId,
+      })
+      commit(next)
+      setSelectedId(next.elements.at(-1)!.id)
+      setQuickPanel(null)
+    })
+  }
+
+  function openQuick(event: MouseEvent, id?: string) {
+    if (!active || gesture.current || isTyping(event.target)) return
+    event.preventDefault()
+    event.stopPropagation()
+    if (inlineEditRef.current) finishTextEdit()
+    if (propertyFlusher.current?.() === false || inlineEditRef.current) return
+    const rect = stage.current?.getBoundingClientRect()
+    if (!rect) return
+    const ids = id ? (selectedIds.includes(id) ? selectedIds : [id]) : []
+    if (id) setSelectedIds(ids)
+    else setSelectedIds([])
+    setQuickPanel({
+      x: Math.max(8, Math.min(event.clientX, window.innerWidth - 340)),
+      y: Math.max(8, Math.min(event.clientY, window.innerHeight - 480)),
+      point: {
+        x: (event.clientX - rect.left - view.x) / view.zoom,
+        y: (event.clientY - rect.top - view.y) / view.zoom,
+      },
+      ids,
+    })
+  }
+
+  function insertEmbed(kind: EmbedKind, src: string, title: string) {
+    runCanvas(() => {
+      const current = currentHistory.current.present
+      const middle = center()
+      const point = quickPanel?.point ?? {
+        x: (middle.x - view.x) / view.zoom - 180,
+        y: (middle.y - view.y) / view.zoom - 120,
+      }
+      const next = createElement(current, {
+        type: 'embed',
+        ...point,
+        width: 360,
+        height: kind === 'audio' ? 140 : 260,
+        kind,
+        src,
+        title,
+        paused: true,
+        layerId: activeLayerId,
+      })
+      commit(next)
+      setSelectedId(next.elements.at(-1)!.id)
+      setQuickPanel(null)
+    })
+  }
+
+  function beginConnection(event: PointerEvent, side: ConnectionSide) {
+    if (
+      event.button !== 0 ||
+      !selected ||
+      !selectedBounds ||
+      !isElementEditable(board, selected.id)
+    )
+      return
+    event.stopPropagation()
+    beginGesture(event, 'connect', [selected.id])
+    if (!gesture.current) return
+    gesture.current.fromSide = side
+    const point = sidePoint(selectedBounds, side)
+    setConnectionPreview({ from: point, to: point })
+  }
+
+  const quickPanelOpen = quickPanel !== null
+  useEffect(() => {
+    if (!quickPanelOpen) return
+    quickPanelRef.current?.querySelector<HTMLButtonElement>('button')?.focus()
+    const close = (event: globalThis.PointerEvent) => {
+      if (
+        event.target instanceof Node &&
+        !quickPanelRef.current?.contains(event.target)
+      )
+        setQuickPanel(null)
+    }
+    globalThis.document.addEventListener('pointerdown', close)
+    return () => globalThis.document.removeEventListener('pointerdown', close)
+  }, [quickPanelOpen])
+
   function beginGesture(
     event: PointerEvent,
     kind: Gesture['kind'],
@@ -979,6 +1055,8 @@ export default function CanvasEditor({
     copyOnDrag = false,
   ) {
     if (!active || gesture.current || !stage.current) return
+    setQuickPanel(null)
+    setSnapGuides([])
     if (inlineEditRef.current) finishTextEdit()
     if (inlineEditRef.current) return
     propertyFlusher.current?.()
@@ -1061,10 +1139,7 @@ export default function CanvasEditor({
     })
   }
 
-  function beginObject(
-    event: PointerEvent<SVGGElement>,
-    element: CanvasElement,
-  ) {
+  function beginObject(event: PointerEvent, element: CanvasElement) {
     if (!active) return
     if (inlineEditRef.current) finishTextEdit()
     if (inlineEditRef.current) return
@@ -1073,7 +1148,7 @@ export default function CanvasEditor({
       mode === 'pan' ||
       temporaryPan.current ||
       event.button === 1 ||
-      (event.altKey && !controls.snapToGrid)
+      (event.altKey && !controls.snapToGrid && !controls.snapToObjects)
     )
       return
     event.stopPropagation()
@@ -1111,6 +1186,26 @@ export default function CanvasEditor({
     const dx = sample.x - active.x
     const dy = sample.y - active.y
     safely(() => {
+      if (active.kind === 'connect') {
+        const rect = stage.current?.getBoundingClientRect()
+        const source = original.elements.find((e) => e.id === active.ids[0])
+        if (rect && source)
+          setConnectionPreview({
+            from: sidePoint(
+              elementBounds(original, source),
+              active.fromSide ?? 'auto',
+            ),
+            to: {
+              x:
+                (sample.x - rect.left - original.viewport.x) /
+                original.viewport.zoom,
+              y:
+                (sample.y - rect.top - original.viewport.y) /
+                original.viewport.zoom,
+            },
+          })
+        return
+      }
       if (active.kind === 'marquee') {
         const rect = stage.current?.getBoundingClientRect()
         if (!rect) return
@@ -1132,7 +1227,9 @@ export default function CanvasEditor({
             const box = elementBounds(original, element)
             return (
               element.type !== 'connection' &&
-              isWithinSelection(box, bounds, controls.selectionBehavior)
+              (element.type === 'area'
+                ? intersectsAreaBorder(box, bounds)
+                : isWithinSelection(box, bounds, controls.selectionBehavior))
             )
           })
           .map((element) => element.id)
@@ -1162,10 +1259,26 @@ export default function CanvasEditor({
         y: dy / original.viewport.zoom,
       }
       const snap = controls.snapToGrid && !sample.altKey
+      const excludeIds = [
+        ...selectionIds(original, active.ids),
+        ...(active.copyIds ?? []),
+      ]
+      const targets = orderedVisibleElements(original)
+        .filter((e) => e.type !== 'connection' && e.type !== 'line')
+        .map((e) => ({
+          id: e.id,
+          bounds: elementBounds(original, e),
+          locked: !isElementEditable(original, e.id),
+        }))
+      const objectSnap = {
+        enabled: controls.snapToObjects && !sample.altKey,
+        zoom: original.viewport.zoom,
+        excludeIds,
+      }
       if (active.kind === 'pan')
         present = { ...original, viewport: panBy(original.viewport, dx, dy) }
       else if (active.kind === 'move') {
-        const moved =
+        let moved =
           snap && active.bounds
             ? snapSelectionDelta(
                 active.bounds,
@@ -1174,6 +1287,17 @@ export default function CanvasEditor({
                 controls.gridSpacing,
               )
             : delta
+        if (active.bounds) {
+          const result = snapMoveToObjects(
+            active.bounds,
+            moved.x,
+            moved.y,
+            targets,
+            objectSnap,
+          )
+          moved = result
+          setSnapGuides(result.guides)
+        }
         present = moveSelection(
           original,
           active.copyIds ?? active.ids,
@@ -1182,7 +1306,7 @@ export default function CanvasEditor({
         )
       } else {
         if (!active.bounds || !active.handle) return
-        const resized = snap
+        let resized = snap
           ? snapResizeDelta(
               active.bounds,
               active.handle,
@@ -1191,6 +1315,16 @@ export default function CanvasEditor({
               controls.gridSpacing,
             )
           : delta
+        const result = snapResizeToObjects(
+          active.bounds,
+          active.handle,
+          resized.x,
+          resized.y,
+          targets,
+          { ...objectSnap, enabled: objectSnap.enabled && !sample.shiftKey },
+        )
+        resized = result
+        setSnapGuides(result.guides)
         present = resizeSelection(
           original,
           active.ids,
@@ -1264,6 +1398,63 @@ export default function CanvasEditor({
     } else flushPointer()
     gesture.current = null
     setMarquee(null)
+    setSnapGuides([])
+    setConnectionPreview(null)
+    if (active.kind === 'connect') {
+      if (!cancelled && event.type === 'pointerup')
+        safely(() => {
+          const original = active.history.present
+          const rect = stage.current?.getBoundingClientRect()
+          if (!rect) return
+          const point = {
+            x:
+              (event.clientX - rect.left - original.viewport.x) /
+              original.viewport.zoom,
+            y:
+              (event.clientY - rect.top - original.viewport.y) /
+              original.viewport.zoom,
+          }
+          const tolerance = 12 / original.viewport.zoom
+          const target = orderedVisibleElements(original)
+            .toReversed()
+            .find((e) => {
+              if (
+                e.id === active.ids[0] ||
+                e.type === 'line' ||
+                e.type === 'connection' ||
+                !isElementEditable(original, e.id)
+              )
+                return false
+              const box = elementBounds(original, e)
+              return (
+                point.x >= box.x - tolerance &&
+                point.x <= box.x + box.width + tolerance &&
+                point.y >= box.y - tolerance &&
+                point.y <= box.y + box.height + tolerance
+              )
+            })
+          if (target) {
+            const source = original.elements.find(
+              (e) => e.id === active.ids[0],
+            )!
+            const next = connectElements(original, source.id, target.id, {
+              layerId: source.layerId,
+              fromSide: active.fromSide,
+              toSide: nearestSide(elementBounds(original, target), point),
+              style: connectionStyle,
+              startArrow: arrowStyle === 'both' || arrowStyle === 'start',
+              endArrow: arrowStyle === 'both' || arrowStyle === 'end',
+            })
+            showHistory(commitEditorHistory(active.history, next))
+            setSelectedIds([next.elements.at(-1)!.id])
+          }
+        })
+      setDragging(false)
+      setGestureKind('')
+      if (stage.current?.hasPointerCapture?.(event.pointerId))
+        stage.current.releasePointerCapture(event.pointerId)
+      return
+    }
     showHistory(
       cancelled
         ? active.history
@@ -1291,6 +1482,8 @@ export default function CanvasEditor({
       if (current.kind === 'marquee' || current.copyOnDrag)
         setSelectedIds(current.selectionBefore)
       setMarquee(null)
+      setSnapGuides([])
+      setConnectionPreview(null)
       setDragging(false)
       setGestureKind('')
       if (stage.current?.hasPointerCapture?.(current.pointerId))
@@ -1551,7 +1744,7 @@ export default function CanvasEditor({
       currentHistory.current.present.elements.find(
         (item) => item.id === element.id,
       ) ?? element
-    if (element.type === 'connection' || element.type === 'line') {
+    if (!('text' in element) && element.type !== 'area') {
       setSelectedId(element.id)
       openInspector()
       return
@@ -1599,7 +1792,7 @@ export default function CanvasEditor({
     safely(() => {
       const current = currentHistory.current.present
       const element = current.elements.find((item) => item.id === draft.id)
-      if (!element || element.type === 'connection' || element.type === 'line')
+      if (!element || (!('text' in element) && element.type !== 'area'))
         throw new Error('The edited object no longer exists.')
       const value = element.type === 'area' ? element.name : element.text
       if (value !== draft.original)
@@ -1864,16 +2057,14 @@ export default function CanvasEditor({
       enabled: commandAvailable,
       scope: 'canvas',
     },
-    ...(['rectangle', 'ellipse', 'diamond', 'text', 'area'] as const).map(
-      (type) => ({
-        id: `canvas.${type}` as const,
-        label: `Add ${type}`,
-        category: 'Canvas',
-        execute: () => runCanvas(() => add(type)),
-        enabled: commandAvailable,
-        scope: 'canvas' as const,
-      }),
-    ),
+    ...([...SHAPE_TYPES, 'text', 'area'] as const).map((type) => ({
+      id: `canvas.${type}` as const,
+      label: `Add ${type}`,
+      category: 'Canvas',
+      execute: () => runCanvas(() => add(type)),
+      enabled: commandAvailable,
+      scope: 'canvas' as const,
+    })),
     {
       id: 'canvas.connection',
       label: 'Connection tool',
@@ -1996,6 +2187,7 @@ export default function CanvasEditor({
     <CanvasInspector
       document={board}
       selectedId={selected?.id ?? null}
+      selectedIds={selectedIds}
       activeLayerId={activeLayerId}
       onSelect={setSelectedId}
       onActiveLayerChange={setLayerId}
@@ -2029,10 +2221,9 @@ export default function CanvasEditor({
     ? {
         ...editLayout.box,
         y:
-          editLayout.box.y +
-          (editedElement?.type === 'text'
-            ? 0
-            : Math.max(0, (editLayout.box.height - editLayout.height) / 2)),
+          editedElement && 'text' in editedElement
+            ? canvasTextPlacement(editedElement, editLayout).y
+            : editLayout.box.y,
         height: editLayout.height,
       }
     : editedElement && 'width' in editedElement
@@ -2076,6 +2267,8 @@ export default function CanvasEditor({
         >
           <option value="straight">Straight</option>
           <option value="elbow">Elbow</option>
+          <option value="curve">Curve</option>
+          <option value="step">Step</option>
         </select>
       </label>
       {(['source', 'target'] as const).map((endpoint) => (
@@ -2169,6 +2362,70 @@ export default function CanvasEditor({
       >
         <ToolIcon>
           <path d="m12 3 9 9-9 9-9-9Z" />
+        </ToolIcon>
+      </button>
+      {SHAPE_TYPES.filter(
+        (type) => !['rectangle', 'ellipse', 'diamond'].includes(type),
+      ).map((type) => (
+        <button
+          type="button"
+          key={type}
+          aria-label={`Add ${type}`}
+          title={`Add ${type}`}
+          onClick={() => add(type)}
+        >
+          <ToolIcon>
+            <ShapeOutline
+              element={{
+                id: 'tool',
+                type,
+                x: 3,
+                y: 3,
+                width: 18,
+                height: 18,
+                color: 'currentColor',
+                fill: null,
+                text: '',
+                fontSize: 10,
+                layerId: 'tool',
+                areaId: null,
+              }}
+            />
+          </ToolIcon>
+        </button>
+      ))}
+      <button
+        type="button"
+        aria-label="Add line"
+        title="Add line"
+        onClick={() => addLine()}
+      >
+        <ToolIcon>
+          <path d="M4 20 20 4" />
+        </ToolIcon>
+      </button>
+      <button
+        type="button"
+        aria-label="Add media or website"
+        title="Add media or website"
+        onClick={(event) => {
+          const rect = event.currentTarget.getBoundingClientRect()
+          const middle = center()
+          setQuickPanel({
+            x: Math.max(8, Math.min(rect.left, window.innerWidth - 340)),
+            y: Math.max(8, Math.min(rect.bottom + 8, window.innerHeight - 480)),
+            point: {
+              x: (middle.x - view.x) / view.zoom - 180,
+              y: (middle.y - view.y) / view.zoom - 120,
+            },
+            ids: [],
+            embed: true,
+          })
+        }}
+      >
+        <ToolIcon>
+          <rect x="3" y="4" width="18" height="16" rx="2" />
+          <path d="m9 9 7 3-7 3Z" />
         </ToolIcon>
       </button>
       <button
@@ -2486,6 +2743,7 @@ export default function CanvasEditor({
           onPointerMove={moveGesture}
           onPointerUp={endGesture}
           onDoubleClick={editAtPointer}
+          onContextMenu={(event) => openQuick(event)}
           onPointerCancel={(event) => endGesture(event, true)}
           onLostPointerCapture={(event) => endGesture(event)}
           onKeyDown={navigateByKey}
@@ -2520,6 +2778,7 @@ export default function CanvasEditor({
                     data-selected={selectedIds.includes(element.id)}
                     className="canvas-edit-object"
                     onPointerDown={(event) => beginObject(event, element)}
+                    onContextMenu={(event) => openQuick(event, element.id)}
                     onKeyDown={(event) => {
                       if (event.key === ' ') {
                         navigateByKey(event)
@@ -2541,11 +2800,29 @@ export default function CanvasEditor({
                       element.type !== 'line' && (
                         <rect
                           className="canvas-object-hit"
+                          data-area-border-hit={
+                            element.type === 'area' || undefined
+                          }
                           x={bounds.x}
                           y={bounds.y}
                           width={bounds.width}
                           height={bounds.height}
-                          fill="transparent"
+                          rx={element.type === 'area' ? 12 : undefined}
+                          fill={
+                            element.type === 'area' ? 'none' : 'transparent'
+                          }
+                          stroke={
+                            element.type === 'area' ? 'transparent' : undefined
+                          }
+                          strokeWidth={element.type === 'area' ? 8 : undefined}
+                          vectorEffect={
+                            element.type === 'area'
+                              ? 'non-scaling-stroke'
+                              : undefined
+                          }
+                          pointerEvents={
+                            element.type === 'area' ? 'stroke' : undefined
+                          }
                         />
                       )}
                     <EditorObject
@@ -2553,6 +2830,24 @@ export default function CanvasEditor({
                       element={element}
                       prefix={`${prefix}-${index}`}
                       editing={inlineEdit?.id === element.id}
+                      interactive={active && element.type === 'embed'}
+                      resolveMedia={(src) => mediaUrls[src]}
+                      onPatch={(patch) =>
+                        runCanvas(() =>
+                          commit(
+                            updateElement(
+                              currentHistory.current.present,
+                              element.id,
+                              patch,
+                            ),
+                          ),
+                        )
+                      }
+                      onMove={(event) => beginObject(event, element)}
+                      onSelect={() => {
+                        if (!selectedIds.includes(element.id))
+                          setSelectedId(element.id)
+                      }}
                       textOptions={textOptions}
                     />
                   </g>
@@ -2612,20 +2907,31 @@ export default function CanvasEditor({
                         data-resize-handle={handle.id}
                         x={
                           selectedBounds.x +
-                          selectedBounds.width * handle.x -
-                          6 / view.zoom
+                          (handle.id === 'n' || handle.id === 's'
+                            ? 12 / view.zoom
+                            : selectedBounds.width * handle.x - 6 / view.zoom)
                         }
                         y={
                           selectedBounds.y +
-                          selectedBounds.height * handle.y -
-                          6 / view.zoom
+                          (handle.id === 'e' || handle.id === 'w'
+                            ? 12 / view.zoom
+                            : selectedBounds.height * handle.y - 6 / view.zoom)
                         }
-                        width={12 / view.zoom}
-                        height={12 / view.zoom}
-                        rx={2 / view.zoom}
-                        fill={selectionColor(controls.selectionStroke)}
-                        stroke="var(--panel)"
-                        strokeWidth="2"
+                        width={
+                          handle.id === 'n' || handle.id === 's'
+                            ? Math.max(1, selectedBounds.width - 24 / view.zoom)
+                            : 12 / view.zoom
+                        }
+                        height={
+                          handle.id === 'e' || handle.id === 'w'
+                            ? Math.max(
+                                1,
+                                selectedBounds.height - 24 / view.zoom,
+                              )
+                            : 12 / view.zoom
+                        }
+                        fill="transparent"
+                        stroke="none"
                         vectorEffect="non-scaling-stroke"
                         onPointerDown={(event) => {
                           if (event.button !== 0) return
@@ -2636,8 +2942,88 @@ export default function CanvasEditor({
                         <title>{`Resize ${handle.label} · Shift keeps proportions`}</title>
                       </rect>
                     ))}
+                  {visibleSelection.length === 1 &&
+                    isElementEditable(board, selected.id) &&
+                    selected.type !== 'line' &&
+                    selected.type !== 'connection' &&
+                    !inlineEdit &&
+                    (['top', 'right', 'bottom', 'left'] as const).map(
+                      (side) => {
+                        const point = sidePoint(selectedBounds, side)
+                        return (
+                          <circle
+                            key={side}
+                            className="canvas-connect-handle"
+                            role="button"
+                            tabIndex={0}
+                            aria-label={`Connect from ${side}`}
+                            cx={point.x}
+                            cy={point.y}
+                            r={5 / view.zoom}
+                            fill="var(--accent)"
+                            stroke="var(--panel)"
+                            strokeWidth="2"
+                            vectorEffect="non-scaling-stroke"
+                            onPointerDown={(event) =>
+                              beginConnection(event, side)
+                            }
+                            onKeyDown={(event) => {
+                              if (event.key === 'Enter' || event.key === ' ') {
+                                event.preventDefault()
+                                setConnectionSource(selected.id)
+                                setSourceSide(side)
+                                setMode('connect')
+                              }
+                            }}
+                          >
+                            <title>{`Drag to connect from ${side}`}</title>
+                          </circle>
+                        )
+                      },
+                    )}
                 </g>
               )}
+              {connectionPreview && (
+                <path
+                  data-testid="connection-preview"
+                  d={`M ${connectionPreview.from.x} ${connectionPreview.from.y} L ${connectionPreview.to.x} ${connectionPreview.to.y}`}
+                  stroke="var(--accent)"
+                  strokeWidth="2"
+                  strokeDasharray="5 4"
+                  fill="none"
+                  vectorEffect="non-scaling-stroke"
+                  pointerEvents="none"
+                />
+              )}
+              {snapGuides.map((guide) => (
+                <line
+                  key={`${guide.axis}-${guide.targetId}`}
+                  data-testid="object-snap-guide"
+                  x1={
+                    guide.axis === 'x' ? guide.coordinate : -view.x / view.zoom
+                  }
+                  x2={
+                    guide.axis === 'x'
+                      ? guide.coordinate
+                      : ((stage.current?.clientWidth ?? 1000) - view.x) /
+                        view.zoom
+                  }
+                  y1={
+                    guide.axis === 'y' ? guide.coordinate : -view.y / view.zoom
+                  }
+                  y2={
+                    guide.axis === 'y'
+                      ? guide.coordinate
+                      : ((stage.current?.clientHeight ?? 800) - view.y) /
+                        view.zoom
+                  }
+                  stroke="var(--accent)"
+                  strokeDasharray="4 4"
+                  strokeWidth="1"
+                  vectorEffect="non-scaling-stroke"
+                  pointerEvents="none"
+                />
+              ))}
               {marquee && (
                 <rect
                   className="canvas-marquee"
@@ -2686,7 +3072,27 @@ export default function CanvasEditor({
                 spellCheck
                 style={{
                   fontSize: (editLayout?.fontSize ?? 14) * view.zoom,
-                  color: editedElement.color,
+                  color:
+                    'text' in editedElement
+                      ? (editedElement.textColor ?? editedElement.color)
+                      : editedElement.color,
+                  fontFamily:
+                    'text' in editedElement
+                      ? canvasFontFamily(editedElement)
+                      : undefined,
+                  fontWeight:
+                    'text' in editedElement
+                      ? editedElement.fontWeight
+                      : undefined,
+                  fontStyle:
+                    'text' in editedElement
+                      ? editedElement.fontStyle
+                      : undefined,
+                  textAlign:
+                    'text' in editedElement
+                      ? (editedElement.textAlign ??
+                        (editedElement.type === 'text' ? 'left' : 'center'))
+                      : undefined,
                 }}
                 onChange={(event) => {
                   const draft = { ...inlineEdit, value: event.target.value }
@@ -2762,6 +3168,99 @@ export default function CanvasEditor({
           </div>
         )}
       </div>
+      {quickPanel &&
+        active &&
+        createPortal(
+          <div
+            ref={quickPanelRef}
+            className="canvas-quick-panel"
+            role="dialog"
+            aria-label={
+              quickPanel.ids.length
+                ? 'Quick object properties'
+                : quickPanel.embed
+                  ? 'Add media or website'
+                  : 'Add to canvas'
+            }
+            style={{
+              left: quickPanel.x,
+              top: quickPanel.y,
+              maxHeight: `calc(100vh - ${quickPanel.y + 12}px)`,
+            }}
+            onKeyDown={(event) => {
+              event.stopPropagation()
+              if (event.key === 'Escape') {
+                event.preventDefault()
+                setQuickPanel(null)
+                stage.current?.focus()
+              }
+            }}
+            onContextMenu={(event) => event.preventDefault()}
+          >
+            <header>
+              <strong>
+                {quickPanel.ids.length
+                  ? 'Quick properties'
+                  : quickPanel.embed
+                    ? 'Media & embeds'
+                    : 'Add to canvas'}
+              </strong>
+              <button
+                type="button"
+                aria-label="Close quick panel"
+                onClick={() => {
+                  setQuickPanel(null)
+                  stage.current?.focus()
+                }}
+              >
+                ×
+              </button>
+            </header>
+            {quickPanel.ids.length ? (
+              <CanvasQuickProperties
+                document={board}
+                ids={quickPanel.ids}
+                onChange={(next) => safely(() => commit(next))}
+                onError={setError}
+                onDelete={() => {
+                  runCanvas(removeSelected)
+                  setQuickPanel(null)
+                }}
+                onDuplicate={() => {
+                  runCanvas(duplicateSelected)
+                  setQuickPanel(null)
+                }}
+              />
+            ) : quickPanel.embed ? (
+              <CanvasEmbedInsert onInsert={insertEmbed} />
+            ) : (
+              <div className="canvas-quick-add">
+                {[...SHAPE_TYPES, 'text', 'area'].map((type) => (
+                  <button
+                    type="button"
+                    key={type}
+                    onClick={() => {
+                      add(type as SizedType, quickPanel.point)
+                      setQuickPanel(null)
+                    }}
+                  >
+                    {type[0].toUpperCase() + type.slice(1)}
+                  </button>
+                ))}
+                <button type="button" onClick={() => addLine(quickPanel.point)}>
+                  Line
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setQuickPanel({ ...quickPanel, embed: true })}
+                >
+                  Media or website
+                </button>
+              </div>
+            )}
+          </div>,
+          stage.current?.closest('.app-shell') ?? globalThis.document.body,
+        )}
       {deckGeometry ? createPortal(viewRail, deckGeometry.host) : viewRail}
       {statusInFooter ? (
         <p id={`${prefix}-instructions`} hidden>

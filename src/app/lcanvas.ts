@@ -17,20 +17,45 @@ export type ElementBase = {
 }
 export type PositionedElement = ElementBase & { x: number; y: number }
 export type SizedElement = PositionedElement & { width: number; height: number }
-export type ShapeElement = SizedElement & {
-  type: 'rectangle' | 'ellipse' | 'diamond'
-  fill: string | null
-  text: string
-  fontSize: number
+export const SHAPE_TYPES = [
+  'rectangle',
+  'ellipse',
+  'diamond',
+  'triangle',
+  'hexagon',
+  'pentagon',
+  'star',
+  'cylinder',
+  'parallelogram',
+  'trapezoid',
+] as const
+export type ShapeType = (typeof SHAPE_TYPES)[number]
+export const FONT_FAMILIES = ['sans', 'serif', 'mono', 'cursive'] as const
+export type CanvasFontFamily = (typeof FONT_FAMILIES)[number]
+export type TextFormat = {
+  textAlign?: 'left' | 'center' | 'right'
+  verticalAlign?: 'top' | 'middle' | 'bottom'
+  fontFamily?: CanvasFontFamily
+  textColor?: string
+  fontWeight?: 'normal' | 'bold'
+  fontStyle?: 'normal' | 'italic'
 }
+export type ShapeElement = SizedElement &
+  TextFormat & {
+    type: ShapeType
+    fill: string | null
+    text: string
+    fontSize: number
+  }
 export type RectangleElement = ShapeElement & { type: 'rectangle' }
 export type EllipseElement = ShapeElement & { type: 'ellipse' }
 export type DiamondElement = ShapeElement & { type: 'diamond' }
-export type TextElement = SizedElement & {
-  type: 'text'
-  text: string
-  fontSize: number
-}
+export type TextElement = SizedElement &
+  TextFormat & {
+    type: 'text'
+    text: string
+    fontSize: number
+  }
 export type AreaElement = SizedElement & {
   type: 'area'
   name: string
@@ -41,16 +66,50 @@ export type LineElement = PositionedElement & {
   type: 'line'
   x2: number
   y2: number
+  linePattern?: LinePattern
 }
+export const CONNECTION_STYLES = ['straight', 'elbow', 'curve', 'step'] as const
+export type ConnectionStyle = (typeof CONNECTION_STYLES)[number]
+export const LINE_PATTERNS = ['solid', 'dashed', 'dotted'] as const
+export type LinePattern = (typeof LINE_PATTERNS)[number]
+export const POINTER_TYPES = [
+  'none',
+  'arrow',
+  'open-arrow',
+  'circle',
+  'diamond',
+  'bar',
+] as const
+export type PointerType = (typeof POINTER_TYPES)[number]
 export type ConnectionElement = ElementBase & {
   type: 'connection'
   fromId: string
   toId: string
-  style: 'straight' | 'elbow'
+  style: ConnectionStyle
   startArrow: boolean
   endArrow: boolean
   fromSide?: ConnectionSide
   toSide?: ConnectionSide
+  linePattern?: LinePattern
+  startPointer?: PointerType
+  endPointer?: PointerType
+}
+export const EMBED_KINDS = [
+  'image',
+  'gif',
+  'video',
+  'audio',
+  'web',
+  'document',
+] as const
+export type EmbedKind = (typeof EMBED_KINDS)[number]
+export type EmbedElement = SizedElement & {
+  type: 'embed'
+  kind: EmbedKind
+  src: string
+  title: string
+  paused: boolean
+  minimized: boolean
 }
 export type ConnectionSide = 'auto' | 'top' | 'right' | 'bottom' | 'left'
 export const CONNECTION_SIDES: readonly ConnectionSide[] = [
@@ -61,7 +120,12 @@ export const CONNECTION_SIDES: readonly ConnectionSide[] = [
   'left',
 ]
 export type CanvasElement =
-  ShapeElement | TextElement | AreaElement | LineElement | ConnectionElement
+  | ShapeElement
+  | TextElement
+  | AreaElement
+  | LineElement
+  | ConnectionElement
+  | EmbedElement
 export type CanvasDocument = {
   presentation?: ItemPresentation
   format: 'LCANVAS'
@@ -150,7 +214,58 @@ function requireText(item: Record<string, unknown>) {
       'Text must be plain text, up to 20,000 characters, with an 8–160 font size.',
     )
   }
-  return { text: item.text, fontSize: item.fontSize }
+  const formats: TextFormat = {}
+  for (const [key, choices] of [
+    ['textAlign', ['left', 'center', 'right']],
+    ['verticalAlign', ['top', 'middle', 'bottom']],
+    ['fontFamily', FONT_FAMILIES],
+    ['fontWeight', ['normal', 'bold']],
+    ['fontStyle', ['normal', 'italic']],
+  ] as const) {
+    if (!Object.hasOwn(item, key)) continue
+    if (!choices.includes(item[key] as never))
+      return fail('Text formatting contains an unsupported value.')
+    Object.assign(formats, { [key]: item[key] })
+  }
+  if (Object.hasOwn(item, 'textColor')) {
+    if (!color(item.textColor))
+      return fail('Text color must use a six-digit hexadecimal color.')
+    formats.textColor = item.textColor
+  }
+  return { text: item.text, fontSize: item.fontSize, ...formats }
+}
+export const TEXT_FORMAT_KEYS = [
+  'textAlign',
+  'verticalAlign',
+  'fontFamily',
+  'textColor',
+  'fontWeight',
+  'fontStyle',
+] as const
+/** Persist only HTTPS references or content-addressed media owned by this library. */
+export function validEmbedSource(value: unknown): value is string {
+  if (
+    typeof value !== 'string' ||
+    value.length > 2048 ||
+    hasControlCharacters(value) ||
+    value.trim() !== value
+  )
+    return false
+  if (/^media:[a-f0-9]{64}$/u.test(value)) return true
+  try {
+    const url = new URL(value)
+    return (
+      url.protocol === 'https:' &&
+      Boolean(url.hostname) &&
+      !url.username &&
+      !url.password
+    )
+  } catch {
+    return false
+  }
+}
+function optionalKeys(item: Record<string, unknown>, names: readonly string[]) {
+  return names.filter((name) => Object.hasOwn(item, name))
 }
 function requireViewport(value: unknown): CanvasViewport {
   if (
@@ -211,17 +326,24 @@ function validateElement(
         'endArrow',
         ...(Object.hasOwn(item, 'fromSide') ? ['fromSide'] : []),
         ...(Object.hasOwn(item, 'toSide') ? ['toSide'] : []),
+        ...optionalKeys(item, ['linePattern', 'startPointer', 'endPointer']),
       ]) ||
       !validCanvasId(item.fromId) ||
       !validCanvasId(item.toId) ||
       item.fromId === item.toId ||
-      !['straight', 'elbow'].includes(item.style as string) ||
+      !CONNECTION_STYLES.includes(item.style as ConnectionStyle) ||
       typeof item.startArrow !== 'boolean' ||
       typeof item.endArrow !== 'boolean' ||
       (Object.hasOwn(item, 'fromSide') &&
         !CONNECTION_SIDES.includes(item.fromSide as ConnectionSide)) ||
       (Object.hasOwn(item, 'toSide') &&
-        !CONNECTION_SIDES.includes(item.toSide as ConnectionSide))
+        !CONNECTION_SIDES.includes(item.toSide as ConnectionSide)) ||
+      (Object.hasOwn(item, 'linePattern') &&
+        !LINE_PATTERNS.includes(item.linePattern as LinePattern)) ||
+      (Object.hasOwn(item, 'startPointer') &&
+        !POINTER_TYPES.includes(item.startPointer as PointerType)) ||
+      (Object.hasOwn(item, 'endPointer') &&
+        !POINTER_TYPES.includes(item.endPointer as PointerType))
     )
       return fail(
         'A connection has invalid endpoints, style, arrows, or unsupported fields.',
@@ -231,7 +353,7 @@ function validateElement(
       type: 'connection',
       fromId: item.fromId,
       toId: item.toId,
-      style: item.style as 'straight' | 'elbow',
+      style: item.style as ConnectionStyle,
       startArrow: item.startArrow,
       endArrow: item.endArrow,
       ...(Object.hasOwn(item, 'fromSide')
@@ -239,6 +361,15 @@ function validateElement(
         : {}),
       ...(Object.hasOwn(item, 'toSide')
         ? { toSide: item.toSide as ConnectionSide }
+        : {}),
+      ...(Object.hasOwn(item, 'linePattern')
+        ? { linePattern: item.linePattern as LinePattern }
+        : {}),
+      ...(Object.hasOwn(item, 'startPointer')
+        ? { startPointer: item.startPointer as PointerType }
+        : {}),
+      ...(Object.hasOwn(item, 'endPointer')
+        ? { endPointer: item.endPointer as PointerType }
         : {}),
     }
   }
@@ -249,42 +380,97 @@ function validateElement(
   const positioned = { ...base, x: item.x, y: item.y }
   if (item.type === 'line') {
     if (
-      !exactKeys(item, [...keys, 'x', 'y', 'x2', 'y2']) ||
+      !exactKeys(item, [
+        ...keys,
+        'x',
+        'y',
+        'x2',
+        'y2',
+        ...(!legacy ? optionalKeys(item, ['linePattern']) : []),
+      ]) ||
       !finiteBounded(item.x2) ||
-      !finiteBounded(item.y2)
+      !finiteBounded(item.y2) ||
+      (Object.hasOwn(item, 'linePattern') &&
+        !LINE_PATTERNS.includes(item.linePattern as LinePattern))
     )
       return fail('A line has unsupported fields or invalid end coordinates.')
-    return { ...positioned, type: 'line', x2: item.x2, y2: item.y2 }
+    return {
+      ...positioned,
+      type: 'line',
+      x2: item.x2,
+      y2: item.y2,
+      ...(Object.hasOwn(item, 'linePattern')
+        ? { linePattern: item.linePattern as LinePattern }
+        : {}),
+    }
   }
   if (!positiveSize(item.width) || !positiveSize(item.height))
     return fail('Element dimensions must be positive and at most 1,000,000.')
   const sized = { ...positioned, width: item.width, height: item.height }
   const sizedKeys = [...keys, 'x', 'y', 'width', 'height']
   if (
-    item.type === 'rectangle' ||
-    item.type === 'ellipse' ||
-    (!legacy && item.type === 'diamond')
+    (legacy && (item.type === 'rectangle' || item.type === 'ellipse')) ||
+    (!legacy && SHAPE_TYPES.includes(item.type as ShapeType))
   ) {
     if (
       !exactKeys(item, [
         ...sizedKeys,
         'fill',
         ...(!legacy ? ['text', 'fontSize'] : []),
+        ...(!legacy ? optionalKeys(item, TEXT_FORMAT_KEYS) : []),
       ]) ||
       (item.fill !== null && !color(item.fill))
     )
       return fail('A shape has unsupported fields or an invalid fill color.')
     return {
       ...sized,
-      type: item.type,
+      type: item.type as ShapeType,
       fill: item.fill,
       ...(legacy ? { text: '', fontSize: 20 } : requireText(item)),
     }
   }
   if (item.type === 'text') {
-    if (!exactKeys(item, [...sizedKeys, 'text', 'fontSize']))
+    if (
+      !exactKeys(item, [
+        ...sizedKeys,
+        'text',
+        'fontSize',
+        ...(!legacy ? optionalKeys(item, TEXT_FORMAT_KEYS) : []),
+      ])
+    )
       return fail('Text has unsupported fields.')
     return { ...sized, type: 'text', ...requireText(item) }
+  }
+  if (item.type === 'embed' && !legacy) {
+    if (
+      !exactKeys(item, [
+        ...sizedKeys,
+        'kind',
+        'src',
+        'title',
+        'paused',
+        'minimized',
+      ]) ||
+      !EMBED_KINDS.includes(item.kind as EmbedKind) ||
+      !validEmbedSource(item.src) ||
+      typeof item.title !== 'string' ||
+      item.title.length > 240 ||
+      hasControlCharacters(item.title) ||
+      typeof item.paused !== 'boolean' ||
+      typeof item.minimized !== 'boolean'
+    )
+      return fail(
+        'An embed has an unsupported kind, source, title, or playback state.',
+      )
+    return {
+      ...sized,
+      type: 'embed',
+      kind: item.kind as EmbedKind,
+      src: item.src,
+      title: item.title,
+      paused: item.paused,
+      minimized: item.minimized,
+    }
   }
   if (item.type === 'area' && !legacy) {
     if (
@@ -334,7 +520,10 @@ export function elementBounds(
     x: element.x,
     y: element.y,
     width: element.width,
-    height: element.height,
+    height:
+      element.type === 'embed' && element.minimized
+        ? Math.min(38, element.height)
+        : element.height,
   }
 }
 export function containsBounds(
@@ -347,6 +536,71 @@ export function containsBounds(
     bounds.x + bounds.width <= area.x + area.width &&
     bounds.y + bounds.height <= area.y + area.height
   )
+}
+/** Polygon vertices are shared by rendering and connector boundary attachment. */
+export function shapePolygon(
+  shape: Pick<ShapeElement, 'type' | 'x' | 'y' | 'width' | 'height'>,
+): { x: number; y: number }[] | null {
+  let points: number[][]
+  switch (shape.type) {
+    case 'diamond':
+      points = [
+        [0.5, 0],
+        [1, 0.5],
+        [0.5, 1],
+        [0, 0.5],
+      ]
+      break
+    case 'triangle':
+      points = [
+        [0.5, 0],
+        [1, 1],
+        [0, 1],
+      ]
+      break
+    case 'hexagon':
+      points = [
+        [0.25, 0],
+        [0.75, 0],
+        [1, 0.5],
+        [0.75, 1],
+        [0.25, 1],
+        [0, 0.5],
+      ]
+      break
+    case 'parallelogram':
+      points = [
+        [0.2, 0],
+        [1, 0],
+        [0.8, 1],
+        [0, 1],
+      ]
+      break
+    case 'trapezoid':
+      points = [
+        [0.2, 0],
+        [0.8, 0],
+        [1, 1],
+        [0, 1],
+      ]
+      break
+    case 'pentagon':
+    case 'star': {
+      const star = shape.type === 'star'
+      points = Array.from({ length: star ? 10 : 5 }, (_, index) => {
+        const angle = -Math.PI / 2 + (index * Math.PI * 2) / (star ? 10 : 5)
+        const radius = star && index % 2 ? 0.22 : 0.5
+        return [0.5 + Math.cos(angle) * radius, 0.5 + Math.sin(angle) * radius]
+      })
+      break
+    }
+    default:
+      return null
+  }
+  return points.map(([x, y]) => ({
+    x: shape.x + x * shape.width,
+    y: shape.y + y * shape.height,
+  }))
 }
 export function connectionEndpoints(
   document: CanvasDocument,
@@ -365,21 +619,67 @@ export function connectionEndpoints(
     return fail(
       'A connection must reference two existing shapes, text items, or areas.',
     )
-  const a = { x: from.x + from.width / 2, y: from.y + from.height / 2 }
-  const b = { x: to.x + to.width / 2, y: to.y + to.height / 2 }
+  const fromShape =
+    from.type === 'embed' && from.minimized
+      ? { ...from, height: Math.min(38, from.height) }
+      : from
+  const toShape =
+    to.type === 'embed' && to.minimized
+      ? { ...to, height: Math.min(38, to.height) }
+      : to
+  const a = {
+    x: fromShape.x + fromShape.width / 2,
+    y: fromShape.y + fromShape.height / 2,
+  }
+  const b = {
+    x: toShape.x + toShape.width / 2,
+    y: toShape.y + toShape.height / 2,
+  }
   function boundary(
-    shape: ShapeElement | TextElement | AreaElement,
+    shape: ShapeElement | TextElement | AreaElement | EmbedElement,
     center: { x: number; y: number },
     other: { x: number; y: number },
     side: ConnectionSide = 'auto',
   ) {
-    if (side === 'top') return { x: center.x, y: shape.y }
-    if (side === 'right') return { x: shape.x + shape.width, y: center.y }
-    if (side === 'bottom') return { x: center.x, y: shape.y + shape.height }
-    if (side === 'left') return { x: shape.x, y: center.y }
-    const dx = other.x - center.x
-    const dy = other.y - center.y
+    const dx =
+      side === 'left'
+        ? -1
+        : side === 'right'
+          ? 1
+          : side === 'top' || side === 'bottom'
+            ? 0
+            : other.x - center.x
+    const dy =
+      side === 'top'
+        ? -1
+        : side === 'bottom'
+          ? 1
+          : side === 'left' || side === 'right'
+            ? 0
+            : other.y - center.y
     if (dx === 0 && dy === 0) return center
+    const polygon = SHAPE_TYPES.includes(shape.type as ShapeType)
+      ? shapePolygon(shape as ShapeElement)
+      : null
+    if (polygon) {
+      let nearest = Infinity
+      for (let i = 0; i < polygon.length; i++) {
+        const p = polygon[i],
+          q = polygon[(i + 1) % polygon.length]
+        const ex = q.x - p.x,
+          ey = q.y - p.y
+        const denominator = dx * ey - dy * ex
+        if (Math.abs(denominator) < 1e-12) continue
+        const px = p.x - center.x,
+          py = p.y - center.y
+        const t = (px * ey - py * ex) / denominator
+        const u = (px * dy - py * dx) / denominator
+        if (t >= 0 && u >= -1e-9 && u <= 1 + 1e-9)
+          nearest = Math.min(nearest, t)
+      }
+      if (Number.isFinite(nearest))
+        return { x: center.x + dx * nearest, y: center.y + dy * nearest }
+    }
     const halfW = shape.width / 2
     const halfH = shape.height / 2
     const ratio =
@@ -390,8 +690,8 @@ export function connectionEndpoints(
           : 1 / Math.max(Math.abs(dx) / halfW, Math.abs(dy) / halfH)
     return { x: center.x + dx * ratio, y: center.y + dy * ratio }
   }
-  const start = boundary(from, a, b, connection.fromSide)
-  const end = boundary(to, b, a, connection.toSide)
+  const start = boundary(fromShape, a, b, connection.fromSide)
+  const end = boundary(toShape, b, a, connection.toSide)
   return { x1: start.x, y1: start.y, x2: end.x, y2: end.y }
 }
 
@@ -407,8 +707,12 @@ export function defaultConnectionSides(
     return fail(
       'A connection must reference two existing shapes, text items, or areas.',
     )
-  const dx = to.x + to.width / 2 - from.x - from.width / 2
-  const dy = to.y + to.height / 2 - from.y - from.height / 2
+  const fromBounds = elementBounds(document, from)
+  const toBounds = elementBounds(document, to)
+  const dx =
+    toBounds.x + toBounds.width / 2 - fromBounds.x - fromBounds.width / 2
+  const dy =
+    toBounds.y + toBounds.height / 2 - fromBounds.y - fromBounds.height / 2
   function side(
     width: number,
     height: number,
@@ -424,8 +728,8 @@ export function defaultConnectionSides(
         : 'top'
   }
   return {
-    fromSide: side(from.width, from.height, dx, dy),
-    toSide: side(to.width, to.height, -dx, -dy),
+    fromSide: side(fromBounds.width, fromBounds.height, dx, dy),
+    toSide: side(toBounds.width, toBounds.height, -dx, -dy),
   }
 }
 
@@ -457,6 +761,18 @@ export function connectionPath(
   }
   const a = lead(x1, y1, from)
   const b = lead(x2, y2, to)
+  if (connection.style === 'curve') {
+    const distance = Math.max(40, Math.hypot(x2 - x1, y2 - y1) * 0.4)
+    const control = (x: number, y: number, side: ConnectionSide) => ({
+      x: x + (side === 'right' ? distance : side === 'left' ? -distance : 0),
+      y: y + (side === 'bottom' ? distance : side === 'top' ? -distance : 0),
+    })
+    const c = control(x1, y1, from),
+      d = control(x2, y2, to)
+    return `M ${x1} ${y1} C ${c.x} ${c.y} ${d.x} ${d.y} ${x2} ${y2}`
+  }
+  if (connection.style === 'step')
+    return `M ${x1} ${y1} H ${(x1 + x2) / 2} V ${y2} H ${x2}`
   const fromHorizontal = from === 'left' || from === 'right'
   const toHorizontal = to === 'left' || to === 'right'
   const middle =

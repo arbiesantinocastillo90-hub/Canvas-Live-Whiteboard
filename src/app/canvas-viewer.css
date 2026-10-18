@@ -33,8 +33,21 @@
   cursor: grabbing;
 }
 .lcanvas-stage:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: -3px;
+  outline: none;
+}
+/* Keep keyboard focus visible without drawing a line around the whole canvas. */
+.lcanvas-stage:focus-visible::after {
+  content: '';
+  position: absolute;
+  bottom: 8px;
+  left: 8px;
+  width: 10px;
+  height: 10px;
+  border: 2px solid var(--accent);
+  border-radius: 3px;
+  background: var(--panel);
+  pointer-events: none;
+  z-index: 2;
 }
 .lcanvas-drawing {
   display: block;

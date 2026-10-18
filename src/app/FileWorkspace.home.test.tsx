@@ -237,11 +237,15 @@ describe('Home to canvas workspace requests', () => {
     expect(save).toHaveBeenCalledTimes(1)
   })
 
-  it('keeps an inactive create request pending and never reopens a handled create dialog', async () => {
+  it('accepts the parent project already chosen at Home and never reopens a handled create dialog', async () => {
     const store = createCanvasFileStore({ indexedDB: null })
     const initial = props(store, {
       workspaceActive: false,
-      openRequest: { sequence: 4, action: 'create' },
+      openRequest: {
+        sequence: 4,
+        action: 'create',
+        destinationConfirmed: true,
+      },
     })
     const view = render(tree(initial))
     await waitFor(() =>
@@ -252,6 +256,8 @@ describe('Home to canvas workspace requests', () => {
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     view.rerender(tree({ ...initial, workspaceActive: true }))
     await screen.findByRole('dialog', { name: 'Create a canvas file' })
+    expect(screen.getByLabelText('Destination project')).toHaveValue(project.id)
+    expect(screen.getByRole('button', { name: 'Create canvas' })).toBeEnabled()
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
     view.rerender(tree({ ...initial, workspaceActive: false }))
     view.rerender(tree({ ...initial, workspaceActive: true }))
@@ -284,10 +290,11 @@ describe('Home to canvas workspace requests', () => {
     const view = render(tree(initial))
     await screen.findByRole('tab', { name: 'Shared canvas' })
     openPanel('AI')
+    fireEvent.click(screen.getByText('Use a pairing code instead'))
     fireEvent.change(screen.getByLabelText('Browser pairing code'), {
       target: { value: 'home-test-pairing-code-only' },
     })
-    fireEvent.click(screen.getByRole('button', { name: 'Share this canvas' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Pair and share' }))
     await screen.findByText('This canvas is shared')
     expect(
       registered().find((command) => command.id === 'canvas.rectangle')

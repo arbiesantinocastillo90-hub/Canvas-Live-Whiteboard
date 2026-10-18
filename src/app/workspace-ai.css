@@ -94,3 +94,12 @@
   color: var(--accent-text);
   background: var(--tint);
 }
+.ai-introduction {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.7;
+  margin: 18px 0;
+}
+.ai-introduction strong {
+  color: var(--ink);
+}

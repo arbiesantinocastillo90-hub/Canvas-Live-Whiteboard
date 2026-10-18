@@ -9,6 +9,7 @@ export default function ProjectDialog({
   entity = 'project',
   projectParents,
   initialParentId = null,
+  initialDestinationConfirmed = false,
 }: {
   kind: 'create' | 'rename'
   initialName: string
@@ -20,9 +21,14 @@ export default function ProjectDialog({
   entity?: 'project' | 'file'
   projectParents?: Project[]
   initialParentId?: string | null
+  initialDestinationConfirmed?: boolean
 }) {
   const [name, setName] = useState(initialName)
   const [parentId, setParentId] = useState(initialParentId)
+  const hasDestination = entity === 'project' || projectParents !== undefined
+  const [destinationConfirmed, setDestinationConfirmed] = useState(
+    kind === 'rename' || initialDestinationConfirmed,
+  )
   const [error, setError] = useState<string | null>(null)
   const [pending, setPending] = useState(false)
   const input = useRef<HTMLInputElement>(null)
@@ -100,11 +106,24 @@ export default function ProjectDialog({
           onSubmit={async (event) => {
             event.preventDefault()
             if (pending) return
+            if (hasDestination && !destinationConfirmed) {
+              setError('Choose a destination before creating this item.')
+              return
+            }
+            if (
+              hasDestination &&
+              ((entity === 'file' && !parentId) ||
+                (parentId &&
+                  !projectParents?.some((item) => item.id === parentId)))
+            ) {
+              setError('Choose a project in this workspace.')
+              return
+            }
             setPending(true)
             try {
               const result = onSubmit(
                 name,
-                projectParents ? parentId : undefined,
+                hasDestination ? parentId : undefined,
               )
               setError(result instanceof Promise ? await result : result)
             } catch {
@@ -132,23 +151,34 @@ export default function ProjectDialog({
               setError(null)
             }}
           />
-          {projectParents && (
+          {hasDestination && (
             <>
               <label className="input-label" htmlFor="project-parent">
-                Parent project
+                {entity === 'file' ? 'Destination project' : 'Parent project'}
               </label>
               <select
                 className="project-parent-select"
                 id="project-parent"
-                value={parentId ?? ''}
+                value={destinationConfirmed ? (parentId ?? '') : '__choose__'}
                 disabled={pending}
                 onChange={(event) => {
-                  setParentId(event.target.value || null)
+                  setDestinationConfirmed(event.target.value !== '__choose__')
+                  setParentId(
+                    event.target.value === '__choose__'
+                      ? null
+                      : event.target.value || null,
+                  )
                   setError(null)
                 }}
               >
-                <option value="">Top level</option>
-                {projectTree(projectParents).map(({ project, depth }) => (
+                <option value="__choose__" disabled>
+                  Choose a {entity === 'file' ? 'destination' : 'parent'}{' '}
+                  project…
+                </option>
+                {entity === 'project' && (
+                  <option value="">Workspace root</option>
+                )}
+                {projectTree(projectParents ?? []).map(({ project, depth }) => (
                   <option
                     key={project.id}
                     value={project.id}
@@ -176,7 +206,11 @@ export default function ProjectDialog({
             >
               Cancel
             </button>
-            <button type="submit" className="button primary" disabled={pending}>
+            <button
+              type="submit"
+              className="button primary"
+              disabled={pending || (hasDestination && !destinationConfirmed)}
+            >
               {pending
                 ? 'Saving…'
                 : kind === 'create'

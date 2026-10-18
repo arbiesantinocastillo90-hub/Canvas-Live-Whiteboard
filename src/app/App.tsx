@@ -558,6 +558,7 @@ function WorkspaceApp({
     workspaceStateRef.current = updated
     setWorkspace(updated)
     setCustomization(null)
+    setPrompt(null)
     setLayout(saved.layout)
     setHomeProjectId(projectId)
     setOpenRequest(undefined)
@@ -1022,6 +1023,8 @@ function WorkspaceApp({
   }
   function submitProject(name: string, parentId?: string | null) {
     try {
+      if (parentId && !projects.some((project) => project.id === parentId))
+        return 'Choose a parent project in this workspace.'
       const updated =
         prompt?.kind === 'rename'
           ? moveProject(
@@ -1475,7 +1478,12 @@ function WorkspaceApp({
                 })
               }
               onOpenFile={(id, fileId) => enterProject(id, { fileId })}
-              onNewCanvas={(id) => enterProject(id, { action: 'create' })}
+              onNewCanvas={(id) =>
+                enterProject(id, {
+                  action: 'create',
+                  destinationConfirmed: true,
+                })
+              }
               onImport={(id, imports) => importIntoWorkspace(id, { imports })}
               onLocalImport={(id, localImports) =>
                 importIntoWorkspace(id, { localImports })

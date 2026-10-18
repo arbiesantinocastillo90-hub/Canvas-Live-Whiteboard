@@ -46,6 +46,14 @@
 }
 .app-shell .workspace-deck:has(> .canvas-backdrop) .workspace-tab-bar {
   padding-right: calc(var(--controls-width, 42px) + 4px);
+  border-bottom: 1px solid var(--line);
+}
+.app-shell
+  .workspace-deck:has(> .canvas-backdrop)
+  .workspace-tab-actions
+  > button {
+  border: 1px solid var(--line);
+  border-radius: 6px;
 }
 .app-shell .workspace-deck:has(> .canvas-backdrop) .canvas-tab,
 .app-shell

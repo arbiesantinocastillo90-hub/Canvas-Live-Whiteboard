@@ -83,6 +83,25 @@ beforeEach(() => localStorage.clear())
 afterEach(() => vi.restoreAllMocks())
 
 describe('merging changes into the shared local library', () => {
+  it('accepts older hierarchy settings without the new optional file toggle', () => {
+    const saved = JSON.parse(JSON.stringify(sessions()))
+    delete saved.items[0].layout.homeView.hierarchyShowCanvases
+    const home = saved.items[0].layout.homeView
+    saved.items[0].layout.homeView = Object.fromEntries(
+      Object.entries(home).reverse(),
+    )
+    expect(
+      parseLibrarySessions(saved)?.items[0].layout.homeView
+        .hierarchyShowCanvases,
+    ).toBe(false)
+    saved.items[0].layout.homeView.hierarchyShowCanvases = true
+    expect(
+      parseLibrarySessions(saved)?.items[0].layout.homeView
+        .hierarchyShowCanvases,
+    ).toBe(true)
+    saved.items[0].layout.homeView.hierarchyShowCanvases = 'yes'
+    expect(parseLibrarySessions(saved)).toBeNull()
+  })
   it('changes a project name while retaining another view’s parent, new projects, and unrelated preferences', () => {
     const before = metadata()
     const remote = structuredClone(before)

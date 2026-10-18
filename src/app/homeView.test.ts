@@ -7,6 +7,22 @@ import {
 } from './homeView'
 
 describe('library view state', () => {
+  it('shows only projects in legacy hierarchies and persists an explicit canvas toggle', () => {
+    expect(
+      normalizeHomeView({ display: 'hierarchy' }).hierarchyShowCanvases,
+    ).toBe(false)
+    expect(
+      normalizeHomeView({ hierarchyShowCanvases: 'true' })
+        .hierarchyShowCanvases,
+    ).toBe(false)
+    const next = normalizeHomeView({
+      ...DEFAULT_HOME_VIEW,
+      hierarchyShowCanvases: true,
+    })
+    expect(
+      normalizeHomeView(JSON.parse(JSON.stringify(next))).hierarchyShowCanvases,
+    ).toBe(true)
+  })
   it('normalizes missing or unsupported perspectives, orders and identities', () => {
     expect(normalizeHomeView(null)).toEqual(DEFAULT_HOME_VIEW)
     expect(normalizeWorkspaceLibraryView(undefined)).toEqual(

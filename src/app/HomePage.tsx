@@ -20,6 +20,9 @@ import {
 import Icon from './Icon'
 import ProjectExplorer from './ProjectExplorer'
 import ProjectHierarchy from './ProjectHierarchy'
+import CanvasDestinationDialog from './CanvasDestinationDialog'
+import ProjectContextMenu from './ProjectContextMenu'
+import { projectMenuAnchor, type ProjectMenuAnchor } from './projectMenuAnchor'
 import CanvasThumbnail from './CanvasThumbnail'
 import WorkspaceIdentity from './WorkspaceIdentity'
 import { useWorkspaceBackground } from './workspaceBackground'
@@ -44,6 +47,27 @@ import { localLibrary, sharedCanvasFileStore } from './localLibrary'
 import './home-page.css'
 
 type HomeFile = { record: CanvasFileRecord; dirty: boolean; project: Project }
+
+/** Keep large imported hierarchies from starting hundreds of storage reads at once. */
+async function mapBounded<T, R>(
+  values: readonly T[],
+  limit: number,
+  map: (value: T) => Promise<R>,
+  cancelled: () => boolean,
+): Promise<R[]> {
+  const results: R[] = []
+  let next = 0
+  await Promise.all(
+    Array.from({ length: Math.min(limit, values.length) }, async () => {
+      while (!cancelled()) {
+        const index = next++
+        if (index >= values.length) break
+        results[index] = await map(values[index])
+      }
+    }),
+  )
+  return results
+}
 
 export default function HomePage({
   workspaceName,
@@ -102,6 +126,22 @@ export default function HomePage({
     ...DEFAULT_HOME_VIEW,
     openedProjectId: selectedProjectId,
   }))
+  const [choosingCanvasProject, setChoosingCanvasProject] = useState(false)
+  const [projectMenu, setProjectMenu] = useState<ProjectMenuAnchor | null>(null)
+  const closeProjectMenu = useCallback(() => setProjectMenu(null), [])
+  const [dialogScope, setDialogScope] = useState({ store, notificationScopeId })
+  if (
+    dialogScope.store !== store ||
+    dialogScope.notificationScopeId !== notificationScopeId
+  ) {
+    setDialogScope({ store, notificationScopeId })
+    setChoosingCanvasProject(false)
+    setProjectMenu(null)
+  }
+  function newCanvas() {
+    if (projects.length) setChoosingCanvasProject(true)
+    else onNewProject()
+  }
   const currentView = normalizeHomeView(view ?? localView)
   const appearance = normalizeWorkspaceAppearance(workspaceAppearance)
   const background = useWorkspaceBackground(appearance.backgroundAssetId)
@@ -110,7 +150,18 @@ export default function HomePage({
     setLocalView(next)
     onViewChange?.(next)
   }
-  const [files, setFiles] = useState<HomeFile[]>([])
+  const projectSignature = JSON.stringify(projects)
+  const [fileSnapshot, setFileSnapshot] = useState<{
+    store: CanvasFileStore
+    projectSignature: string
+    files: HomeFile[]
+  } | null>(null)
+  // A workspace switch must never paint the previous workspace's file rows
+  // while its own scoped store is still loading.
+  const snapshotCurrent =
+    fileSnapshot?.store === store &&
+    fileSnapshot.projectSignature === projectSignature
+  const files = snapshotCurrent ? fileSnapshot.files : []
   const [loading, setLoading] = useState(true)
   const { notify } = useSessionNotifications(notificationScopeId)
   const setError = useCallback(
@@ -135,7 +186,6 @@ export default function HomePage({
       alive.current = false
     }
   }, [])
-  const projectSignature = JSON.stringify(projects)
   const selected = projects.find(
     (project) => project.id === currentView.openedProjectId,
   )
@@ -147,8 +197,10 @@ export default function HomePage({
   useEffect(() => {
     let cancelled = false
     const snapshot = JSON.parse(projectSignature) as Project[]
-    void Promise.all(
-      snapshot.map(async (project) => {
+    void mapBounded(
+      snapshot,
+      4,
+      async (project) => {
         const recovery = await recoveryFor(store)
           .list(project.id)
           .then((drafts) => ({ drafts, error: null as string | null }))
@@ -157,14 +209,18 @@ export default function HomePage({
             error:
               'Draft recovery could not be loaded. Open a saved .CLF file if needed.',
           }))
+        if (cancelled) return { files: [], error: null }
         const drafts = mergeRecoveredDrafts(
           recovery.drafts,
           projectDrafts(store).get(project.id) ?? [],
         )
         try {
           const result = await store.list(project.id)
-          const savedEntries = await Promise.all(
-            result.value.map(async (record) => {
+          if (cancelled) return { files: [], error: null }
+          const savedEntries = await mapBounded(
+            result.value.filter((record) => record.projectId === project.id),
+            8,
+            async (record) => {
               const bound = await localFilesFor(store)
                 .get(project.id, record.id)
                 .catch(() => null)
@@ -184,7 +240,8 @@ export default function HomePage({
                 savedDocument: savedRecord.document,
                 persistence: result.persistence,
               }
-            }),
+            },
+            () => cancelled,
           )
           const restored = mergeRecoveredDrafts(
             savedEntries,
@@ -216,14 +273,17 @@ export default function HomePage({
               'Some saved files could not be loaded. Your open drafts are still available.',
           }
         }
-      }),
+      },
+      () => cancelled,
     ).then((results) => {
       if (cancelled) return
-      setFiles(
-        results
+      setFileSnapshot({
+        store,
+        projectSignature,
+        files: results
           .flatMap((result) => result.files)
           .sort((a, b) => b.record.lastOpenedAt - a.record.lastOpenedAt),
-      )
+      })
       setError(results.find((result) => result.error)?.error ?? null)
       setLoading(false)
     })
@@ -244,6 +304,14 @@ export default function HomePage({
           ? b.record.updatedAt - a.record.updatedAt
           : b.record.lastOpenedAt - a.record.lastOpenedAt,
   )
+  const hierarchyFiles = currentView.hierarchyShowCanvases
+    ? sortedFiles.map(({ record, project, dirty }) => ({
+        id: record.id,
+        name: record.document.name,
+        projectId: project.id,
+        dirty,
+      }))
+    : []
   const visible = sortedFiles.filter(
     (file) =>
       (!selectedIds || selectedIds.has(file.project.id)) &&
@@ -326,10 +394,8 @@ export default function HomePage({
       id: 'file.new',
       label: 'New canvas',
       category: 'Files',
-      enabled: !!targetProject,
-      execute: () => {
-        if (targetProject) onNewCanvas(targetProject.id)
-      },
+      enabled: true,
+      execute: newCanvas,
     },
     {
       id: 'file.import',
@@ -433,10 +499,7 @@ export default function HomePage({
               className="icon-button"
               aria-label="Create a new canvas"
               title="New canvas"
-              disabled={!targetProject}
-              onClick={() => {
-                if (targetProject) onNewCanvas(targetProject.id)
-              }}
+              onClick={newCanvas}
             >
               <Icon name="plus" />
             </button>
@@ -482,13 +545,20 @@ export default function HomePage({
               </button>
               {!currentView.hierarchyCollapsed && (
                 <ProjectHierarchy
+                  key={`${notificationScopeId}:sidebar`}
                   projects={sortedProjects}
+                  files={hierarchyFiles}
+                  showCanvases={currentView.hierarchyShowCanvases}
+                  onOpenFile={onOpenFile}
                   closedIds={currentView.closedProjectIds}
                   onClosedIdsChange={(closedProjectIds) =>
                     changeView({ closedProjectIds })
                   }
                   selectedId={selected?.id}
                   onOpen={openProject}
+                  onNewChild={onNewProject}
+                  onRename={onRenameProject}
+                  onCustomize={onCustomizeProject}
                 />
               )}
             </section>
@@ -604,10 +674,7 @@ export default function HomePage({
                 <button
                   className="button primary"
                   aria-label="New canvas"
-                  disabled={!targetProject}
-                  onClick={() => {
-                    if (targetProject) onNewCanvas(targetProject.id)
-                  }}
+                  onClick={newCanvas}
                 >
                   <Icon name="plus" />
                   <span>New canvas</span>
@@ -665,7 +732,7 @@ export default function HomePage({
               onImport(targetProject?.id ?? null, selectedFiles)
           }}
         />
-        {loading ? (
+        {loading || !snapshotCurrent ? (
           <div className="home-empty" role="status">
             Loading files…
           </div>
@@ -675,6 +742,9 @@ export default function HomePage({
               <Icon name="folder" />
             </span>
             <h2>No projects yet</h2>
+            <p>
+              Create a project in this workspace before adding a new canvas.
+            </p>
             <button
               className="button secondary"
               onClick={() => void openImport()}
@@ -689,13 +759,30 @@ export default function HomePage({
         ) : browsingProjects ? (
           currentView.display === 'hierarchy' ? (
             <div className="home-main-hierarchy">
+              <label className="home-hierarchy-options">
+                <input
+                  type="checkbox"
+                  checked={currentView.hierarchyShowCanvases}
+                  onChange={(event) =>
+                    changeView({ hierarchyShowCanvases: event.target.checked })
+                  }
+                />
+                Show canvas files
+              </label>
               <ProjectHierarchy
+                key={`${notificationScopeId}:main`}
                 projects={sortedProjects}
+                files={hierarchyFiles}
+                showCanvases={currentView.hierarchyShowCanvases}
+                onOpenFile={onOpenFile}
                 closedIds={currentView.closedProjectIds}
                 onClosedIdsChange={(closedProjectIds) =>
                   changeView({ closedProjectIds })
                 }
                 onOpen={openProject}
+                onNewChild={onNewProject}
+                onRename={onRenameProject}
+                onCustomize={onCustomizeProject}
                 search={search}
               />
             </div>
@@ -720,6 +807,14 @@ export default function HomePage({
                       aria-label={`Browse project ${project.name}`}
                       title={project.name}
                       onClick={() => openProject(project.id)}
+                      aria-haspopup="menu"
+                      onContextMenu={(event) =>
+                        setProjectMenu(projectMenuAnchor(event, project.id))
+                      }
+                      onKeyDown={(event) => {
+                        const anchor = projectMenuAnchor(event, project.id)
+                        if (anchor) setProjectMenu(anchor)
+                      }}
                     >
                       <div className="home-project-preview" aria-hidden="true">
                         <PresentationIcon
@@ -781,12 +876,7 @@ export default function HomePage({
                 Clear search
               </button>
             ) : (
-              <button
-                className="button secondary"
-                onClick={() => {
-                  if (targetProject) onNewCanvas(targetProject.id)
-                }}
-              >
+              <button className="button secondary" onClick={newCanvas}>
                 Create canvas
               </button>
             )}
@@ -853,6 +943,31 @@ export default function HomePage({
           </div>
         )}
       </div>
+      {choosingCanvasProject && projects.length > 0 && (
+        <CanvasDestinationDialog
+          projects={projects}
+          onClose={() => setChoosingCanvasProject(false)}
+          onChoose={(projectId) => {
+            if (!projects.some((project) => project.id === projectId)) return
+            setChoosingCanvasProject(false)
+            onNewCanvas(projectId)
+          }}
+        />
+      )}
+      {projectMenu &&
+        projects.some((project) => project.id === projectMenu.projectId) && (
+          <ProjectContextMenu
+            anchor={projectMenu}
+            project={projects.find(
+              (project) => project.id === projectMenu.projectId,
+            )!}
+            onClose={closeProjectMenu}
+            onOpen={openProject}
+            onNewChild={onNewProject}
+            onRename={onRenameProject}
+            onCustomize={onCustomizeProject}
+          />
+        )}
     </section>
   )
 }

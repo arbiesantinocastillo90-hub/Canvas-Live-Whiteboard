@@ -71,6 +71,12 @@ function failureMessage(error: unknown) {
     : 'The MCP connection failed.'
 }
 
+function unreachableCompanion() {
+  return new Error(
+    'Cannot reach the Canvas Live MCP companion. Open Canvas Live MCP.exe, then choose Share this canvas again.',
+  )
+}
+
 function loopbackUrl(value: string) {
   const url = new URL(value)
   if (
@@ -126,6 +132,7 @@ async function request(session: Session, path: string, body: unknown) {
   } catch (error) {
     if (abort.signal.aborted)
       throw new Error('The MCP companion did not respond in time.')
+    if (error instanceof TypeError) throw unreachableCompanion()
     throw error
   } finally {
     clearTimeout(timeout)
@@ -173,6 +180,7 @@ function isExpired(expiresAt: unknown) {
 export default function useMcpBridge(options: Options) {
   const latest = useRef(options)
   const session = useRef<Session | null>(null)
+  const attempt = useRef(0)
   const [state, setState] = useState<McpBridgeState>(INITIAL_STATE)
   const [previousScope, setPreviousScope] = useState(scope(options))
   const nextScope = scope(options)
@@ -185,6 +193,7 @@ export default function useMcpBridge(options: Options) {
   })
 
   function stop() {
+    attempt.current++
     const previous = session.current
     session.current = null
     if (!previous) return
@@ -246,7 +255,10 @@ export default function useMcpBridge(options: Options) {
       setState((previous) => ({
         ...previous,
         status: 'sharing',
-        mcpClient: typeof reply.mcpClient === 'string' ? 'MCP client' : null,
+        mcpClient:
+          typeof reply.mcpClient === 'string'
+            ? reply.mcpClient.slice(0, 120)
+            : null,
         mcpLastSeen:
           typeof reply.mcpLastSeen === 'number' &&
           Number.isFinite(reply.mcpLastSeen)
@@ -340,8 +352,9 @@ export default function useMcpBridge(options: Options) {
     }
   }
 
-  async function share(token: string) {
+  async function share(token = '') {
     stop()
+    const sharingAttempt = attempt.current
     setState({ ...INITIAL_STATE, status: 'connecting' })
     let current: Session | null = null
     try {
@@ -349,7 +362,60 @@ export default function useMcpBridge(options: Options) {
       const controller = input.getController()
       if (!input.fileId || !controller)
         throw new Error('Open a canvas before sharing it.')
-      const trimmedToken = token.trim()
+      let trimmedToken = token.trim()
+      let baseUrl = input.baseUrl ?? DEFAULT_MCP_BRIDGE_URL
+      // The portable companion chooses an available port on every start.
+      // Pasted browser codes must resolve that companion rather than port 8787.
+      const packaged =
+        globalThis.document.querySelector<HTMLMetaElement>(
+          'meta[name="canvas-live-storage"][content="local-v1"]',
+        ) !== null
+      if (!trimmedToken || (packaged && !input.baseUrl)) {
+        const abort = new AbortController()
+        const timeout = setTimeout(() => abort.abort(), REQUEST_TIMEOUT)
+        try {
+          const response = await fetch('/__canvas_live_companion', {
+            headers: { 'X-Canvas-Live-Companion': '1' },
+            credentials: 'same-origin',
+            cache: 'no-store',
+            redirect: 'error',
+            signal: abort.signal,
+          })
+          if (!response.ok)
+            throw new Error(
+              'Start Canvas Live MCP from your USB, then choose Share this canvas again.',
+            )
+          const connection = replyObject(await response.json())
+          if (
+            typeof connection.url !== 'string' ||
+            typeof connection.browserPairingCode !== 'string'
+          )
+            throw new Error(
+              'The companion is not ready. Start Canvas Live MCP and try again.',
+            )
+          baseUrl = loopbackUrl(connection.url)
+          if (trimmedToken && trimmedToken !== connection.browserPairingCode)
+            throw new Error(
+              'This is not the current browser pairing code. Choose Share this canvas to connect automatically. The MCP access token belongs in your AI client’s connection settings.',
+            )
+          trimmedToken = connection.browserPairingCode
+        } catch (error) {
+          if (abort.signal.aborted)
+            throw new Error(
+              'The MCP companion did not respond in time. Open Canvas Live MCP.exe and try again.',
+            )
+          if (error instanceof TypeError) throw unreachableCompanion()
+          throw error
+        } finally {
+          clearTimeout(timeout)
+        }
+        // An asynchronous discovery must never share a different file after navigation.
+        if (
+          scope(latest.current) !== scope(input) ||
+          attempt.current !== sharingAttempt
+        )
+          return
+      }
       if (!/^[\w-]{16,256}$/u.test(trimmedToken))
         throw new Error(
           'Paste the browser pairing code shown by the MCP companion.',
@@ -358,7 +424,7 @@ export default function useMcpBridge(options: Options) {
       current = {
         active: true,
         scope: scope(input),
-        baseUrl: loopbackUrl(input.baseUrl ?? DEFAULT_MCP_BRIDGE_URL),
+        baseUrl: loopbackUrl(baseUrl),
         token: trimmedToken,
         clientId: crypto.randomUUID(),
         sessionId: null,
@@ -396,6 +462,7 @@ export default function useMcpBridge(options: Options) {
       setState({ ...INITIAL_STATE, status: 'sharing' })
       void poll(current)
     } catch (error) {
+      if (attempt.current !== sharingAttempt) return
       if (current && !isCurrent(current)) return
       stop()
       setState({

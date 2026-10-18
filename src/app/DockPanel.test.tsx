@@ -49,10 +49,86 @@ function Harness({
   )
 }
 
+function VerticalHarness({
+  side = 'left',
+  initialPinned = false,
+  top = 80,
+  bottom = 100,
+  onInsetChange = () => {},
+}: {
+  side?: 'left' | 'right'
+  initialPinned?: boolean
+  top?: number
+  bottom?: number
+  onInsetChange?: (edge: 'top' | 'bottom', value: number) => void
+}) {
+  const [pinned, setPinned] = useState(initialPinned)
+  const [topInset, setTopInset] = useState(top)
+  const [bottomInset, setBottomInset] = useState(bottom)
+  return (
+    <div
+      className="workspace-deck"
+      style={
+        {
+          '--tab-bar-height': '60px',
+          '--status-bar-height': '30px',
+        } as React.CSSProperties
+      }
+    >
+      <DockPanel
+        id="vertical-panel"
+        label="Vertical panel"
+        side={side}
+        open
+        pinned={pinned}
+        width={260}
+        min={160}
+        max={420}
+        defaultWidth={260}
+        topInset={topInset}
+        bottomInset={bottomInset}
+        onTopInsetChange={(value) => {
+          onInsetChange('top', value)
+          setTopInset(value)
+        }}
+        onBottomInsetChange={(value) => {
+          onInsetChange('bottom', value)
+          setBottomInset(value)
+        }}
+        tabs={[{ id: 'files', label: 'Files' }]}
+        activeTab="files"
+        onSelect={() => {}}
+        onClose={() => {}}
+        onPin={setPinned}
+        onWidthChange={() => {}}
+        autoHide={false}
+      >
+        <input aria-label="Vertical draft" defaultValue="Retained" />
+      </DockPanel>
+    </div>
+  )
+}
+
+function measuredDeck(initialHeight: number) {
+  let height = initialHeight
+  const original = HTMLElement.prototype.getBoundingClientRect
+  vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(
+    function (this: HTMLElement) {
+      return this.classList.contains('workspace-deck')
+        ? new DOMRect(0, 0, 1000, height)
+        : original.call(this)
+    },
+  )
+  return (nextHeight: number) => {
+    height = nextHeight
+  }
+}
+
 describe('transient workspace docks', () => {
   afterEach(() => {
     vi.useRealTimers()
     vi.unstubAllGlobals()
+    vi.restoreAllMocks()
   })
 
   it('auto-closes after the pointer leaves, retains its draft, and ignores its trigger', () => {
@@ -283,5 +359,157 @@ describe('transient workspace docks', () => {
     expect(
       screen.getByRole('button', { name: 'Unpin left panel' }),
     ).toHaveAttribute('aria-pressed', 'true')
+  })
+
+  it.each(['left', 'right'] as const)(
+    'bounds both vertical edges for a floating %s dock while preserving 160px of usable height',
+    (side) => {
+      measuredDeck(600)
+      const onChange = vi.fn()
+      render(<VerticalHarness side={side} onInsetChange={onChange} />)
+      const panel = screen.getByRole('complementary', {
+        name: 'Vertical panel',
+      })
+      const top = screen.getByRole('separator', {
+        name: `Resize ${side} panel top`,
+      })
+      const bottom = screen.getByRole('separator', {
+        name: `Resize ${side} panel bottom`,
+      })
+      expect(top).toHaveAttribute('aria-valuemax', '250')
+      expect(bottom).toHaveAttribute('aria-valuemax', '270')
+      expect(panel.style.top).toBe('calc(var(--tab-bar-height, 40px) + 80px)')
+      expect(panel.style.bottom).toBe(
+        'calc(var(--status-bar-height, 22px) + 100px)',
+      )
+      fireEvent.keyDown(top, { key: 'End' })
+      expect(top).toHaveAttribute('aria-valuenow', '250')
+      expect(bottom).toHaveAttribute('aria-valuemax', '100')
+      expect(
+        600 -
+          60 -
+          30 -
+          Number(top.getAttribute('aria-valuenow')) -
+          Number(bottom.getAttribute('aria-valuenow')),
+      ).toBe(160)
+      fireEvent.keyDown(top, { key: 'Home' })
+      fireEvent.keyDown(bottom, { key: 'End' })
+      expect(bottom).toHaveAttribute('aria-valuenow', '350')
+      expect(onChange).toHaveBeenLastCalledWith('bottom', 350)
+      expect(panel.style.marginTop).toBe('')
+      expect(panel.style.maxHeight).toContain('- 350px')
+    },
+  )
+
+  it('uses margins for pinned docks and remeasures chrome when unpinned without losing contents or preferences', () => {
+    measuredDeck(600)
+    const onChange = vi.fn()
+    render(
+      <VerticalHarness
+        initialPinned
+        top={30}
+        bottom={45}
+        onInsetChange={onChange}
+      />,
+    )
+    const panel = screen.getByRole('complementary', { name: 'Vertical panel' })
+    const top = screen.getByRole('separator', { name: 'Resize left panel top' })
+    const bottom = screen.getByRole('separator', {
+      name: 'Resize left panel bottom',
+    })
+    expect(panel.style.marginTop).toBe('30px')
+    expect(panel.style.marginBottom).toBe('45px')
+    expect(panel.style.top).toBe('')
+    expect(top).toHaveAttribute('aria-valuemax', '395')
+    expect(bottom).toHaveAttribute('aria-valuemax', '410')
+    fireEvent.click(screen.getByRole('button', { name: 'Unpin left panel' }))
+    expect(panel.style.marginTop).toBe('')
+    expect(panel.style.marginBottom).toBe('')
+    expect(top).toHaveAttribute('aria-valuemax', '305')
+    expect(bottom).toHaveAttribute('aria-valuemax', '320')
+    expect(panel.style.top).toBe('calc(var(--tab-bar-height, 40px) + 30px)')
+    expect(screen.getByLabelText('Vertical draft')).toHaveValue('Retained')
+    expect(onChange).not.toHaveBeenCalled()
+  })
+
+  it('clamps displayed insets on viewport shrink and restores saved preferences when space returns', () => {
+    const resize = measuredDeck(800)
+    const onChange = vi.fn()
+    render(<VerticalHarness top={200} bottom={180} onInsetChange={onChange} />)
+    const top = screen.getByRole('separator', { name: 'Resize left panel top' })
+    const bottom = screen.getByRole('separator', {
+      name: 'Resize left panel bottom',
+    })
+    resize(400)
+    fireEvent(window, new Event('resize'))
+    expect(top).toHaveAttribute('aria-valuenow', '0')
+    expect(bottom).toHaveAttribute('aria-valuenow', '150')
+    expect(
+      400 -
+        90 -
+        Number(top.getAttribute('aria-valuenow')) -
+        Number(bottom.getAttribute('aria-valuenow')),
+    ).toBe(160)
+    resize(800)
+    fireEvent(window, new Event('resize'))
+    expect(top).toHaveAttribute('aria-valuenow', '200')
+    expect(bottom).toHaveAttribute('aria-valuenow', '180')
+    expect(onChange).not.toHaveBeenCalled()
+  })
+
+  it('reacts to deck ResizeObserver measurements and disconnects without rewriting layout preferences', () => {
+    const resize = measuredDeck(800)
+    let notify: ResizeObserverCallback | undefined
+    const observe = vi.fn()
+    const disconnect = vi.fn()
+    let observer: ResizeObserver
+    class Observer {
+      constructor(callback: ResizeObserverCallback) {
+        notify = callback
+        observer = this as unknown as ResizeObserver
+      }
+      observe = observe
+      disconnect = disconnect
+      unobserve() {}
+    }
+    vi.stubGlobal('ResizeObserver', Observer)
+    const onChange = vi.fn()
+    const view = render(
+      <VerticalHarness
+        initialPinned
+        top={200}
+        bottom={180}
+        onInsetChange={onChange}
+      />,
+    )
+    expect(observe).toHaveBeenCalledWith(
+      document.querySelector('.workspace-deck'),
+    )
+    resize(400)
+    act(() => notify?.([], observer))
+    expect(
+      screen.getByRole('separator', { name: 'Resize left panel top' }),
+    ).toHaveAttribute('aria-valuenow', '60')
+    expect(
+      screen.getByRole('separator', { name: 'Resize left panel bottom' }),
+    ).toHaveAttribute('aria-valuenow', '180')
+    expect(onChange).not.toHaveBeenCalled()
+    view.unmount()
+    expect(disconnect).toHaveBeenCalledOnce()
+  })
+
+  it('retains legacy eight-pixel gutters when vertical controls were not supplied', () => {
+    render(<Harness autoHide={false} />)
+    const panel = screen.getByRole('complementary', { name: 'Project files' })
+    expect(panel.style.top).toBe('calc(var(--tab-bar-height, 40px) + 8px)')
+    expect(panel.style.bottom).toBe(
+      'calc(var(--status-bar-height, 22px) + 8px)',
+    )
+    expect(
+      screen.queryByRole('separator', { name: 'Resize left panel top' }),
+    ).toBeNull()
+    expect(
+      screen.queryByRole('separator', { name: 'Resize left panel bottom' }),
+    ).toBeNull()
   })
 })

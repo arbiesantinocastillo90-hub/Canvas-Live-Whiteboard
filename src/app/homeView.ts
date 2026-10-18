@@ -8,6 +8,7 @@ export type HomeLibraryView = {
   recentCanvasesCollapsed: boolean
   allCanvasesCollapsed: boolean
   hierarchyCollapsed: boolean
+  hierarchyShowCanvases: boolean
   closedProjectIds: string[]
 }
 export const DEFAULT_HOME_VIEW: HomeLibraryView = {
@@ -19,6 +20,7 @@ export const DEFAULT_HOME_VIEW: HomeLibraryView = {
   recentCanvasesCollapsed: false,
   allCanvasesCollapsed: false,
   hierarchyCollapsed: true,
+  hierarchyShowCanvases: false,
   closedProjectIds: [],
 }
 function record(value: unknown): value is Record<string, unknown> {
@@ -52,6 +54,7 @@ export function normalizeHomeView(value: unknown): HomeLibraryView {
     recentCanvasesCollapsed: source.recentCanvasesCollapsed === true,
     allCanvasesCollapsed: source.allCanvasesCollapsed === true,
     hierarchyCollapsed: source.hierarchyCollapsed !== false,
+    hierarchyShowCanvases: source.hierarchyShowCanvases === true,
     closedProjectIds: Array.isArray(source.closedProjectIds)
       ? [...new Set(source.closedProjectIds.filter(id))].slice(0, 100)
       : [],

@@ -9,6 +9,14 @@ import {
   type CanvasElement,
   type CanvasLayer,
   type ConnectionSide,
+  type ShapeType,
+  type TextFormat,
+  type ConnectionStyle,
+  type LinePattern,
+  type PointerType,
+  type EmbedKind,
+  SHAPE_TYPES,
+  TEXT_FORMAT_KEYS,
 } from './lcanvas'
 
 type CreationBase = {
@@ -24,13 +32,23 @@ type CreationSize = CreationBase & {
   height: number
 }
 export type NewCanvasElement =
+  | (CreationSize &
+      TextFormat & {
+        type: ShapeType
+        fill?: string | null
+        text?: string
+        fontSize?: number
+      })
+  | (CreationSize &
+      TextFormat & { type: 'text'; text?: string; fontSize?: number })
   | (CreationSize & {
-      type: 'rectangle' | 'ellipse' | 'diamond'
-      fill?: string | null
-      text?: string
-      fontSize?: number
+      type: 'embed'
+      kind: EmbedKind
+      src: string
+      title?: string
+      paused?: boolean
+      minimized?: boolean
     })
-  | (CreationSize & { type: 'text'; text?: string; fontSize?: number })
   | (CreationSize & { type: 'area'; name?: string; fill?: string | null })
   | (CreationBase & {
       type: 'line'
@@ -38,18 +56,22 @@ export type NewCanvasElement =
       y: number
       x2: number
       y2: number
+      linePattern?: LinePattern
     })
   | (CreationBase & {
       type: 'connection'
       fromId: string
       toId: string
-      style?: 'straight' | 'elbow'
+      style?: ConnectionStyle
       startArrow?: boolean
       endArrow?: boolean
       fromSide?: ConnectionSide
       toSide?: ConnectionSide
+      linePattern?: LinePattern
+      startPointer?: PointerType
+      endPointer?: PointerType
     })
-export type ElementPatch = {
+export type ElementPatch = TextFormat & {
   x?: number
   y?: number
   width?: number
@@ -63,18 +85,29 @@ export type ElementPatch = {
   name?: string
   layerId?: string
   areaId?: string | null
-  style?: 'straight' | 'elbow'
+  style?: ConnectionStyle
   startArrow?: boolean
   endArrow?: boolean
   fromSide?: ConnectionSide
   toSide?: ConnectionSide
+  linePattern?: LinePattern
+  startPointer?: PointerType
+  endPointer?: PointerType
+  kind?: EmbedKind
+  src?: string
+  title?: string
+  paused?: boolean
+  minimized?: boolean
 }
 export type ConnectionOptions = CreationBase & {
-  style?: 'straight' | 'elbow'
+  style?: ConnectionStyle
   startArrow?: boolean
   endArrow?: boolean
   fromSide?: ConnectionSide
   toSide?: ConnectionSide
+  linePattern?: LinePattern
+  startPointer?: PointerType
+  endPointer?: PointerType
 }
 
 function fail(message: string): never {
@@ -149,6 +182,7 @@ export function orderedVisibleElements(
           (element.type !== 'connection' ||
             (visibleIds.has(element.fromId) && visibleIds.has(element.toId))),
       )
+      // An area is the background of its own layer, never of another layer.
       .sort((a, b) => Number(b.type === 'area') - Number(a.type === 'area')),
   )
 }
@@ -213,15 +247,14 @@ export function createElement(
     requireEditable(current, input.fromId)
     requireEditable(current, input.toId)
   }
-  const defaults =
-    input.type === 'rectangle' ||
-    input.type === 'ellipse' ||
-    input.type === 'diamond'
-      ? { fill: null, text: '', fontSize: 20 }
-      : input.type === 'text'
-        ? { text: 'Text', fontSize: 24 }
-        : input.type === 'area'
-          ? { name: 'Area', fill: null }
+  const defaults = SHAPE_TYPES.includes(input.type as ShapeType)
+    ? { fill: null, text: '', fontSize: 20 }
+    : input.type === 'text'
+      ? { text: 'Text', fontSize: 24 }
+      : input.type === 'area'
+        ? { name: 'Area', fill: null }
+        : input.type === 'embed'
+          ? { title: '', paused: true, minimized: false }
           : input.type === 'connection'
             ? {
                 style: 'straight',
@@ -251,9 +284,18 @@ export function updateElement(
   const element = requireEditable(current, id)
   const typeKeys =
     element.type === 'connection'
-      ? ['style', 'startArrow', 'endArrow', 'fromSide', 'toSide']
+      ? [
+          'style',
+          'startArrow',
+          'endArrow',
+          'fromSide',
+          'toSide',
+          'linePattern',
+          'startPointer',
+          'endPointer',
+        ]
       : element.type === 'line'
-        ? ['x', 'y', 'x2', 'y2']
+        ? ['x', 'y', 'x2', 'y2', 'linePattern']
         : [
             'x',
             'y',
@@ -261,11 +303,14 @@ export function updateElement(
             'height',
             ...(element.type === 'area'
               ? ['name', 'fill']
-              : [
-                  'text',
-                  'fontSize',
-                  ...(element.type === 'text' ? [] : ['fill']),
-                ]),
+              : element.type === 'embed'
+                ? ['kind', 'src', 'title', 'paused', 'minimized']
+                : [
+                    'text',
+                    'fontSize',
+                    ...TEXT_FORMAT_KEYS,
+                    ...(element.type === 'text' ? [] : ['fill']),
+                  ]),
           ]
   const allowedKeys = ['color', 'layerId', 'areaId', ...typeKeys]
   if (
@@ -408,6 +453,31 @@ export function connectElements(
     fromId,
     toId,
     ...options,
+  })
+}
+/** Reverse endpoint ownership without changing the pointer styles selected at either end. */
+export function reverseConnection(
+  document: CanvasDocument,
+  id: string,
+): CanvasDocument {
+  const current = source(document)
+  const connection = requireEditable(current, id)
+  if (connection.type !== 'connection')
+    return fail('Choose a connection to reverse.')
+  const reversed = {
+    ...connection,
+    fromId: connection.toId,
+    toId: connection.fromId,
+  }
+  delete reversed.fromSide
+  delete reversed.toSide
+  if (connection.toSide !== undefined) reversed.fromSide = connection.toSide
+  if (connection.fromSide !== undefined) reversed.toSide = connection.fromSide
+  return validateCanvasDocument({
+    ...current,
+    elements: current.elements.map((element) =>
+      element.id === id ? reversed : element,
+    ),
   })
 }
 export function addLayer(

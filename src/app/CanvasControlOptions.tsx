@@ -135,6 +135,16 @@ export default function CanvasControlOptions({
             />
             Snap to grid
           </label>
+          <label className="canvas-control-check">
+            <input
+              type="checkbox"
+              checked={value.snapToObjects}
+              onChange={(event) =>
+                update({ snapToObjects: event.target.checked })
+              }
+            />
+            Snap to objects
+          </label>
           <label>
             Grid spacing (px)
             <input
@@ -151,7 +161,8 @@ export default function CanvasControlOptions({
           </label>
           <p className="canvas-control-note">
             Hold Alt while dragging or resizing to bypass snapping. Grid spacing
-            uses canvas coordinates.
+            uses canvas coordinates. Object snapping aligns nearby edges and
+            centers within 8 screen pixels.
           </p>
           <label className="canvas-control-check">
             <input

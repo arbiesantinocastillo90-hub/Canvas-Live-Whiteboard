@@ -4,29 +4,51 @@ import {
   useLayoutEffect,
   useRef,
   useState,
+  type DragEvent,
   type FormEvent,
   type ReactNode,
 } from 'react'
 import {
   CONNECTION_SIDES,
+  TEXT_FORMAT_KEYS,
+  LINE_PATTERNS,
+  type LinePattern,
   type CanvasDocument,
   type CanvasElement,
   type CanvasLayer,
   type ConnectionSide,
+  type ConnectionElement,
+  type TextFormat,
 } from './lcanvas'
 import {
   addLayer,
   isElementEditable,
   removeElement,
   reorderLayer,
+  reverseConnection,
   updateElement,
   updateLayer,
 } from './canvasOperations'
+import {
+  TextFormattingFields,
+  ConnectionFormattingFields,
+} from './CanvasRichProperties'
+import CanvasQuickProperties from './CanvasQuickProperties'
+import {
+  CANVAS_LAYER_DRAG_MIME,
+  canDropCanvasLayerItem,
+  dropCanvasLayerItem,
+  inspectorLayerElements,
+  readCanvasLayerDrag,
+  type CanvasLayerDrag,
+  type LayerDropPosition,
+} from './canvasLayerDrag'
 import './canvas-inspector.css'
 
 export type CanvasInspectorProps = {
   document: CanvasDocument
   selectedId: string | null
+  selectedIds?: string[]
   activeLayerId: string
   onSelect: (id: string | null) => void
   onActiveLayerChange: (id: string) => void
@@ -61,6 +83,28 @@ function propertyDraft(element: CanvasElement) {
     transparent: 'fill' in element ? element.fill === null : true,
     layerId: element.layerId,
     areaId: element.areaId ?? '',
+    linePattern: (element.type === 'line'
+      ? (element.linePattern ?? 'solid')
+      : 'solid') as LinePattern,
+    textFormat: ('text' in element
+      ? Object.fromEntries(
+          TEXT_FORMAT_KEYS.filter((key) => Object.hasOwn(element, key)).map(
+            (key) => [key, Reflect.get(element, key)],
+          ),
+        )
+      : {}) as TextFormat,
+    connectionFormat: (element.type === 'connection'
+      ? {
+          style: element.style,
+          ...(element.linePattern ? { linePattern: element.linePattern } : {}),
+          ...(element.startPointer
+            ? { startPointer: element.startPointer }
+            : {}),
+          ...(element.endPointer ? { endPointer: element.endPointer } : {}),
+          startArrow: element.startArrow,
+          endArrow: element.endArrow,
+        }
+      : {}) as Partial<ConnectionElement>,
     style:
       element.type === 'connection'
         ? element.style
@@ -110,33 +154,97 @@ function LayerItem({
   active,
   commit,
   onActiveLayerChange,
+  expanded,
+  onExpand,
+  selectedIds,
+  onSelect,
+  dragging,
+  dropPosition,
+  onDragStart,
+  onDragEnd,
+  onDragOver,
+  onDrop,
 }: {
   layer: CanvasLayer
   document: CanvasDocument
   active: boolean
   commit: Commit
   onActiveLayerChange: (id: string) => void
+  expanded: boolean
+  onExpand: () => void
+  selectedIds: ReadonlySet<string>
+  onSelect: (id: string) => void
+  dragging: CanvasLayerDrag | null
+  dropPosition?: LayerDropPosition
+  onDragStart: (event: DragEvent, item: CanvasLayerDrag) => void
+  onDragEnd: () => void
+  onDragOver: (event: DragEvent<HTMLElement>, layerId: string) => void
+  onDrop: (event: DragEvent<HTMLElement>, layerId: string) => void
 }) {
   const [name, setName] = useState(layer.name)
+  const contentId = useId()
   const index = document.layers.findIndex((item) => item.id === layer.id)
-  const count = document.elements.filter(
-    (item) => item.layerId === layer.id,
-  ).length
+  const elements = inspectorLayerElements(document, layer.id)
+  const count = elements.length
 
   return (
-    <li className="inspector-layer" data-active={active}>
-      <button
-        className="inspector-layer-select"
-        type="button"
-        aria-label={`Use layer ${layer.name}`}
-        aria-pressed={active}
-        onClick={() => onActiveLayerChange(layer.id)}
-      >
-        <span>{layer.name}</span>
-        <small>
-          {count} {count === 1 ? 'object' : 'objects'}
-        </small>
-      </button>
+    <li
+      className="inspector-layer"
+      data-layer-row={layer.id}
+      data-active={active}
+      data-drop-position={dropPosition}
+      data-dragging={dragging?.kind === 'layer' && dragging.id === layer.id}
+      onDragOver={(event) => onDragOver(event, layer.id)}
+      onDrop={(event) => onDrop(event, layer.id)}
+    >
+      <div className="inspector-layer-heading">
+        <button
+          type="button"
+          className="inspector-layer-grip"
+          aria-label={`Drag layer ${layer.name}`}
+          aria-description="Drag above or below another layer. Alt+Up or Alt+Down changes its position."
+          title="Drag to reorder; Alt+Up / Alt+Down"
+          draggable
+          onDragStart={(event) =>
+            onDragStart(event, { version: 1, kind: 'layer', id: layer.id })
+          }
+          onDragEnd={onDragEnd}
+          onKeyDown={(event) => {
+            if (!event.altKey || !['ArrowUp', 'ArrowDown'].includes(event.key))
+              return
+            event.preventDefault()
+            const nextIndex = index + (event.key === 'ArrowUp' ? 1 : -1)
+            if (nextIndex >= 0 && nextIndex < document.layers.length)
+              commit(() => reorderLayer(document, layer.id, nextIndex))
+          }}
+        >
+          <LayerIcon>
+            <path d="M9 5h.01M15 5h.01M9 12h.01M15 12h.01M9 19h.01M15 19h.01" />
+          </LayerIcon>
+        </button>
+        <button
+          type="button"
+          className="inspector-layer-toggle"
+          aria-label={`${expanded ? 'Collapse' : 'Expand'} layer ${layer.name}`}
+          aria-expanded={expanded}
+          aria-controls={contentId}
+          onClick={onExpand}
+        >
+          <span aria-hidden="true">{expanded ? '▾' : '▸'}</span>
+        </button>
+        <button
+          className="inspector-layer-select"
+          type="button"
+          aria-label={`Use layer ${layer.name}`}
+          aria-pressed={active}
+          onClick={() => onActiveLayerChange(layer.id)}
+        >
+          <span>{layer.name}</span>
+          <small>
+            {count} {count === 1 ? 'object' : 'objects'}
+          </small>
+        </button>
+      </div>
       <div className="inspector-layer-actions">
         <button
           type="button"
@@ -178,50 +286,77 @@ function LayerItem({
             <path d="M12 15v2" />
           </LayerIcon>
         </button>
-        <button
-          type="button"
-          aria-label={`Move layer ${layer.name} forward`}
-          title={`Move layer ${layer.name} forward`}
-          disabled={index === document.layers.length - 1}
-          onClick={() =>
-            commit(() => reorderLayer(document, layer.id, index + 1))
-          }
-        >
-          <LayerIcon>
-            <path d="M12 19V5m-6 6 6-6 6 6" />
-          </LayerIcon>
-        </button>
-        <button
-          type="button"
-          aria-label={`Move layer ${layer.name} backward`}
-          title={`Move layer ${layer.name} backward`}
-          disabled={index === 0}
-          onClick={() =>
-            commit(() => reorderLayer(document, layer.id, index - 1))
-          }
-        >
-          <LayerIcon>
-            <path d="M12 5v14m-6-6 6 6 6-6" />
-          </LayerIcon>
-        </button>
       </div>
-      <form
-        className="inspector-inline-form"
-        onSubmit={(event) => {
-          event.preventDefault()
-          commit(() => updateLayer(document, layer.id, { name }))
-        }}
+      <div
+        className="inspector-layer-contents"
+        data-expanded={expanded}
+        id={contentId}
+        inert={!expanded}
+        aria-hidden={!expanded}
       >
-        <input
-          aria-label={`Rename layer ${layer.name}`}
-          value={name}
-          maxLength={120}
-          onChange={(event) => setName(event.target.value)}
-        />
-        <button type="submit" disabled={name.trim() === layer.name}>
-          Rename
-        </button>
-      </form>
+        <div className="inspector-layer-contents-inner">
+          {elements.length ? (
+            <ul
+              className="inspector-object-list"
+              aria-label={`Objects in ${layer.name}`}
+            >
+              {elements.map((element) => (
+                <li
+                  key={element.id}
+                  data-dragging={
+                    dragging?.kind === 'object' && dragging.id === element.id
+                  }
+                >
+                  <button
+                    type="button"
+                    aria-pressed={selectedIds.has(element.id)}
+                    aria-label={`Select ${objectName(element)} on ${layer.name}`}
+                    title="Select to edit; drag to another visible, unlocked layer"
+                    draggable={isElementEditable(document, element.id)}
+                    onDragStart={(event) =>
+                      onDragStart(event, {
+                        version: 1,
+                        kind: 'object',
+                        id: element.id,
+                      })
+                    }
+                    onDragEnd={onDragEnd}
+                    onClick={() => onSelect(element.id)}
+                  >
+                    <span>{objectName(element)}</span>
+                    <small>
+                      {layer.name} · {element.type}
+                      {layer.locked ? ' · locked' : ''}
+                      {!layer.visible ? ' · hidden' : ''}
+                    </small>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="inspector-layer-empty">
+              No objects. Drop an object here to move it.
+            </p>
+          )}
+          <form
+            className="inspector-inline-form"
+            onSubmit={(event) => {
+              event.preventDefault()
+              commit(() => updateLayer(document, layer.id, { name }))
+            }}
+          >
+            <input
+              aria-label={`Rename layer ${layer.name}`}
+              value={name}
+              maxLength={120}
+              onChange={(event) => setName(event.target.value)}
+            />
+            <button type="submit" disabled={name.trim() === layer.name}>
+              Rename
+            </button>
+          </form>
+        </div>
+      </div>
     </li>
   )
 }
@@ -290,9 +425,8 @@ function ElementProperties({
     fill,
     transparent,
     layerId,
-    areaId,
-    style,
-    arrows,
+    textFormat,
+    connectionFormat,
     fromSide,
     toSide,
   } = draft
@@ -317,15 +451,11 @@ function ElementProperties({
   const setFill = (value: string) => change('fill', value)
   const setTransparent = (value: boolean) => change('transparent', value)
   const setLayerId = (value: string) => change('layerId', value)
-  const setAreaId = (value: string) => change('areaId', value)
-  const setStyle = (value: 'straight' | 'elbow') => change('style', value)
-  const setArrows = (value: string) => change('arrows', value)
   const editable = isElementEditable(document, element.id)
   const layer = document.layers.find((item) => item.id === element.layerId)
   const area = document.elements.find(
     (item) => item.id === element.areaId && item.type === 'area',
   )
-  const areas = document.elements.filter((item) => item.type === 'area')
   const memberCount = document.elements.filter(
     (item) => item.areaId === element.id,
   ).length
@@ -355,8 +485,9 @@ function ElementProperties({
       transparent,
       layerId,
       areaId,
-      style,
-      arrows,
+      linePattern,
+      textFormat,
+      connectionFormat,
       fromSide,
       toSide,
     } = draftRef.current
@@ -364,9 +495,7 @@ function ElementProperties({
     if (element.type === 'connection') {
       return updateElement(document, element.id, {
         ...base,
-        style,
-        startArrow: arrows === 'start' || arrows === 'both',
-        endArrow: arrows === 'end' || arrows === 'both',
+        ...connectionFormat,
         fromSide,
         toSide,
       })
@@ -377,6 +506,7 @@ function ElementProperties({
         ...position,
         x2: numeric(x2, 'End X'),
         y2: numeric(y2, 'End Y'),
+        linePattern,
       })
     }
     const dimensions = {
@@ -392,8 +522,11 @@ function ElementProperties({
         fill: transparent ? null : fill,
       })
     }
+    if (element.type === 'embed')
+      return updateElement(document, element.id, dimensions)
     const typography = {
       ...dimensions,
+      ...textFormat,
       text,
       fontSize: numeric(fontSize, 'Font size'),
     }
@@ -533,12 +666,46 @@ function ElementProperties({
               <NumberField label="End Y" value={y2} onChange={setY2} />
             </div>
           )}
+          {element.type === 'line' && (
+            <label className="inspector-field">
+              <span>Line type</span>
+              <select
+                value={draft.linePattern}
+                onChange={(event) =>
+                  change('linePattern', event.target.value as LinePattern)
+                }
+              >
+                {LINE_PATTERNS.map((value) => (
+                  <option key={value} value={value}>
+                    {value[0].toUpperCase() + value.slice(1)}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
           {'fontSize' in element && (
             <NumberField
               label="Font size"
               value={fontSize}
               onChange={setFontSize}
               min={8}
+            />
+          )}
+          {'text' in element && (
+            <TextFormattingFields
+              value={{
+                ...textFormat,
+                color,
+                textAlign:
+                  textFormat.textAlign ??
+                  (element.type === 'text' ? 'left' : 'center'),
+                verticalAlign:
+                  textFormat.verticalAlign ??
+                  (element.type === 'text' ? 'top' : 'middle'),
+              }}
+              onChange={(patch) =>
+                change('textFormat', { ...textFormat, ...patch })
+              }
             />
           )}
           {element.type === 'connection' && (
@@ -564,34 +731,18 @@ function ElementProperties({
                   </label>
                 ))}
               </div>
-              <div className="inspector-field">
-                <label htmlFor={`${prefix}-connection-path`}>
-                  Connection path
-                </label>
-                <select
-                  id={`${prefix}-connection-path`}
-                  value={style}
-                  onChange={(event) =>
-                    setStyle(event.target.value as 'straight' | 'elbow')
-                  }
-                >
-                  <option value="straight">Straight</option>
-                  <option value="elbow">Elbow</option>
-                </select>
-              </div>
-              <div className="inspector-field">
-                <label htmlFor={`${prefix}-arrows`}>Arrows</label>
-                <select
-                  id={`${prefix}-arrows`}
-                  value={arrows}
-                  onChange={(event) => setArrows(event.target.value)}
-                >
-                  <option value="none">No arrows</option>
-                  <option value="end">End arrow</option>
-                  <option value="start">Start arrow</option>
-                  <option value="both">Both arrows</option>
-                </select>
-              </div>
+              <ConnectionFormattingFields
+                value={connectionFormat}
+                onChange={(patch) =>
+                  change('connectionFormat', { ...connectionFormat, ...patch })
+                }
+                onReverse={() => {
+                  if (
+                    commit(() => reverseConnection(nextDocument(), element.id))
+                  )
+                    dirty.current = false
+                }}
+              />
             </>
           )}
           <div className="inspector-color-fields">
@@ -650,32 +801,6 @@ function ElementProperties({
               ))}
             </select>
           </div>
-          {element.type !== 'area' && (
-            <div className="inspector-field">
-              <label htmlFor={`${prefix}-containing-area`}>
-                Containing area
-              </label>
-              <select
-                id={`${prefix}-containing-area`}
-                value={areaId}
-                onChange={(event) => setAreaId(event.target.value)}
-              >
-                <option value="">No area</option>
-                {areas.map((item) => (
-                  <option
-                    key={item.id}
-                    value={item.id}
-                    disabled={
-                      !isElementEditable(document, item.id) &&
-                      item.id !== element.areaId
-                    }
-                  >
-                    {item.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-          )}
           <button className="inspector-apply" type="submit">
             Apply properties
           </button>
@@ -698,6 +823,7 @@ function ElementProperties({
 export function CanvasInspector({
   document,
   selectedId,
+  selectedIds,
   activeLayerId,
   onSelect,
   onActiveLayerChange,
@@ -708,6 +834,18 @@ export function CanvasInspector({
   const prefix = useId()
   const [error, setError] = useState('')
   const [layerName, setLayerName] = useState('')
+  const [layerDisclosure, setLayerDisclosure] = useState({
+    closed: [] as string[],
+    selectionKey: '',
+  })
+  const [dragging, setDragging] = useState<CanvasLayerDrag | null>(null)
+  const dragRef = useRef<CanvasLayerDrag | null>(null)
+  const [dropTarget, setDropTarget] = useState<{
+    layerId: string
+    position: LayerDropPosition
+  } | null>(null)
+  const layerList = useRef<HTMLUListElement>(null)
+  const layerPositions = useRef(new Map<string, number>())
   const draftFlusher = useRef<(() => boolean) | null>(null)
   function registerDraftFlusher(flush: (() => boolean) | null) {
     draftFlusher.current = flush
@@ -718,11 +856,151 @@ export function CanvasInspector({
     onSelect(id)
   }
   const selected = document.elements.find((item) => item.id === selectedId)
+  const currentSelectedIds = selectedIds ?? (selectedId ? [selectedId] : [])
+  const selectedSet = new Set(currentSelectedIds)
+  const selectedElements = document.elements.filter((element) =>
+    selectedSet.has(element.id),
+  )
+  const selectedLayerKey = JSON.stringify(
+    selectedElements.map((element) => [element.id, element.layerId]),
+  )
+  const selectedLayers = new Set(
+    selectedElements.map((element) => element.layerId),
+  )
+  const closedLayers =
+    layerDisclosure.selectionKey === selectedLayerKey
+      ? layerDisclosure.closed
+      : layerDisclosure.closed.filter((id) => !selectedLayers.has(id))
+  function setClosedLayers(update: (closed: string[]) => string[]) {
+    setLayerDisclosure((previous) => ({
+      closed: update(
+        previous.selectionKey === selectedLayerKey
+          ? previous.closed
+          : previous.closed.filter((id) => !selectedLayers.has(id)),
+      ),
+      selectionKey: selectedLayerKey,
+    }))
+  }
+  const layerOrderKey = document.layers.map((layer) => layer.id).join('\0')
+  const objectLayerKey = JSON.stringify(
+    document.elements.map((element) => [element.id, element.layerId]),
+  )
+  useLayoutEffect(() => {
+    const nextPositions = new Map<string, number>()
+    const reducedMotion =
+      typeof window.matchMedia === 'function' &&
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    for (const row of layerList.current?.querySelectorAll<HTMLElement>(
+      '[data-layer-row]',
+    ) ?? []) {
+      const id = row.dataset.layerRow!
+      const top = row.getBoundingClientRect().top
+      const previous = layerPositions.current.get(id)
+      if (
+        !reducedMotion &&
+        previous !== undefined &&
+        previous !== top &&
+        typeof row.animate === 'function'
+      )
+        row.animate(
+          [
+            { transform: `translateY(${previous - top}px)` },
+            { transform: 'translateY(0)' },
+          ],
+          { duration: 180, easing: 'ease-out' },
+        )
+      nextPositions.set(id, top)
+    }
+    layerPositions.current = nextPositions
+  }, [layerOrderKey, objectLayerKey])
+
+  function finishDrag() {
+    dragRef.current = null
+    setDragging(null)
+    setDropTarget(null)
+  }
+  function startDrag(event: DragEvent, item: CanvasLayerDrag) {
+    event.stopPropagation()
+    if (item.kind === 'object' && !isElementEditable(document, item.id)) {
+      event.preventDefault()
+      return
+    }
+    draftFlusher.current?.()
+    event.dataTransfer.setData(CANVAS_LAYER_DRAG_MIME, JSON.stringify(item))
+    event.dataTransfer.effectAllowed = 'move'
+    dragRef.current = item
+    setDragging(item)
+  }
+  function dragOverLayer(event: DragEvent<HTMLElement>, layerId: string) {
+    const item = dragRef.current
+    if (!item || !canDropCanvasLayerItem(document, item, layerId)) {
+      setDropTarget(null)
+      return
+    }
+    event.preventDefault()
+    event.stopPropagation()
+    event.dataTransfer.dropEffect = 'move'
+    const bounds = event.currentTarget.getBoundingClientRect()
+    const position =
+      item.kind === 'object'
+        ? 'inside'
+        : event.clientY < bounds.top + bounds.height / 2
+          ? 'before'
+          : 'after'
+    setDropTarget((previous) =>
+      previous?.layerId === layerId && previous.position === position
+        ? previous
+        : { layerId, position },
+    )
+  }
+  function dropOnLayer(event: DragEvent<HTMLElement>, layerId: string) {
+    event.preventDefault()
+    event.stopPropagation()
+    const item = readCanvasLayerDrag(
+      event.dataTransfer.getData(CANVAS_LAYER_DRAG_MIME),
+      document,
+    )
+    const internal = dragRef.current
+    if (
+      !internal ||
+      !item ||
+      internal.kind !== item.kind ||
+      internal.id !== item.id ||
+      !canDropCanvasLayerItem(document, item, layerId)
+    ) {
+      finishDrag()
+      return
+    }
+    const bounds = event.currentTarget.getBoundingClientRect()
+    const position =
+      item.kind === 'object'
+        ? 'inside'
+        : event.clientY < bounds.top + bounds.height / 2
+          ? 'before'
+          : 'after'
+    if (
+      commit(() => dropCanvasLayerItem(document, item, layerId, position)) &&
+      item.kind === 'object'
+    ) {
+      setClosedLayers((closed) => closed.filter((id) => id !== layerId))
+      onActiveLayerChange(layerId)
+    }
+    finishDrag()
+  }
 
   function commit(operation: () => CanvasDocument): boolean {
     try {
       const next = operation()
-      onDocumentChange(next)
+      if (next !== document) {
+        for (const row of layerList.current?.querySelectorAll<HTMLElement>(
+          '[data-layer-row]',
+        ) ?? [])
+          layerPositions.current.set(
+            row.dataset.layerRow!,
+            row.getBoundingClientRect().top,
+          )
+        onDocumentChange(next)
+      }
       setError('')
       return true
     } catch (cause) {
@@ -749,7 +1027,19 @@ export function CanvasInspector({
           {error}
         </p>
       )}
-      {selected ? (
+      {selectedIds && selectedIds.length > 1 ? (
+        <section className="inspector-section">
+          <CanvasQuickProperties
+            document={document}
+            ids={selectedIds}
+            onChange={onDocumentChange}
+            onError={(message) => {
+              setError(message)
+              onError?.(message)
+            }}
+          />
+        </section>
+      ) : selected ? (
         <ElementProperties
           key={selected.id}
           element={selected}
@@ -770,7 +1060,11 @@ export function CanvasInspector({
             Layers
           </h3>
         </div>
-        <ul className="inspector-layers">
+        <p className="inspector-help">
+          Front to back. Drag layers to reorder; open a layer to move its
+          objects.
+        </p>
+        <ul className="inspector-layers" ref={layerList}>
           {[...document.layers].reverse().map((layer) => (
             <LayerItem
               key={`${layer.id}:${layer.name}`}
@@ -779,6 +1073,31 @@ export function CanvasInspector({
               active={layer.id === activeLayerId}
               commit={commit}
               onActiveLayerChange={onActiveLayerChange}
+              expanded={!closedLayers.includes(layer.id)}
+              onExpand={() =>
+                setClosedLayers((closed) =>
+                  closed.includes(layer.id)
+                    ? closed.filter((id) => id !== layer.id)
+                    : [...closed, layer.id],
+                )
+              }
+              selectedIds={selectedSet}
+              onSelect={(id) => {
+                setClosedLayers((closed) =>
+                  closed.filter((entry) => entry !== layer.id),
+                )
+                select(id)
+              }}
+              dragging={dragging}
+              dropPosition={
+                dropTarget?.layerId === layer.id
+                  ? dropTarget.position
+                  : undefined
+              }
+              onDragStart={startDrag}
+              onDragEnd={finishDrag}
+              onDragOver={dragOverLayer}
+              onDrop={dropOnLayer}
             />
           ))}
         </ul>
@@ -810,40 +1129,6 @@ export function CanvasInspector({
             Add layer
           </button>
         </form>
-      </section>
-      <section
-        className="inspector-section"
-        aria-labelledby={`${prefix}-objects`}
-      >
-        <div className="inspector-section-heading">
-          <h3 id={`${prefix}-objects`}>Objects</h3>
-          <span>{document.elements.length}</span>
-        </div>
-        {document.elements.length > 0 && (
-          <ul className="inspector-object-list">
-            {[...document.layers].reverse().flatMap((layer) =>
-              document.elements
-                .filter((element) => element.layerId === layer.id)
-                .map((element) => (
-                  <li key={element.id}>
-                    <button
-                      type="button"
-                      aria-pressed={element.id === selectedId}
-                      aria-label={`Select ${objectName(element)} on ${layer.name}`}
-                      onClick={() => select(element.id)}
-                    >
-                      <span>{objectName(element)}</span>
-                      <small>
-                        {layer.name} · {element.type}
-                        {layer.locked ? ' · locked' : ''}
-                        {!layer.visible ? ' · hidden' : ''}
-                      </small>
-                    </button>
-                  </li>
-                )),
-            )}
-          </ul>
-        )}
       </section>
     </aside>
   )

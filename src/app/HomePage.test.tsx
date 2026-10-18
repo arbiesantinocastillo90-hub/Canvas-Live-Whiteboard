@@ -1,4 +1,11 @@
-import { fireEvent, render, screen, within } from '@testing-library/react'
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import HomePage from './HomePage'
 import { DEFAULT_HOME_VIEW } from './homeView'
@@ -47,6 +54,123 @@ function setup() {
   return { props, records, store }
 }
 describe('home project and file library', () => {
+  it('shows canvas rows in the project hierarchy only when enabled and remembers the workspace view', async () => {
+    const { props, store } = setup()
+    const onViewChange = vi.fn()
+    const homeView = { ...DEFAULT_HOME_VIEW, display: 'hierarchy' as const }
+    const view = render(
+      <HomePage {...props} view={homeView} onViewChange={onViewChange} />,
+    )
+    const checkbox = await screen.findByRole('checkbox', {
+      name: 'Show canvas files',
+    })
+    expect(checkbox).not.toBeChecked()
+    expect(screen.queryByRole('button', { name: /Open canvas/ })).toBeNull()
+    const readCount = vi.mocked(store.list).mock.calls.length
+    fireEvent.click(checkbox)
+    expect(onViewChange).toHaveBeenLastCalledWith({
+      ...homeView,
+      hierarchyShowCanvases: true,
+    })
+    const enabledView = JSON.parse(
+      JSON.stringify(onViewChange.mock.lastCall?.[0]),
+    )
+    view.rerender(
+      <HomePage {...props} view={enabledView} onViewChange={onViewChange} />,
+    )
+    expect(
+      screen.getByRole('checkbox', { name: 'Show canvas files' }),
+    ).toBeChecked()
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Open canvas Roadmap in Alpha' }),
+    )
+    expect(props.onOpenFile).toHaveBeenCalledWith('alpha', 'roadmap')
+    expect(store.list).toHaveBeenCalledTimes(readCount)
+    expect(store.markOpened).not.toHaveBeenCalled()
+    expect(store.save).not.toHaveBeenCalled()
+    view.rerender(
+      <HomePage {...props} view={homeView} onViewChange={onViewChange} />,
+    )
+    expect(screen.queryByRole('button', { name: /Open canvas/ })).toBeNull()
+  })
+
+  it('discards a late file response after switching workspace stores and rejects rows from other projects', async () => {
+    const { props, records, store } = setup()
+    let release!: () => void
+    vi.mocked(store.list).mockImplementation(async () => {
+      await new Promise<void>((resolve) => {
+        release = resolve
+      })
+      return { value: [records[0]], persistence: 'browser' }
+    })
+    const onlyAlpha = [projects[0]]
+    const hierarchyView = {
+      ...DEFAULT_HOME_VIEW,
+      display: 'hierarchy' as const,
+      hierarchyShowCanvases: true,
+    }
+    const view = render(
+      <HomePage {...props} projects={onlyAlpha} view={hierarchyView} />,
+    )
+    await waitFor(() => expect(store.list).toHaveBeenCalledOnce())
+    const nextStore: CanvasFileStore = {
+      ...store,
+      list: vi.fn(async () => ({
+        value: [records[1], records[0]],
+        persistence: 'browser' as const,
+      })),
+    }
+    view.rerender(
+      <HomePage
+        {...props}
+        projects={[projects[1]]}
+        store={nextStore}
+        view={hierarchyView}
+      />,
+    )
+    expect(
+      screen.queryByRole('button', { name: /Open canvas Roadmap/ }),
+    ).toBeNull()
+    await screen.findByRole('button', { name: 'Open canvas Ideas in Beta' })
+    await act(async () => {
+      release()
+    })
+    expect(
+      screen.queryByRole('button', { name: /Open canvas Roadmap/ }),
+    ).toBeNull()
+    expect(
+      screen.getByRole('button', { name: 'Open canvas Ideas in Beta' }),
+    ).toBeInTheDocument()
+  })
+
+  it('bounds concurrent project reads when a large hierarchy is imported', async () => {
+    const { props, store } = setup()
+    const manyProjects = Array.from({ length: 11 }, (_, index) => ({
+      ...projects[0],
+      id: `project-${index}`,
+      name: `Project ${index}`,
+    }))
+    let active = 0,
+      peak = 0
+    vi.mocked(store.list).mockImplementation(async () => {
+      active++
+      peak = Math.max(peak, active)
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      active--
+      return { value: [], persistence: 'browser' }
+    })
+    render(
+      <HomePage
+        {...props}
+        projects={manyProjects}
+        view={{ ...DEFAULT_HOME_VIEW, display: 'hierarchy' }}
+      />,
+    )
+    await screen.findByRole('checkbox', { name: 'Show canvas files' })
+    expect(store.list).toHaveBeenCalledTimes(11)
+    expect(peak).toBeLessThanOrEqual(4)
+  })
+
   it('shows the current workspace above the library while keeping the selected project heading', async () => {
     const { props } = setup()
     render(
@@ -129,6 +253,10 @@ describe('home project and file library', () => {
     )
     expect(props.onNewProject).toHaveBeenCalledWith('alpha')
     fireEvent.click(screen.getByRole('button', { name: 'New canvas' }))
+    fireEvent.change(screen.getByLabelText('Destination project'), {
+      target: { value: 'alpha' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }))
     expect(props.onNewCanvas).toHaveBeenCalledWith('alpha')
     expect(store.save).not.toHaveBeenCalled()
   })
@@ -223,6 +351,10 @@ describe('home project and file library', () => {
       screen.getByRole('heading', { level: 1, name: 'Alpha' }),
     ).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'New canvas' }))
+    fireEvent.change(screen.getByLabelText('Destination project'), {
+      target: { value: 'alpha' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }))
     expect(props.onNewCanvas).toHaveBeenCalledWith('alpha')
   })
   it('shows cached unsaved names and orphan drafts without overwriting saved records', async () => {
