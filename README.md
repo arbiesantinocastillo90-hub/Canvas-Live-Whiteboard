@@ -2,6 +2,8 @@
 
 **A student-led, AI-assisted whiteboard for visual planning and explicit AI collaboration.**
 
+**Vibe coded with OpenAI Codex.** I guide the ideas, requirements and interaction design, test the app, and refine it with Codex's help.
+
 Canvas Live combines a TypeScript/SVG canvas editor, local project storage, a portable Windows launcher, and a Model Context Protocol (MCP) companion. A person can edit a board normally, share that specific canvas with an external AI client, and review or undo changes in the same editor.
 
 This is a working student project under active development. The local editor and MCP protocol have been exercised together; the owner's current ChatGPT tunnel connection still needs end-to-end acceptance. Real-time multiplayer is future work.
@@ -13,7 +15,7 @@ The screenshot uses the [included sample canvas](examples/portfolio-demo.CLF), w
 ## What you can do
 
 - Organize workspaces, nested projects and canvases, with explicit creation destinations and independent appearance settings.
-- Edit shapes, text, areas and attached relationships. Use group selection, text formatting, snapping, expandable layers, layer dragging and Undo/Redo.
+- Edit shapes, text, areas and attached relationships. Drag either relationship endpoint to another object's side; blank drops keep its previous attachment. Use group selection, text formatting, snapping, expandable layers, layer dragging and Undo/Redo.
 - Add images, GIFs, audio, video, websites and supported documents. Pause or minimize embeds; website interactivity depends on the provider's framing policy.
 - Save and recover local work, import/export validated `.CLF`, `.CLP` and `.CLW` files, and copy exact/latest local workspace links.
 - Share one canvas with an MCP client through 15 bounded tools. Edits use the same validated operations as manual editing.
@@ -62,7 +64,7 @@ Read the [case study](docs/CASE_STUDY.md) for the problem, tradeoffs and lessons
 
 The [timeline](docs/TIMELINE.md) links real commits and retains their timezone offsets. The [roadmap](docs/ROADMAP.md) separates delivered behavior, remaining acceptance work and future scope. Dates describe evidence and commits, not estimated effort or retroactively assigned deadlines.
 
-The October 18 verification record reports **1,041 application tests**, **64 MCP protocol tests**, and **13 isolated browser scenarios**, including a real local MCP read/edit/Undo round trip. Earlier native media and portable-launcher checks are recorded separately; overlapping runs are not added into one total. See [verification details](docs/WORKSPACE_INTERACTIONS_VERIFICATION.md) and [testing instructions](docs/TESTING.md).
+The October 19 endpoint revision passed **1,096 application tests**, **64 MCP protocol tests**, and **21 isolated browser scenarios**. The earlier October 18 interaction record includes a real local MCP read/edit/Undo round trip. Native media and portable-launcher checks are recorded separately; overlapping runs are not added into one total. See [endpoint verification](docs/RELATIONSHIP_ENDPOINTS_VERIFICATION.md), [interaction verification](docs/WORKSPACE_INTERACTIONS_VERIFICATION.md) and [testing instructions](docs/TESTING.md).
 
 ```sh
 npm run check
@@ -73,7 +75,7 @@ GitHub Actions runs source/protocol checks and the build on Linux. Native checks
 
 ## Project ownership and AI assistance
 
-This is a student portfolio project. Product direction, requirements, interaction feedback and acceptance decisions come from the project owner. OpenAI Codex assists with implementation, debugging, tests and documentation. The repository presents AI-assisted engineering work; it does not claim every line was written manually.
+This is a student portfolio project built through vibe coding with OpenAI Codex. Product direction, requirements, interaction feedback and acceptance decisions come from the project owner. Codex assists with implementation, debugging, tests and documentation. The repository presents AI-assisted engineering work; it does not claim every line was written manually.
 
 The portfolio focuses on turning a product idea into testable behavior, inspecting failures, making tradeoffs and maintaining a development record. See [the development process](docs/CASE_STUDY.md#development-process-and-ai-assistance).
 

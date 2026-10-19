@@ -35,6 +35,7 @@ Start with the [overview](../README.md), [sample canvas](../examples/README.md),
 
 Each record describes its own execution. An older report's environment or "next task" is historical context, not the current roadmap. Do not sum overlapping test counts.
 
+- [October 19 relationship endpoint editing](RELATIONSHIP_ENDPOINTS_VERIFICATION.md)
 - [October 18 interactions and MCP activation](WORKSPACE_INTERACTIONS_VERIFICATION.md)
 - [October 18 rich canvas and portable companion](RICH_CANVAS_VERIFICATION.md)
 - [Workspace isolation and saving](WORKSPACE_ISOLATION_VERIFICATION.md)

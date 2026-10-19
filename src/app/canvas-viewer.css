@@ -32,6 +32,14 @@
 .lcanvas-stage[data-dragging='true'] {
   cursor: grabbing;
 }
+.canvas-connection-endpoint {
+  cursor: crosshair;
+  pointer-events: all;
+}
+.canvas-edit-object[data-reconnecting='true'] {
+  opacity: 0;
+  pointer-events: none;
+}
 .lcanvas-stage:focus-visible {
   outline: none;
 }
