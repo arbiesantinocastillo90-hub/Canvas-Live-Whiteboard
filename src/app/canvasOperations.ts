@@ -16,6 +16,7 @@ import {
   type PointerType,
   type EmbedKind,
   SHAPE_TYPES,
+  CONNECTION_SIDES,
   TEXT_FORMAT_KEYS,
 } from './lcanvas'
 
@@ -455,6 +456,50 @@ export function connectElements(
     ...options,
   })
 }
+
+/** Replace one attachment atomically; endpoint drags never persist free coordinates. */
+export function reconnectConnection(
+  document: CanvasDocument,
+  id: string,
+  endpoint: 'start' | 'end',
+  targetId: string,
+  side: ConnectionSide,
+): CanvasDocument {
+  if (
+    (endpoint !== 'start' && endpoint !== 'end') ||
+    !CONNECTION_SIDES.includes(side)
+  )
+    return fail('Choose a valid connection endpoint and attachment side.')
+  const current = source(document)
+  const connection = requireEditable(current, id)
+  if (connection.type !== 'connection')
+    return fail('Choose a connection to reconnect.')
+  const target = requireEditable(current, targetId)
+  const otherId = endpoint === 'start' ? connection.toId : connection.fromId
+  requireEditable(current, otherId)
+  if (target.type === 'connection' || target.type === 'line')
+    return fail('Connect to a shape, text item, area, or embed.')
+  if (targetId === otherId)
+    return fail('A connection must reference two different objects.')
+  const unchanged =
+    endpoint === 'start'
+      ? connection.fromId === targetId && connection.fromSide === side
+      : connection.toId === targetId && connection.toSide === side
+  if (unchanged) return document
+  const reconnected =
+    endpoint === 'start'
+      ? { ...connection, fromId: targetId, fromSide: side }
+      : { ...connection, toId: targetId, toSide: side }
+  return validateCanvasDocument(
+    detachOutsideAreas({
+      ...current,
+      elements: current.elements.map((element) =>
+        element.id === id ? reconnected : element,
+      ),
+    }),
+  )
+}
+
 /** Reverse endpoint ownership without changing the pointer styles selected at either end. */
 export function reverseConnection(
   document: CanvasDocument,

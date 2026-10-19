@@ -21,6 +21,8 @@ import {
   type CanvasViewport,
   type ConnectionSide,
   type ConnectionStyle,
+  type ConnectionElement,
+  connectionEndpoints,
   type ShapeType,
   type EmbedKind,
   type EmbedElement,
@@ -31,6 +33,7 @@ import {
   createElement,
   isElementEditable,
   orderedVisibleElements,
+  reconnectConnection,
   updateElement,
 } from './canvasOperations'
 import {
@@ -188,7 +191,7 @@ function intersectsAreaBorder(area: Box, selection: Box) {
 type PointerSample = Point & { shiftKey: boolean; altKey: boolean }
 type InlineEdit = { id: string; value: string; original: string }
 type Gesture = {
-  kind: 'pan' | 'move' | 'resize' | 'marquee' | 'connect'
+  kind: 'pan' | 'move' | 'resize' | 'marquee' | 'connect' | 'reconnect'
   pointerId: number
   x: number
   y: number
@@ -201,6 +204,19 @@ type Gesture = {
   copyDocument?: CanvasDocument
   copyIds?: string[]
   fromSide?: ConnectionSide
+  endpoint?: 'start' | 'end'
+  reconnectTarget?: {
+    id: string
+    side: ConnectionSide
+    document: CanvasDocument
+  }
+}
+
+type ReconnectionPreview = {
+  document: CanvasDocument
+  element: ConnectionElement
+  target: { id: string; side: ConnectionSide; point: Point } | null
+  floatingId?: string
 }
 
 const resizeHandles: {
@@ -487,6 +503,8 @@ export default function CanvasEditor({
     from: Point
     to: Point
   } | null>(null)
+  const [reconnectionPreview, setReconnectionPreview] =
+    useState<ReconnectionPreview | null>(null)
   const quickPanelRef = useRef<HTMLDivElement>(null)
   const [inlineEdit, setInlineEdit] = useState<InlineEdit | null>(null)
   const inlineEditRef = useRef<InlineEdit | null>(null)
@@ -579,6 +597,20 @@ export default function CanvasEditor({
           !(element.type === 'embed' && element.minimized) &&
           isElementEditable(board, element.id),
       )
+  const selectedConnection =
+    visibleSelection.length === 1 &&
+    selected?.type === 'connection' &&
+    isElementEditable(board, selected.id) &&
+    isElementEditable(board, selected.fromId) &&
+    isElementEditable(board, selected.toId)
+      ? selected
+      : null
+  const selectedEndpoints = selectedConnection
+    ? connectionEndpoints(
+        reconnectionPreview?.document ?? board,
+        reconnectionPreview?.element ?? selectedConnection,
+      )
+    : null
   function setSelectedId(id: string | null) {
     propertyFlusher.current?.()
     setSelectedIds(id ? [id] : [])
@@ -1032,6 +1064,150 @@ export default function CanvasEditor({
     setConnectionPreview({ from: point, to: point })
   }
 
+  function reconnectPreviewAt(active: Gesture, sample: Point) {
+    const original = active.history.present
+    const connection = original.elements.find(
+      (element) => element.id === active.ids[0],
+    )
+    const rect = stage.current?.getBoundingClientRect()
+    if (!rect || connection?.type !== 'connection' || !active.endpoint)
+      return null
+    if (Math.hypot(sample.x - active.x, sample.y - active.y) < 3) {
+      active.reconnectTarget = undefined
+      return { document: original, element: connection, target: null }
+    }
+    const point = {
+      x: (sample.x - rect.left - original.viewport.x) / original.viewport.zoom,
+      y: (sample.y - rect.top - original.viewport.y) / original.viewport.zoom,
+    }
+    const otherId =
+      active.endpoint === 'start' ? connection.toId : connection.fromId
+    const tolerance = 12 / original.viewport.zoom
+    const target = orderedVisibleElements(original)
+      .toReversed()
+      .find((element) => {
+        if (
+          element.id === otherId ||
+          element.type === 'connection' ||
+          element.type === 'line' ||
+          !isElementEditable(original, element.id)
+        )
+          return false
+        const box = elementBounds(original, element)
+        const within =
+          point.x >= box.x - tolerance &&
+          point.x <= box.x + box.width + tolerance &&
+          point.y >= box.y - tolerance &&
+          point.y <= box.y + box.height + tolerance
+        if (!within || element.type !== 'area') return within
+        return (
+          Math.min(
+            Math.abs(point.x - box.x),
+            Math.abs(point.x - box.x - box.width),
+            Math.abs(point.y - box.y),
+            Math.abs(point.y - box.y - box.height),
+          ) <= tolerance
+        )
+      })
+    if (target) {
+      const side = nearestSide(elementBounds(original, target), point)
+      try {
+        if (
+          active.reconnectTarget?.id !== target.id ||
+          active.reconnectTarget.side !== side
+        )
+          active.reconnectTarget = {
+            id: target.id,
+            side,
+            document: reconnectConnection(
+              original,
+              connection.id,
+              active.endpoint,
+              target.id,
+              side,
+            ),
+          }
+        const next = active.reconnectTarget.document
+        const element = next.elements.find(
+          (item) => item.id === connection.id,
+        ) as ConnectionElement
+        const ends = connectionEndpoints(next, element)
+        return {
+          document: next,
+          element,
+          target: {
+            id: target.id,
+            side,
+            point:
+              active.endpoint === 'start'
+                ? { x: ends.x1, y: ends.y1 }
+                : { x: ends.x2, y: ends.y2 },
+          },
+        }
+      } catch {
+        // An invalid target is only a temporary visual preview, never an edit.
+      }
+    }
+    active.reconnectTarget = undefined
+    // A tiny virtual node gives the existing path/pointer renderer a floating
+    // endpoint. It exists only in this visual value, never in editor history,
+    // the controller snapshot, imports, exports or persisted documents.
+    const pointId = `${prefix}-floating-endpoint`
+    const floating: CanvasElement = {
+      id: pointId,
+      type: 'rectangle',
+      x: point.x - 0.001,
+      y: point.y - 0.001,
+      width: 0.002,
+      height: 0.002,
+      color: connection.color,
+      fill: null,
+      text: '',
+      fontSize: 8,
+      layerId: connection.layerId,
+      areaId: null,
+    }
+    const element =
+      active.endpoint === 'start'
+        ? { ...connection, fromId: pointId }
+        : { ...connection, toId: pointId }
+    return {
+      document: { ...original, elements: [...original.elements, floating] },
+      element,
+      target: null,
+      floatingId: pointId,
+    }
+  }
+
+  function beginReconnect(event: PointerEvent, endpoint: 'start' | 'end') {
+    if (event.button !== 0 || !selectedConnection) return
+    event.stopPropagation()
+    beginGesture(event, 'reconnect', [selectedConnection.id])
+    if (!gesture.current) return
+    gesture.current.endpoint = endpoint
+    setReconnectionPreview(
+      reconnectPreviewAt(gesture.current, {
+        x: event.clientX,
+        y: event.clientY,
+      }),
+    )
+  }
+
+  function cancelReconnectGesture() {
+    const current = gesture.current
+    if (current?.kind !== 'reconnect') return
+    gesture.current = null
+    pointerSample.current = null
+    if (pointerFrame.current !== null)
+      cancelAnimationFrame(pointerFrame.current)
+    pointerFrame.current = null
+    setReconnectionPreview(null)
+    setDragging(false)
+    setGestureKind('')
+    if (stage.current?.hasPointerCapture?.(current.pointerId))
+      stage.current.releasePointerCapture(current.pointerId)
+  }
+
   const quickPanelOpen = quickPanel !== null
   useEffect(() => {
     if (!quickPanelOpen) return
@@ -1204,6 +1380,10 @@ export default function CanvasEditor({
                 original.viewport.zoom,
             },
           })
+        return
+      }
+      if (active.kind === 'reconnect') {
+        setReconnectionPreview(reconnectPreviewAt(active, sample))
         return
       }
       if (active.kind === 'marquee') {
@@ -1400,6 +1580,32 @@ export default function CanvasEditor({
     setMarquee(null)
     setSnapGuides([])
     setConnectionPreview(null)
+    setReconnectionPreview(null)
+    if (active.kind === 'reconnect') {
+      if (!cancelled && activeRef.current && event.type === 'pointerup')
+        safely(() => {
+          const preview = reconnectPreviewAt(active, {
+            x: event.clientX,
+            y: event.clientY,
+          })
+          if (!preview?.target) return
+          // Revalidate against the committed board at release. Preview state
+          // never replaces the current document or becomes its own Undo step.
+          const next = reconnectConnection(
+            currentHistory.current.present,
+            active.ids[0],
+            active.endpoint!,
+            preview.target.id,
+            preview.target.side,
+          )
+          showHistory(commitEditorHistory(active.history, next))
+        })
+      setDragging(false)
+      setGestureKind('')
+      if (stage.current?.hasPointerCapture?.(event.pointerId))
+        stage.current.releasePointerCapture(event.pointerId)
+      return
+    }
     if (active.kind === 'connect') {
       if (!cancelled && event.type === 'pointerup')
         safely(() => {
@@ -1484,6 +1690,7 @@ export default function CanvasEditor({
       setMarquee(null)
       setSnapGuides([])
       setConnectionPreview(null)
+      setReconnectionPreview(null)
       setDragging(false)
       setGestureKind('')
       if (stage.current?.hasPointerCapture?.(current.pointerId))
@@ -1635,6 +1842,7 @@ export default function CanvasEditor({
     function release() {
       temporaryPan.current = false
       setSpaceHeld(false)
+      cancelReconnectGesture()
     }
     window.addEventListener('keyup', releaseSpace)
     window.addEventListener('blur', release)
@@ -1659,6 +1867,8 @@ export default function CanvasEditor({
       setDragging(false)
       setGestureKind('')
       setMarquee(null)
+      setConnectionPreview(null)
+      setReconnectionPreview(null)
     }
     flushWheel()
   })
@@ -1714,6 +1924,8 @@ export default function CanvasEditor({
 
   useEffect(
     () => () => {
+      gesture.current = null
+      pointerSample.current = null
       if (pointerFrame.current !== null)
         cancelAnimationFrame(pointerFrame.current)
       if (wheelFrame.current !== null) cancelAnimationFrame(wheelFrame.current)
@@ -2501,7 +2713,18 @@ export default function CanvasEditor({
     </div>
   )
   const hasDeck = Boolean(deckGeometry)
-  const backdropElements = board.elements
+  const backdropElements = useMemo(
+    () =>
+      reconnectionPreview
+        ? reconnectionPreview.document.elements.map((element) =>
+            element.id === reconnectionPreview.element.id
+              ? reconnectionPreview.element
+              : element,
+          )
+        : board.elements,
+    [board.elements, reconnectionPreview],
+  )
+  const floatingBackdropId = reconnectionPreview?.floatingId
   const backdropLayers = board.layers
   const editingId = inlineEdit?.id
   const { autoGrowShapes, fitTextToShape, minTextSize } = textOptions
@@ -2518,20 +2741,23 @@ export default function CanvasEditor({
       elements: backdropElements,
     }
     const options = { autoGrowShapes, fitTextToShape, minTextSize }
-    return orderedVisibleElements(document).map((element, index) => (
-      <EditorObject
-        key={element.id}
-        document={document}
-        element={element}
-        prefix={`${prefix}-backdrop-${index}`}
-        editing={editingId === element.id}
-        textOptions={options}
-      />
-    ))
+    return orderedVisibleElements(document)
+      .filter((element) => element.id !== floatingBackdropId)
+      .map((element, index) => (
+        <EditorObject
+          key={element.id}
+          document={document}
+          element={element}
+          prefix={`${prefix}-backdrop-${index}`}
+          editing={editingId === element.id}
+          textOptions={options}
+        />
+      ))
   }, [
     hasDeck,
     backdropElements,
     backdropLayers,
+    floatingBackdropId,
     editingId,
     prefix,
     autoGrowShapes,
@@ -2754,6 +2980,7 @@ export default function CanvasEditor({
             ) {
               temporaryPan.current = false
               setSpaceHeld(false)
+              cancelReconnectGesture()
             }
           }}
         >
@@ -2776,6 +3003,10 @@ export default function CanvasEditor({
                     data-area-id={element.areaId ?? ''}
                     data-editable={isElementEditable(board, element.id)}
                     data-selected={selectedIds.includes(element.id)}
+                    data-reconnecting={
+                      gestureKind === 'reconnect' &&
+                      element.id === selectedConnection?.id
+                    }
                     className="canvas-edit-object"
                     onPointerDown={(event) => beginObject(event, element)}
                     onContextMenu={(event) => openQuick(event, element.id)}
@@ -2878,20 +3109,22 @@ export default function CanvasEditor({
                 })}
               {selected && selectedVisible && selectedBounds && (
                 <g className="canvas-selection">
-                  <rect
-                    x={selectedBounds.x - 4 / view.zoom}
-                    y={selectedBounds.y - 4 / view.zoom}
-                    width={selectedBounds.width + 8 / view.zoom}
-                    height={selectedBounds.height + 8 / view.zoom}
-                    fill="none"
-                    stroke={selectionColor(controls.selectionStroke)}
-                    strokeWidth={controls.selectionStrokeWidth}
-                    strokeDasharray={
-                      controls.selectionDashed ? '5 4' : undefined
-                    }
-                    vectorEffect="non-scaling-stroke"
-                    pointerEvents="none"
-                  />
+                  {gestureKind !== 'reconnect' && (
+                    <rect
+                      x={selectedBounds.x - 4 / view.zoom}
+                      y={selectedBounds.y - 4 / view.zoom}
+                      width={selectedBounds.width + 8 / view.zoom}
+                      height={selectedBounds.height + 8 / view.zoom}
+                      fill="none"
+                      stroke={selectionColor(controls.selectionStroke)}
+                      strokeWidth={controls.selectionStrokeWidth}
+                      strokeDasharray={
+                        controls.selectionDashed ? '5 4' : undefined
+                      }
+                      vectorEffect="non-scaling-stroke"
+                      pointerEvents="none"
+                    />
+                  )}
                   {canTransformSelection &&
                     !inlineEdit &&
                     resizeHandles.map((handle) => (
@@ -2981,6 +3214,67 @@ export default function CanvasEditor({
                         )
                       },
                     )}
+                  {selectedConnection &&
+                    selectedEndpoints &&
+                    !inlineEdit &&
+                    (['start', 'end'] as const).map((endpoint) => (
+                      <circle
+                        key={endpoint}
+                        className="canvas-connection-endpoint"
+                        role="button"
+                        aria-label={`Reconnect relationship ${endpoint}`}
+                        data-connection-endpoint={endpoint}
+                        cx={
+                          endpoint === 'start'
+                            ? selectedEndpoints.x1
+                            : selectedEndpoints.x2
+                        }
+                        cy={
+                          endpoint === 'start'
+                            ? selectedEndpoints.y1
+                            : selectedEndpoints.y2
+                        }
+                        r={7 / view.zoom}
+                        fill="var(--panel)"
+                        stroke="var(--accent)"
+                        strokeWidth="2"
+                        vectorEffect="non-scaling-stroke"
+                        onPointerDown={(event) =>
+                          beginReconnect(event, endpoint)
+                        }
+                      >
+                        <title>{`Drag the ${endpoint} to an object side to reconnect · Escape cancels`}</title>
+                      </circle>
+                    ))}
+                </g>
+              )}
+              {reconnectionPreview && (
+                <g
+                  className="canvas-reconnection-preview"
+                  data-testid="relationship-endpoint-preview"
+                  aria-hidden="true"
+                  pointerEvents="none"
+                >
+                  <ConnectionDrawing
+                    document={reconnectionPreview.document}
+                    element={reconnectionPreview.element}
+                    prefix={`${prefix}-reconnection`}
+                    hitTarget={false}
+                  />
+                  {reconnectionPreview.target && (
+                    <circle
+                      data-testid="relationship-endpoint-target"
+                      data-target-id={reconnectionPreview.target.id}
+                      data-target-side={reconnectionPreview.target.side}
+                      cx={reconnectionPreview.target.point.x}
+                      cy={reconnectionPreview.target.point.y}
+                      r={11 / view.zoom}
+                      fill="none"
+                      stroke="var(--accent)"
+                      strokeWidth="3"
+                      vectorEffect="non-scaling-stroke"
+                    />
+                  )}
                 </g>
               )}
               {connectionPreview && (
