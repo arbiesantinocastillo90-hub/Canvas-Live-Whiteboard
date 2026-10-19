@@ -44,7 +44,7 @@ Sharing grants access to one canvas. Switching files or stopping sharing revokes
 
 Verification combines operation/schema tests, UI component tests, real SDK protocol tests, native Windows checks and isolated Chrome scenarios. Browser checks inspect rendered output and gestures; component tests alone do not establish visual correctness.
 
-The October 18 interaction record reports 1,041 application tests, 64 MCP tests and 13 browser scenarios. These are dated executions, not a coverage percentage or a production-readiness claim. Additional native runs overlap with earlier app suites and are listed separately in [testing](TESTING.md).
+The October 19 [relationship endpoint revision](RELATIONSHIP_ENDPOINTS_VERIFICATION.md) passed 1,096 application tests, 64 MCP tests and 21 browser scenarios. The October 18 interaction record retains its earlier results, including a local MCP read/edit/Undo workflow. These are dated executions, not a coverage percentage or a production-readiness claim. Additional native runs overlap with earlier app suites and are listed separately in [testing](TESTING.md).
 
 The current owner's ChatGPT workflow awaits tunnel runtime-key setup and a successful call through that account. Another physical PC, school restrictions, large-board performance and broader assistive-technology behavior remain open.
 

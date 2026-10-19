@@ -1,6 +1,6 @@
 # Canvas editing
 
-Current controls as of October 18, 2026. Canvas Live uses its own SVG editor. It works without an AI connection; optional MCP edits use the same validated operations and content history.
+Current controls as of October 19, 2026. Canvas Live uses its own SVG editor. It works without an AI connection; optional MCP edits use the same validated operations and content history.
 
 ## Create, select and edit
 
@@ -30,6 +30,10 @@ The former **Containing area** property selector has been removed. Existing supp
 
 Drag a side connection handle onto the intended side of another object, or use **Connect objects** and select its source and target. Connections reference stable object IDs, so moving nodes updates their endpoints. Properties can set each endpoint to Top, Right, Bottom, Left or Auto. Fixed sides remain attached to their selected side; Auto follows geometry.
 
+To change an existing relationship, select it to reveal a circular handle at each end. Drag either handle toward another editable shape, text item or embed. The preview highlights the nearest Top, Right, Bottom or Left attachment; release to move that end there. You can also move an end to another side of its current object. For an area, target its border rather than its interior.
+
+A successful drop changes only that end and its side, preserving the other attachment and the relationship's appearance. One Undo restores the previous attachment. Releasing over empty space, a hidden or locked target, or the opposite endpoint's object keeps the previous attachment. Escape, interrupted pointer capture or leaving Work cancels the preview. Clicking a handle without dragging creates no edit, including for an Auto attachment. The floating preview is temporary; it does not create a free endpoint in the saved file.
+
 Right-click a relationship for quick properties and reversal. Paths include straight, elbow, curve and step. Line styles include solid, dashed and dotted. Start and end pointers can independently use none, filled arrow, open arrow, circle, diamond or bar. Reverse swaps endpoints and their attached sides while retaining configured pointer styles. Deleting a node also removes its attached connections.
 
 ## Media and embedded content
@@ -54,4 +58,4 @@ Home and Options retain the mounted editor and history while disabling commands 
 
 LCANVAS v2 is the current document payload. Supported v1 files migrate in memory, preserving geometry and camera; Save/export writes v2. Unknown versions or unsupported fields are rejected. Each document is bounded to 10 MiB, 5,000 objects and 100 layers. The native library rejects stale record revisions; it does not automatically merge concurrent canvas edits or provide real-time multiplayer.
 
-For verification tied to a dated build, see [Rich canvas verification](RICH_CANVAS_VERIFICATION.md) and [Workspace interaction verification](WORKSPACE_INTERACTIONS_VERIFICATION.md). The earlier [editor verification](EDITOR_VERIFICATION.md) describes the October 10 milestone and its narrower feature set. External ChatGPT account connectivity remains a separate acceptance step; see [ChatGPT setup](CHATGPT_MCP.md).
+For verification tied to a dated build, see [Relationship endpoint verification](RELATIONSHIP_ENDPOINTS_VERIFICATION.md), [Rich canvas verification](RICH_CANVAS_VERIFICATION.md) and [Workspace interaction verification](WORKSPACE_INTERACTIONS_VERIFICATION.md). The earlier [editor verification](EDITOR_VERIFICATION.md) describes the October 10 milestone and its narrower feature set. External ChatGPT account connectivity remains a separate acceptance step; see [ChatGPT setup](CHATGPT_MCP.md).

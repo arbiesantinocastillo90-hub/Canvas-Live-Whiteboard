@@ -36,7 +36,9 @@ Windows checks create disposable packages and manage their own processes. Read t
 
 ## Latest dated evidence
 
-The October 18 interaction revision records:
+The October 19 relationship endpoint revision passed 1,096 application tests across 181 suites, 64 MCP tests, types, lint, formatting, the production build and documentation/demo validation. Its 21 isolated production-browser scenarios cover both endpoint handles and all four sides, cancellation, protected targets, camera coordinates, Undo/Redo and saved-file reopening. See [endpoint verification](RELATIONSHIP_ENDPOINTS_VERIFICATION.md) for the actual build identity and installation checks.
+
+The earlier October 18 interaction revision records:
 
 | Execution                        | Result                              | Boundary                                                                               |
 | -------------------------------- | ----------------------------------- | -------------------------------------------------------------------------------------- |

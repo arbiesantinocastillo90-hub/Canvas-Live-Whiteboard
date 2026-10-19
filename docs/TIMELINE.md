@@ -30,6 +30,8 @@ The initial commit records **October 9, 2026 at 10:46:41 +08:00**, which is **Oc
 
 The October 18 implementation commit includes work prepared and checked before it was committed. Its commit date is October 18; the earlier checks do not imply an earlier GitHub publication date. A commit or merged pull request is also distinct from a tagged binary release.
 
+On October 19, commit [`4dc0b2e`](https://github.com/arbiesantinocastillo90-hub/Canvas-Live-Whiteboard/commit/4dc0b2e) added draggable relationship endpoints, nearest-side attachment and cancellation that retains the previous attachment. Its author and committer timestamps both record `2026-10-19T04:10:15-05:00`. See [the endpoint verification record](RELATIONSHIP_ENDPOINTS_VERIFICATION.md).
+
 ## Request dates and integration dates
 
 Some older documents identify when work was requested rather than when it was committed. The Home/local-file scope began October 12 and was delivered in the October 13 commit. The scoped Bugs, Errors & Revision work began October 14 and was committed October 15. Those dates describe different events and should not be substituted for one another.
@@ -43,7 +45,7 @@ The original GitHub integration records are preserved:
 | 2026-10-11         | [Pull request #3](https://github.com/arbiesantinocastillo90-hub/Canvas-Live-Whiteboard/pull/3), merge [`a14133e`](https://github.com/arbiesantinocastillo90-hub/Canvas-Live-Whiteboard/commit/a14133e).                                                                    |
 | 2026-10-13         | [Pull request #4](https://github.com/arbiesantinocastillo90-hub/Canvas-Live-Whiteboard/pull/4), merge [`f700f7d`](https://github.com/arbiesantinocastillo90-hub/Canvas-Live-Whiteboard/commit/f700f7d).                                                                    |
 
-The portfolio branch brought the later implementation history together with that main-branch history in merge [`3dc3b6b`](https://github.com/arbiesantinocastillo90-hub/Canvas-Live-Whiteboard/commit/3dc3b6b) on October 18. The original implementation commit IDs and dates remain intact.
+The portfolio branch brought the later implementation history together with that main-branch history in merge [`3dc3b6b`](https://github.com/arbiesantinocastillo90-hub/Canvas-Live-Whiteboard/commit/3dc3b6b) on October 18. [Pull request #5](https://github.com/arbiesantinocastillo90-hub/Canvas-Live-Whiteboard/pull/5) published the verified app and portfolio documentation to `main` in merge [`e0e4607`](https://github.com/arbiesantinocastillo90-hub/Canvas-Live-Whiteboard/commit/e0e4607). That merge records `2026-10-19T04:35:59+08:00`, equivalent to October 18 at 15:35:59 in America/Chicago. The original implementation commit IDs and dates remain intact.
 
 ## Verification checkpoints
 
@@ -60,6 +62,8 @@ These are documented runs for specific builds, rather than cumulative totals. Fo
 | 2026-10-17   | Workspace isolation: 898 application tests, 63 MCP tests, 55 native checks and 23 browser scenarios.                                   | [Workspace isolation verification](WORKSPACE_ISOLATION_VERIFICATION.md)                                                    |
 | 2026-10-18   | Rich update: 982 application tests, 64 MCP tests, 53 native media checks, 24 portable launcher checks and 20 browser scenarios.        | [Rich-canvas verification](RICH_CANVAS_VERIFICATION.md)                                                                    |
 | 2026-10-18   | Interaction update: 1,041 application tests, 64 MCP tests and 13 browser scenarios; installed-service checks are recorded separately.  | [Workspace interaction verification](WORKSPACE_INTERACTIONS_VERIFICATION.md)                                               |
+
+The October 19 [endpoint revision](RELATIONSHIP_ENDPOINTS_VERIFICATION.md) passed 1,096 application tests across 181 suites, 64 MCP tests and 21 isolated browser scenarios. These are separate dated runs; the focused endpoint tests are included in the full app suite.
 
 ## Acceptance still outstanding
 
