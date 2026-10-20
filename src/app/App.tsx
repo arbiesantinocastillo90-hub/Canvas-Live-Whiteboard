@@ -1,4 +1,21 @@
 import { createWorkspaceCanvasStore } from './canvasStoreScope'
+import WorkspaceItemActions, {
+  type WorkspaceActionItem,
+} from './WorkspaceItemActions'
+import {
+  addToWorkspaceTrash,
+  changeProjectMembership,
+  copyCanvasForMove,
+  createWorkspaceTrashStore,
+  emptyWorkspaceTrash,
+  isFileInTrash,
+  moveWorkspaceProject,
+  removeFromWorkspaceTrash,
+  requireWorkspaceActionItem,
+  visibleProjectTree,
+  type WorkspaceTrash,
+  type WorkspaceTrashItem,
+} from './workspaceTrash'
 import {
   initializeWorkspaceContents,
   workspaceProjects,
@@ -345,6 +362,27 @@ function WorkspaceApp({
     (item) => item.id === sessions.activeId,
   )!
   const sessionStateRef = useRef(sessions)
+  const [trashStore] = useState(() => {
+    let storage: Storage | null = null
+    try {
+      storage = localStorage
+    } catch {
+      /* Native storage remains available. */
+    }
+    return createWorkspaceTrashStore(
+      restored ? null : localLibrary,
+      restored ? null : storage,
+    )
+  })
+  const [workspaceTrash, setWorkspaceTrash] = useState<
+    Record<string, WorkspaceTrash>
+  >({})
+  const trashRef = useRef(workspaceTrash)
+  const [itemAction, setItemAction] = useState<{
+    workspaceId: string
+    item: WorkspaceActionItem | null
+  } | null>(null)
+  const [itemMutation, setItemMutation] = useState(0)
   const workspaceStateRef = useRef(workspace)
   const projectStateRef = useRef(workspace.projects)
   sessionStateRef.current = sessions
@@ -376,6 +414,11 @@ function WorkspaceApp({
         )?.filePresentations
         return values && Object.hasOwn(values, id) ? values[id] : undefined
       },
+      (id) =>
+        !isFileInTrash(
+          trashRef.current[scopeKey] ?? emptyWorkspaceTrash(scopeKey),
+          id,
+        ),
     )
     scopedStores.current.set(scopeKey, created)
     return created
@@ -430,6 +473,303 @@ function WorkspaceApp({
     },
     [notify],
   )
+  function rememberTrash(value: WorkspaceTrash) {
+    const next = { ...trashRef.current, [value.workspaceId]: value }
+    trashRef.current = next
+    setWorkspaceTrash(next)
+  }
+  useEffect(() => {
+    if (restored) return
+    let active = true
+    let reading = false
+    const refresh = () => {
+      if (reading) return
+      reading = true
+      void trashStore
+        .load(savedWorkspace.id)
+        .then((value) => {
+          if (!active) return
+          const changed =
+            JSON.stringify(trashRef.current[savedWorkspace.id]?.items ?? []) !==
+            JSON.stringify(value.items)
+          if (changed) {
+            rememberTrash(value)
+            setItemMutation((value) => value + 1)
+          }
+        })
+        .catch(reportSaveFailure)
+        .finally(() => {
+          reading = false
+        })
+    }
+    refresh()
+    const timer = window.setInterval(refresh, 1800)
+    return () => {
+      active = false
+      window.clearInterval(timer)
+    }
+  }, [savedWorkspace.id, restored, trashStore, reportSaveFailure])
+  async function commitItemSessions(
+    change: (state: WorkspaceSessions) => WorkspaceSessions,
+  ) {
+    const before = sessionStateRef.current
+    const proposed = change(before)
+    if (!restored && localLibrary.available)
+      await syncSessionChanges(before, proposed)
+    const next = change(sessionStateRef.current)
+    const persisted = restored || persistWorkspaceSessions(next)
+    if (!persisted && !localLibrary.available)
+      throw new Error(
+        'Workspace changes could not be saved. The original references were retained.',
+      )
+    sessionStateRef.current = next
+    setSessions(next)
+    setSessionStorageError(!persisted)
+  }
+  function requireCurrentItem(item: WorkspaceActionItem) {
+    if (
+      !itemAction ||
+      itemAction.workspaceId !== sessionStateRef.current.activeId
+    )
+      throw new Error(
+        'The current workspace changed. Close this dialog and choose the item again.',
+      )
+    requireWorkspaceActionItem(
+      sessionStateRef.current,
+      projectStateRef.current,
+      itemAction.workspaceId,
+      item,
+    )
+    if (
+      item.kind === 'file' &&
+      isFileInTrash(
+        trashRef.current[itemAction.workspaceId] ??
+          emptyWorkspaceTrash(itemAction.workspaceId),
+        item.id,
+      )
+    )
+      throw new Error('This canvas is already in Trash. Restore it first.')
+    return itemAction.workspaceId
+  }
+  async function requireCleanItem(item: WorkspaceActionItem) {
+    const workspaceId = requireCurrentItem(item)
+    const ids =
+      item.kind === 'project'
+        ? visibleProjectTree(
+            sessionStateRef.current,
+            projectStateRef.current,
+            workspaceId,
+            item.id,
+          )
+        : [item.projectId]
+    const pending = ids
+      .flatMap((id) => projectDrafts(fileStore).get(id) ?? [])
+      .some(
+        (draft) =>
+          draft.dirty &&
+          (item.kind === 'project' || draft.record.id === item.id),
+      )
+    if (pending)
+      throw new Error(
+        'Save the open edits before moving this item to another location or Trash. Export a backup if saving is unavailable.',
+      )
+    for (const current of prepareProjectExport.current?.() ?? []) {
+      if (
+        !ids.includes(current.projectId) ||
+        (item.kind === 'file' && current.id !== item.id)
+      )
+        continue
+      const saved = (await fileStore.get(current.projectId, current.id)).value
+      if (
+        !saved ||
+        JSON.stringify({ ...saved.document, viewport: undefined }) !==
+          JSON.stringify({ ...current.document, viewport: undefined })
+      )
+        throw new Error(
+          'Save the open edits before moving this item to another location or Trash. Export a backup if saving is unavailable.',
+        )
+    }
+    requireCurrentItem(item)
+    return workspaceId
+  }
+  async function trashItem(item: WorkspaceActionItem) {
+    const workspaceId = await requireCleanItem(item)
+    const reference: WorkspaceTrashItem = {
+      ...item,
+      removedAt: Date.now(),
+      ...(item.kind === 'project'
+        ? {
+            projectIds: visibleProjectTree(
+              sessionStateRef.current,
+              projectStateRef.current,
+              workspaceId,
+              item.id,
+            ),
+          }
+        : {}),
+    }
+    rememberTrash(
+      await trashStore.update(workspaceId, (trash) =>
+        addToWorkspaceTrash(trash, reference),
+      ),
+    )
+    if (item.kind === 'project')
+      await commitItemSessions((state) =>
+        changeProjectMembership(
+          state,
+          workspaceId,
+          reference.projectIds!,
+          false,
+        ),
+      )
+    setItemMutation((value) => value + 1)
+    notify(
+      `${item.name} moved to this workspace’s Trash. Saved contents were retained.`,
+      'success',
+    )
+  }
+  async function moveItem(
+    item: WorkspaceActionItem,
+    destinationId: string,
+    destinationProjectId: string | null,
+  ) {
+    const workspaceId = await requireCleanItem(item)
+    if (item.kind === 'project') {
+      const ids = visibleProjectTree(
+        sessionStateRef.current,
+        projectStateRef.current,
+        workspaceId,
+        item.id,
+      )
+      // Validate the complete move before writing its recovery reference.
+      moveWorkspaceProject(
+        sessionStateRef.current,
+        projectStateRef.current,
+        workspaceId,
+        destinationId,
+        item.id,
+      )
+      rememberTrash(
+        await trashStore.update(workspaceId, (trash) =>
+          addToWorkspaceTrash(trash, {
+            ...item,
+            projectIds: ids,
+            removedAt: Date.now(),
+          }),
+        ),
+      )
+      await commitItemSessions((state) =>
+        moveWorkspaceProject(
+          state,
+          projectStateRef.current,
+          workspaceId,
+          destinationId,
+          item.id,
+        ),
+      )
+      notify(
+        `${item.name} moved. Its project tree remains recoverable from the source workspace’s Trash.`,
+        'success',
+      )
+    } else {
+      if (!destinationProjectId)
+        throw new Error('Choose a destination project.')
+      const result = await copyCanvasForMove({
+        store: baseFileStore,
+        sessions: sessionStateRef.current,
+        projects: projectStateRef.current,
+        sourceWorkspaceId: workspaceId,
+        destinationWorkspaceId: destinationId,
+        destinationProjectId,
+        projectId: item.projectId,
+        fileId: item.id,
+      })
+      try {
+        requireCurrentItem(item)
+        const targetTrash = await trashStore.load(destinationId)
+        if (isFileInTrash(targetTrash, result.record.id))
+          rememberTrash(
+            await trashStore.update(destinationId, (trash) =>
+              removeFromWorkspaceTrash(trash, {
+                ...item,
+                id: result.record.id,
+                projectId: destinationProjectId,
+                removedAt: 0,
+              }),
+            ),
+          )
+        requireCurrentItem(item)
+        rememberTrash(
+          await trashStore.update(workspaceId, (trash) =>
+            addToWorkspaceTrash(trash, { ...item, removedAt: Date.now() }),
+          ),
+        )
+      } catch (failure) {
+        throw new Error(
+          `The destination canvas is available, but the original could not be moved to Trash. Both copies were retained. ${failure instanceof Error ? failure.message : ''}`,
+        )
+      }
+      notify(
+        result.existing
+          ? 'The destination already shares this project; its existing canvas was retained. The source reference is recoverable in Trash.'
+          : 'Canvas saved in its destination. The original remains recoverable in this workspace’s Trash.',
+        'success',
+      )
+    }
+    setItemMutation((value) => value + 1)
+    window.dispatchEvent(new Event('canvas-live-library-updated'))
+  }
+  async function restoreItem(item: WorkspaceTrashItem) {
+    if (
+      !itemAction ||
+      itemAction.workspaceId !== sessionStateRef.current.activeId
+    )
+      throw new Error(
+        'The current workspace changed. Close this dialog and open Trash again.',
+      )
+    const workspaceId = itemAction!.workspaceId
+    if (
+      !trashRef.current[workspaceId]?.items.some(
+        (current) => current.kind === item.kind && current.id === item.id,
+      )
+    )
+      throw new Error(
+        'This item is no longer in Trash. Reopen Trash to refresh it.',
+      )
+    if (item.kind === 'project') {
+      if (
+        !item.projectIds?.every((id) =>
+          projectStateRef.current.some((project) => project.id === id),
+        )
+      )
+        throw new Error(
+          'A saved project is unavailable. Reconnect its library before restoring.',
+        )
+      await commitItemSessions((state) =>
+        changeProjectMembership(state, workspaceId, item.projectIds!, true),
+      )
+    } else {
+      const source = sessionStateRef.current.items.find(
+        (workspace) => workspace.id === workspaceId,
+      )
+      if (!source?.projectIds?.includes(item.projectId))
+        throw new Error(
+          'Restore this canvas’s project first, then restore the canvas.',
+        )
+      if (!(await baseFileStore.get(item.projectId, item.id)).value)
+        throw new Error(
+          'The saved canvas is unavailable. Reconnect its library before restoring.',
+        )
+    }
+    rememberTrash(
+      await trashStore.update(workspaceId, (trash) =>
+        removeFromWorkspaceTrash(trash, item),
+      ),
+    )
+    setItemMutation((value) => value + 1)
+    notify(`${item.name} restored.`, 'success')
+    window.dispatchEvent(new Event('canvas-live-library-updated'))
+  }
   const projects = workspaceProjects(savedWorkspace, workspace.projects)
   const activeProject = projects.find(
     (project) => project.id === workspace.lastProjectId,
@@ -558,6 +898,7 @@ function WorkspaceApp({
     workspaceStateRef.current = updated
     setWorkspace(updated)
     setCustomization(null)
+    setItemAction(null)
     setPrompt(null)
     setLayout(saved.layout)
     setHomeProjectId(projectId)
@@ -1017,7 +1358,8 @@ function WorkspaceApp({
     }
   }
   function navigate(next: Section) {
-    if (next === 'work') void resumeLatestModified()
+    if (next === 'work' && !(workspaceStarted && activeProject))
+      void resumeLatestModified()
     else setSection(next)
     setSearch('')
   }
@@ -1422,7 +1764,23 @@ function WorkspaceApp({
           )}
           {(section === 'home' || section === 'projects') && (
             <HomePage
+              key={`home:${savedWorkspace.id}:${itemMutation}`}
               store={fileStore}
+              onManageItem={
+                restored
+                  ? undefined
+                  : (item) =>
+                      setItemAction({ workspaceId: savedWorkspace.id, item })
+              }
+              onOpenTrash={
+                restored
+                  ? undefined
+                  : () =>
+                      setItemAction({
+                        workspaceId: savedWorkspace.id,
+                        item: null,
+                      })
+              }
               workspaceName={savedWorkspace.name}
               workspaceAppearance={workspace.preferences.homeAppearance}
               view={layout.homeView}
@@ -1500,7 +1858,7 @@ function WorkspaceApp({
               >
                 <FileWorkspace
                   store={fileStore}
-                  key={`${savedWorkspace.id}:${activeProject.id}`}
+                  key={`${savedWorkspace.id}:${activeProject.id}:${itemMutation}`}
                   project={activeProject}
                   preferences={workspace.preferences}
                   layout={layout}
@@ -1684,6 +2042,23 @@ function WorkspaceApp({
             New canvas
           </button>
         </div>
+      )}
+      {itemAction && (
+        <WorkspaceItemActions
+          key={`${itemAction.workspaceId}:${itemAction.item?.id ?? 'trash'}`}
+          item={itemAction.item}
+          sourceWorkspaceId={itemAction.workspaceId}
+          workspaces={sessions.items}
+          projects={workspace.projects}
+          trash={
+            workspaceTrash[itemAction.workspaceId] ??
+            emptyWorkspaceTrash(itemAction.workspaceId)
+          }
+          onClose={() => setItemAction(null)}
+          onTrash={trashItem}
+          onMove={moveItem}
+          onRestore={restoreItem}
+        />
       )}
       {customization && (
         <ItemAppearanceDialog

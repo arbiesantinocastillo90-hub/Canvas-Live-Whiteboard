@@ -1,0 +1,20 @@
+AI client trademarks
+
+OpenAI and the OpenAI Blossom are trademarks of OpenAI. openai.svg is the
+unaltered static logo from the official OpenAI Agents SDK repository:
+https://github.com/openai/openai-agents-python/blob/aaec57a426b35079480d96cef473a7494c95b0ad/docs/assets/logo.svg
+Guidelines: https://openai.com/brand/
+
+Claude and Anthropic names and logos are trademarks of Anthropic. claude.svg
+and anthropic.svg are the unaltered ClaudeIcon-Rounded.svg and Anthropic
+symbol - Slate.svg from the official Anthropic media resources press kit:
+https://anthropic.com/press-kit
+Press resources: https://www.anthropic.com/news
+
+Retrieved October 19, 2026. These marks identify the MCP client name reported
+by the connecting software. They do not verify the underlying model or imply
+an endorsement, partnership, or affiliation. They are separate from the
+original customizable Canvas Live mascot and are never animated or recolored.
+Other clients use plain text until an official mark is bundled.
+
+The project's MIT license does not grant rights to these trademarks.

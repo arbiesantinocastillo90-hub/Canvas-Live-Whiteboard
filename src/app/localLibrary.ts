@@ -5,7 +5,7 @@ import {
   type CanvasFileResult,
   type CanvasFileStore,
 } from './canvasFiles'
-import { validCanvasId } from './lcanvas'
+import { requireCanvasName, validCanvasId } from './lcanvas'
 
 const ENDPOINT = '/__canvas_live_library'
 export const LIBRARY_MAX_ENTRIES = 2000
@@ -17,11 +17,24 @@ type LibraryKind =
   'file' | 'metadata' | 'sessions' | 'latest' | 'view' | 'settings'
 export type LibraryEntry<T = unknown> = { revision: number; value: T | null }
 export type LibraryAvailability = { available: boolean; error?: string }
+export type LibraryFileSummary = {
+  key: string
+  revision: number
+  id: string
+  projectId: string
+  name: string
+  createdAt: number
+  updatedAt: number
+  lastOpenedAt: number
+}
+export type LibraryIssue = { key: string; recovered: boolean; message: string }
 export type LocalLibraryClient = {
   readonly available: boolean
   initialize: (options?: { force?: boolean }) => Promise<LibraryAvailability>
   cached: <T = unknown>(key: string) => LibraryEntry<T>
   entries: () => [string, LibraryEntry][]
+  files?: () => LibraryFileSummary[] | null
+  issues?: () => LibraryIssue[]
   refresh: () => Promise<void>
   read: <T = unknown>(
     key: string,
@@ -37,6 +50,13 @@ export type LocalLibraryClient = {
     update: (value: T | null) => T,
     maxRetries?: number,
   ) => Promise<LibraryEntry<T>>
+}
+class LibraryHttpError extends Error {
+  readonly status: number
+  constructor(message: string, status: number) {
+    super(message)
+    this.status = status
+  }
 }
 export class LibraryConflictError extends Error {
   constructor(
@@ -122,7 +142,10 @@ function entry(value: unknown, allowMissing = false): LibraryEntry {
   }
   return { revision: value.revision as number, value: jsonValue(value.value) }
 }
-function envelope(value: unknown): Map<string, LibraryEntry> {
+function envelope(value: unknown): {
+  entries: Map<string, LibraryEntry>
+  issues: LibraryIssue[]
+} {
   if (
     !record(value) ||
     value.version !== 1 ||
@@ -131,11 +154,144 @@ function envelope(value: unknown): Map<string, LibraryEntry> {
   )
     return fail('The local library returned an invalid collection.')
   const normalized = new Map<string, LibraryEntry>()
+  const issues: LibraryIssue[] = []
   for (const [key, item] of Object.entries(value.entries)) {
     requireKey(key)
-    normalized.set(key, entry(item))
+    try {
+      normalized.set(key, entry(item))
+    } catch (error) {
+      if (!key.startsWith('file:')) throw error
+      issues.push({
+        key,
+        recovered: false,
+        message: 'This saved canvas record is invalid.',
+      })
+    }
   }
-  return normalized
+  return { entries: normalized, issues }
+}
+function fileSummary(value: unknown): LibraryFileSummary {
+  if (!record(value))
+    return fail('The local library returned an invalid canvas index.')
+  const {
+    key,
+    revision,
+    id,
+    projectId,
+    name,
+    createdAt,
+    updatedAt,
+    lastOpenedAt,
+  } = value
+  if (
+    typeof key !== 'string' ||
+    !key.startsWith('file:') ||
+    !Number.isSafeInteger(revision) ||
+    (revision as number) < 1 ||
+    !validCanvasId(id) ||
+    !validCanvasId(projectId) ||
+    key !== libraryKey('file', id) ||
+    typeof name !== 'string' ||
+    !name.trim() ||
+    name !== requireCanvasName(name) ||
+    ![createdAt, updatedAt, lastOpenedAt].every(
+      (date) =>
+        typeof date === 'number' &&
+        Number.isInteger(date) &&
+        date >= 0 &&
+        date <= 8_640_000_000_000_000,
+    ) ||
+    (updatedAt as number) < (createdAt as number) ||
+    (lastOpenedAt as number) < (createdAt as number)
+  )
+    return fail('The local library returned an invalid canvas index.')
+  return {
+    key,
+    revision: revision as number,
+    id,
+    projectId,
+    name,
+    createdAt: createdAt as number,
+    updatedAt: updatedAt as number,
+    lastOpenedAt: lastOpenedAt as number,
+  }
+}
+function catalog(value: unknown) {
+  if (
+    !record(value) ||
+    value.version !== 2 ||
+    !record(value.entries) ||
+    !Array.isArray(value.files) ||
+    !Array.isArray(value.issues) ||
+    Object.keys(value.entries).length + value.files.length >
+      LIBRARY_MAX_ENTRIES ||
+    value.issues.length > LIBRARY_MAX_ENTRIES
+  )
+    return fail('The local library returned an invalid catalog.')
+  const entries = new Map<string, LibraryEntry>()
+  for (const [key, item] of Object.entries(value.entries)) {
+    requireKey(key)
+    if (key.startsWith('file:'))
+      return fail(
+        'The local library catalog contains an unexpected canvas body.',
+      )
+    entries.set(key, entry(item))
+  }
+  const files = new Map<string, LibraryFileSummary>()
+  const issues: LibraryIssue[] = []
+  for (const issue of value.issues) {
+    if (
+      !record(issue) ||
+      typeof issue.key !== 'string' ||
+      typeof issue.recovered !== 'boolean' ||
+      typeof issue.message !== 'string' ||
+      issue.message.length > 2000
+    )
+      return fail('The local library returned an invalid recovery notice.')
+    if (issue.key && !KEY_PATTERN.test(issue.key))
+      return fail('The local library returned an invalid recovery notice.')
+    // Identity, project membership and Trash control which saved items exist
+    // in a workspace. Never seed replacements for their damaged records.
+    // Optional preferences and saved views are independently recoverable;
+    // their failure must not hide every healthy project on a fresh computer.
+    if (
+      !issue.recovered &&
+      (issue.key.startsWith('metadata:') ||
+        issue.key.startsWith('sessions:') ||
+        issue.key.startsWith('settings:trash_'))
+    )
+      return fail(
+        'The saved workspace settings could not be recovered. Existing files were preserved. Reconnect your drive and retry opening Canvas Live; do not replace the saved library.',
+      )
+    issues.push({
+      key: issue.key,
+      recovered: issue.recovered,
+      message: issue.message,
+    })
+  }
+  for (const item of value.files) {
+    let summary: LibraryFileSummary
+    try {
+      summary = fileSummary(item)
+    } catch {
+      if (
+        !record(item) ||
+        typeof item.key !== 'string' ||
+        !KEY_PATTERN.test(item.key)
+      )
+        return fail('The local library returned an invalid canvas index.')
+      issues.push({
+        key: item.key,
+        recovered: false,
+        message: 'This saved canvas index is invalid.',
+      })
+      continue
+    }
+    if (files.has(summary.key))
+      return fail('The local library returned a duplicate canvas identifier.')
+    files.set(summary.key, summary)
+  }
+  return { entries, files, issues }
 }
 export function libraryKey(kind: LibraryKind, id: string): string {
   if (!validCanvasId(id))
@@ -164,6 +320,15 @@ export function createLocalLibraryClient(
 ): LocalLibraryClient {
   let available = false
   let cache = new Map<string, LibraryEntry>()
+  let fileIndex: Map<string, LibraryFileSummary> | null = null
+  let notices: LibraryIssue[] = []
+  let catalogSupported: boolean | null = null
+  let refreshing: Promise<void> | null = null
+  const reads = new Map<string, Promise<LibraryEntry>>()
+  let writeSequence = 0
+  const writtenAt = new Map<string, number>()
+  let activeRequests = 0
+  const requestQueue: (() => void)[] = []
   let initialization: Promise<LibraryAvailability> | null = null
   const pending = new Map<string, Promise<unknown>>()
   const timeoutMs = Number.isFinite(options.timeoutMs)
@@ -174,17 +339,26 @@ export function createLocalLibraryClient(
   }
   function cached<T = unknown>(key: string): LibraryEntry<T> {
     requireKey(key)
+    // Catalog-only files retain their real revision before their body is read.
+    // Migration uses this revision to distinguish existing files from new IDs.
     return clone(
-      cache.get(key) ?? { revision: 0, value: null },
+      cache.get(key) ?? {
+        revision: fileIndex?.get(key)?.revision ?? 0,
+        value: null,
+      },
     ) as LibraryEntry<T>
   }
   async function request(
     path: string,
     init?: RequestInit,
     maximum = LIBRARY_MAX_BYTES,
+    requestTimeout = timeoutMs,
   ): Promise<unknown> {
+    if (activeRequests >= 4)
+      await new Promise<void>((resolve) => requestQueue.push(resolve))
+    else activeRequests++
     const controller = new AbortController()
-    const timeout = setTimeout(() => controller.abort(), timeoutMs)
+    const timeout = setTimeout(() => controller.abort(), requestTimeout)
     try {
       const fetcher = options.fetch ?? globalThis.fetch
       if (!fetcher) return fail('The local library could not be reached.')
@@ -198,6 +372,13 @@ export function createLocalLibraryClient(
       if (response.status === 409) {
         await response.body?.cancel()
         throw new LibraryConflictError()
+      }
+      if (response.status === 404) {
+        await response.body?.cancel()
+        throw new LibraryHttpError(
+          'The local library endpoint was not found.',
+          404,
+        )
       }
       const length = response.headers.get('content-length')
       if (
@@ -237,10 +418,11 @@ export function createLocalLibraryClient(
         return fail('The local library returned invalid JSON.')
       }
       if (!response.ok)
-        return fail(
+        throw new LibraryHttpError(
           record(value) && typeof value.error === 'string'
             ? value.error
             : 'The local library could not save or open this item.',
+          response.status,
         )
       return value
     } catch (error) {
@@ -252,12 +434,89 @@ export function createLocalLibraryClient(
       throw error
     } finally {
       clearTimeout(timeout)
+      const next = requestQueue.shift()
+      if (next) next()
+      else activeRequests--
     }
   }
-  async function refresh() {
-    requireAvailable()
+  async function loadCollection() {
+    const startedAt = writeSequence
+    if (catalogSupported !== false) {
+      try {
+        const loaded = catalog(
+          await request(
+            `${ENDPOINT}/catalog`,
+            undefined,
+            LIBRARY_MAX_BYTES,
+            !available && options.timeoutMs === undefined ? 60_000 : timeoutMs,
+          ),
+        )
+        catalogSupported = true
+        const next = loaded.entries
+        const recoveredKeys = new Set(
+          loaded.issues
+            .filter((issue) => issue.recovered)
+            .map((issue) => issue.key),
+        )
+        for (const [key, summary] of loaded.files) {
+          const previous = cache.get(key)
+          if (previous?.revision === summary.revision) next.set(key, previous)
+        }
+        for (const [key, previous] of cache) {
+          if (recoveredKeys.has(key) && (writtenAt.get(key) ?? 0) <= startedAt)
+            continue
+          const indexedRevision =
+            loaded.files.get(key)?.revision ?? next.get(key)?.revision ?? 0
+          if (
+            (writtenAt.get(key) ?? 0) <= startedAt &&
+            (!indexedRevision || previous.revision <= indexedRevision)
+          )
+            continue
+          next.set(key, previous)
+          if (key.startsWith('file:')) {
+            const file = validateCanvasFileRecord(previous.value)
+            loaded.files.set(key, {
+              key,
+              revision: previous.revision,
+              id: file.id,
+              projectId: file.projectId,
+              name: file.document.name,
+              createdAt: file.createdAt,
+              updatedAt: file.updatedAt,
+              lastOpenedAt: file.lastOpenedAt,
+            })
+          }
+        }
+        cache = next
+        fileIndex = loaded.files
+        notices = loaded.issues
+        return
+      } catch (error) {
+        if (!(error instanceof LibraryHttpError) || error.status !== 404)
+          throw error
+        catalogSupported = false
+      }
+    }
     const loaded = envelope(await request(ENDPOINT))
-    cache = loaded
+    for (const [key, previous] of cache) {
+      const next = loaded.entries.get(key)
+      if (
+        (writtenAt.get(key) ?? 0) > startedAt ||
+        (next && previous.revision > next.revision)
+      )
+        loaded.entries.set(key, previous)
+    }
+    cache = loaded.entries
+    notices = loaded.issues
+    fileIndex = null
+  }
+  function refresh() {
+    requireAvailable()
+    if (refreshing) return refreshing
+    refreshing = loadCollection().finally(() => {
+      refreshing = null
+    })
+    return refreshing
   }
   async function read<T = unknown>(
     key: string,
@@ -265,17 +524,42 @@ export function createLocalLibraryClient(
   ): Promise<LibraryEntry<T>> {
     requireKey(key)
     requireAvailable()
-    if (refreshItem) {
-      const loaded = entry(
-        await request(
-          `${ENDPOINT}/${encodeURIComponent(key)}`,
-          undefined,
-          LIBRARY_ENTRY_MAX_BYTES + 1024,
-        ),
-        true,
-      )
-      if (loaded.revision) cache.set(key, loaded)
-      else cache.delete(key)
+    if (refreshItem || (!cache.has(key) && fileIndex?.has(key))) {
+      let reading = reads.get(key)
+      if (!reading) {
+        const startedAt = writeSequence
+        reading = (async () => {
+          const loaded = entry(
+            await request(
+              `${ENDPOINT}/${encodeURIComponent(key)}`,
+              undefined,
+              LIBRARY_ENTRY_MAX_BYTES + 1024,
+            ),
+            true,
+          )
+          if (loaded.revision && key.startsWith('file:')) {
+            const file = validateCanvasFileRecord(loaded.value)
+            if (key !== libraryKey('file', file.id))
+              fail('A local library canvas has a mismatched identifier.')
+          }
+          const existing = cache.get(key)
+          const recovered =
+            notices.some((issue) => issue.key === key && issue.recovered) &&
+            (writtenAt.get(key) ?? 0) <= startedAt
+          if (!existing || loaded.revision >= existing.revision || recovered) {
+            if (loaded.revision) cache.set(key, loaded)
+            else {
+              cache.delete(key)
+              fileIndex?.delete(key)
+            }
+          }
+          return loaded
+        })().finally(() => {
+          reads.delete(key)
+        })
+        reads.set(key, reading)
+      }
+      await reading
     }
     return cached<T>(key)
   }
@@ -323,6 +607,21 @@ export function createLocalLibraryClient(
     if (loaded.revision !== revision + 1)
       return fail('The local library returned an unexpected write revision.')
     cache.set(key, loaded)
+    writtenAt.set(key, ++writeSequence)
+    notices = notices.filter((issue) => issue.key !== key)
+    if (fileIndex && key.startsWith('file:')) {
+      const file = validateCanvasFileRecord(loaded.value)
+      fileIndex.set(key, {
+        key,
+        revision: loaded.revision,
+        id: file.id,
+        projectId: file.projectId,
+        name: file.document.name,
+        createdAt: file.createdAt,
+        updatedAt: file.updatedAt,
+        lastOpenedAt: file.lastOpenedAt,
+      })
+    }
     return clone(loaded) as LibraryEntry<T>
   }
   const client: LocalLibraryClient = {
@@ -335,8 +634,7 @@ export function createLocalLibraryClient(
         return Promise.resolve({ available: false })
       initialization = (async () => {
         try {
-          const loaded = envelope(await request(ENDPOINT))
-          cache = loaded
+          await loadCollection()
           available = true
           return { available: true }
         } catch (error) {
@@ -355,6 +653,8 @@ export function createLocalLibraryClient(
     },
     cached,
     entries: () => [...cache].map(([key, item]) => [key, clone(item)]),
+    files: () => (fileIndex ? [...fileIndex.values()].map(clone) : null),
+    issues: () => clone(notices),
     refresh,
     read,
     write: (key, value, expected) =>
@@ -397,6 +697,8 @@ export function createSharedCanvasFileStore(
   const firstLoaded = new Map<string, number>()
   const recency = new Map<string, number>()
   const pending = new Map<string, Promise<unknown>>()
+  let listingCollection: Promise<void> | null = null
+  let listings = 0
   function opened(file: CanvasFileRecord, revision: number) {
     if (!firstLoaded.has(file.id)) firstLoaded.set(file.id, revision)
     return versioned(
@@ -422,23 +724,54 @@ export function createSharedCanvasFileStore(
     async list(projectId) {
       if (!client.available) return fallback.list(projectId)
       validateId(projectId)
-      await client.refresh()
-      const files: CanvasFileRecord[] = []
-      for (const [key, item] of client.entries()) {
-        if (!key.startsWith('file:')) continue
-        const file = validateCanvasFileRecord(item.value)
-        if (key !== libraryKey('file', file.id))
-          fail('A local library canvas has a mismatched identifier.')
-        if (file.projectId === projectId)
-          files.push(opened(file, item.revision))
+      listings++
+      try {
+        listingCollection ??= client.refresh()
+        await listingCollection
+        const index = client.files?.()
+        const files: CanvasFileRecord[] = []
+        let failed = 0
+        const items = index
+          ? index
+              .filter((file) => file.projectId === projectId)
+              .map((file) => ({
+                key: file.key,
+                item: null as LibraryEntry | null,
+              }))
+          : client
+              .entries()
+              .filter(([key]) => key.startsWith('file:'))
+              .map(([key, item]) => ({ key, item }))
+        await Promise.all(
+          items.map(async ({ key, item }) => {
+            try {
+              const loaded = item ?? (await client.read(key))
+              const file = validateCanvasFileRecord(loaded.value)
+              if (key !== libraryKey('file', file.id))
+                fail('A local library canvas has a mismatched identifier.')
+              if (file.projectId === projectId)
+                files.push(opened(file, loaded.revision))
+            } catch {
+              failed++
+            }
+          }),
+        )
+        files.sort(
+          (a, b) =>
+            b.lastOpenedAt - a.lastOpenedAt ||
+            b.updatedAt - a.updatedAt ||
+            a.id.localeCompare(b.id),
+        )
+        const warning = libraryIssueMessage(client.issues?.() ?? [], failed)
+        return {
+          value: files,
+          persistence: 'browser',
+          ...(warning ? { error: warning } : {}),
+        }
+      } finally {
+        listings--
+        if (!listings) listingCollection = null
       }
-      files.sort(
-        (a, b) =>
-          b.lastOpenedAt - a.lastOpenedAt ||
-          b.updatedAt - a.updatedAt ||
-          a.id.localeCompare(b.id),
-      )
-      return { value: files, persistence: 'browser' }
     },
     async get(projectId, id) {
       if (!client.available) return fallback.get(projectId, id)
@@ -510,7 +843,44 @@ export function createSharedCanvasFileStore(
       return next
     },
   }
+  sharedClients.set(store, client)
   return store
+}
+const sharedClients = new WeakMap<CanvasFileStore, LocalLibraryClient>()
+export function hasSharedCanvasFileCatalog(store: CanvasFileStore): boolean {
+  const client = sharedClients.get(store)
+  return Boolean(client?.available && client.files?.())
+}
+export function libraryIssueMessage(
+  issues: readonly LibraryIssue[],
+  failed = 0,
+): string | undefined {
+  const unavailable = issues.filter((issue) => !issue.recovered).length + failed
+  const recovered = issues.filter((issue) => issue.recovered).length
+  if (unavailable)
+    return `${unavailable} saved ${unavailable === 1 ? 'item could' : 'items could'} not be loaded. Healthy files and open drafts are available. Retry loading after reconnecting your drive; original files were preserved.`
+  if (recovered)
+    return `${recovered} saved ${recovered === 1 ? 'item was' : 'items were'} recovered from a previous valid copy. Check the recovered content before saving.`
+  return undefined
+}
+export async function sharedCanvasFileCatalog(store: CanvasFileStore) {
+  const client = sharedClients.get(store)
+  if (!client?.available || !client.files) return null
+  try {
+    await client.refresh()
+  } catch (error) {
+    const files = client.files()
+    if (!files) throw error
+    return {
+      files,
+      error:
+        `The saved-file index could not be refreshed. Showing the last loaded index; reconnect your drive and retry loading. ${error instanceof Error ? error.message : ''}`.trim(),
+    }
+  }
+  const files = client.files()
+  return files
+    ? { files, error: libraryIssueMessage(client.issues?.() ?? []) }
+    : null
 }
 export const localLibrary = createLocalLibraryClient()
 export const initializeLocalLibrary = (options?: { force?: boolean }) =>

@@ -2,6 +2,7 @@ import { Fragment, useCallback, useState, type CSSProperties } from 'react'
 import Icon from './Icon'
 import { projectTree, type Project } from './workspace'
 import ProjectContextMenu from './ProjectContextMenu'
+import type { WorkspaceActionItem } from './WorkspaceItemActions'
 import { projectMenuAnchor, type ProjectMenuAnchor } from './projectMenuAnchor'
 
 export type HierarchyCanvasFile = {
@@ -24,6 +25,7 @@ export default function ProjectHierarchy({
   onNewChild,
   onRename,
   onCustomize,
+  onManageItem,
 }: {
   projects: Project[]
   closedIds: string[]
@@ -37,6 +39,7 @@ export default function ProjectHierarchy({
   onNewChild?: (parentId: string) => void
   onRename?: (project: Project) => void
   onCustomize?: (project: Project) => void
+  onManageItem?: (item: WorkspaceActionItem) => void
 }) {
   const [menu, setMenu] = useState<ProjectMenuAnchor | null>(null)
   const closeMenu = useCallback(() => setMenu(null), [])
@@ -153,6 +156,19 @@ export default function ProjectHierarchy({
                     className="project-open"
                     aria-label={`Open canvas ${file.name} in ${project.name}`}
                     onClick={() => onOpenFile?.(project.id, file.id)}
+                    onContextMenu={
+                      onManageItem
+                        ? (event) => {
+                            event.preventDefault()
+                            onManageItem({
+                              kind: 'file',
+                              id: file.id,
+                              projectId: project.id,
+                              name: file.name,
+                            })
+                          }
+                        : undefined
+                    }
                   >
                     <Icon name="canvas" />
                     <span>{file.name}</span>
@@ -163,6 +179,22 @@ export default function ProjectHierarchy({
                       />
                     )}
                   </button>
+                  {onManageItem && (
+                    <button
+                      className="icon-button"
+                      aria-label={`Manage canvas ${file.name}`}
+                      onClick={() =>
+                        onManageItem({
+                          kind: 'file',
+                          id: file.id,
+                          projectId: project.id,
+                          name: file.name,
+                        })
+                      }
+                    >
+                      <Icon name="options" />
+                    </button>
+                  )}
                 </div>
               ))}
           </Fragment>
@@ -180,6 +212,17 @@ export default function ProjectHierarchy({
           onNewChild={onNewChild}
           onRename={onRename}
           onCustomize={onCustomize}
+          onManage={
+            onManageItem
+              ? (project) =>
+                  onManageItem({
+                    kind: 'project',
+                    id: project.id,
+                    projectId: project.id,
+                    name: project.name,
+                  })
+              : undefined
+          }
         />
       )}
     </div>

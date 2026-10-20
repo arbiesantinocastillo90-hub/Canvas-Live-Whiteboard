@@ -1,10 +1,10 @@
 # Home, canvas interactions and local files
 
-Updated 2026-10-13 for the owner's separate home page, practical canvas interaction and physical local-file saving requests.
+Initially delivered 2026-10-13; current storage and sharing behavior updated 2026-10-19. See [durable folders and recovery](DURABLE_LIBRARY.md) and the [AI mini and shared-canvas guide](AI_MINI.md) for the latest additions.
 
 ## Home and workspace
 
-Canvas Live starts on Home even when a project was used previously. Home shows real projects and LCANVAS files, search, New canvas and Import. Selecting a project browses its files; selecting a file opens the compact editing workspace. Work explicitly resumes a workspace. The logo and Return to Home command leave the editor without discarding open tabs or undo history. Options and Home keep that editor hidden and inert; canvas shortcuts and AI sharing are disabled there. Sharing must be explicitly started again after returning.
+Canvas Live starts on Home unless the owner enables resuming the latest view. Home shows real projects and canvas files, search, creation destinations and Import. Selecting a project browses its files; selecting a file opens the compact editing workspace. Work explicitly resumes a workspace. The logo and Return to Home command leave the editor without discarding open tabs or Undo history. Options and Home disable hidden manual canvas shortcuts while retaining an explicitly shared AI session. Stop sharing or switch that view's file/project/workspace to end the grant.
 
 Project changes keep unsaved documents in the current tab. A separate IndexedDB recovery store retains dirty snapshots. A newer explicit save wins over a recovery snapshot based on different saved content. Recovery failures are reported; they do not erase cached drafts or imply that a physical file was saved.
 

@@ -99,6 +99,59 @@ describe('MCP edits in the manual editor history', () => {
     expect(test.onDocumentChange).toHaveBeenCalledTimes(5)
   })
 
+  it('keeps explicitly shared background edits undoable while manual keyboard input remains disabled', () => {
+    const test = mount()
+    const controller = test.ready()
+    test.rerender(
+      <CanvasEditor
+        document={test.document}
+        active={false}
+        allowBackgroundCommands
+        grid="dots"
+        aiOpen={false}
+        onToggleAI={vi.fn()}
+        onDocumentChange={test.onDocumentChange}
+      />,
+    )
+    fireEvent.keyDown(test.stage, { key: 'Delete' })
+    expect(controller.getDocument().elements).toHaveLength(1)
+    act(() => {
+      controller.execute({ kind: 'move', id: 'existing', x: 240, y: 120 })
+    })
+    expect(controller.getDocument().elements[0]).toMatchObject({
+      x: 240,
+      y: 120,
+    })
+    act(() => {
+      controller.execute({ kind: 'undo' })
+    })
+    expect(controller.getDocument().elements[0]).toMatchObject({ x: 0, y: 0 })
+    test.unmount()
+    expect(() =>
+      controller.execute({ kind: 'move', id: 'existing', x: 2, y: 2 }),
+    ).toThrow('Open this canvas')
+  })
+
+  it('revokes background command permission when sharing stops', () => {
+    const test = mount()
+    const controller = test.ready()
+    test.rerender(
+      <CanvasEditor
+        document={test.document}
+        active={false}
+        allowBackgroundCommands={false}
+        grid="dots"
+        aiOpen={false}
+        onToggleAI={vi.fn()}
+        onDocumentChange={test.onDocumentChange}
+      />,
+    )
+    expect(() =>
+      controller.execute({ kind: 'move', id: 'existing', x: 2, y: 2 }),
+    ).toThrow('Open this canvas')
+    expect(test.onDocumentChange).not.toHaveBeenCalled()
+  })
+
   it('commits a multi-object AI batch as one undoable change', () => {
     const test = mount()
     act(() => {

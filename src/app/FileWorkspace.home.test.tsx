@@ -266,7 +266,7 @@ describe('Home to canvas workspace requests', () => {
     expect((await store.list(project.id)).value).toEqual([])
   })
 
-  it('revokes MCP sharing and disables hidden workspace commands without dropping the file', async () => {
+  it('retains explicit MCP sharing while disabling hidden manual commands on Home', async () => {
     const store = createCanvasFileStore({ indexedDB: null })
     await store.save(canvas('Shared canvas', 'shared', 100))
     const fetchMock = vi.fn((url: string) =>
@@ -306,7 +306,7 @@ describe('Home to canvas workspace requests', () => {
         fetchMock.mock.calls.some(([url]) =>
           url.endsWith('/bridge/disconnect'),
         ),
-      ).toBe(true),
+      ).toBe(false),
     )
     expect(registered().some((command) => command.id === 'file.save')).toBe(
       false,
@@ -320,13 +320,13 @@ describe('Home to canvas workspace requests', () => {
       'aria-selected',
       'true',
     )
-    expect(screen.queryByText('MCP sharing')).not.toBeInTheDocument()
+    expect(screen.getByText('MCP sharing')).toBeInTheDocument()
     view.rerender(tree(initial))
     expect(
       registered().find((command) => command.id === 'canvas.rectangle')
         ?.enabled,
     ).toBe(true)
-    expect(screen.queryByText('MCP sharing')).not.toBeInTheDocument()
+    expect(screen.getByText('MCP sharing')).toBeInTheDocument()
   })
 
   it('restores an orphan dirty draft when the saved file list is empty', async () => {

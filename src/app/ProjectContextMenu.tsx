@@ -12,6 +12,7 @@ export default function ProjectContextMenu({
   onNewChild,
   onRename,
   onCustomize,
+  onManage,
 }: {
   anchor: ProjectMenuAnchor
   project: Project
@@ -20,6 +21,7 @@ export default function ProjectContextMenu({
   onNewChild?: (parentId: string) => void
   onRename?: (project: Project) => void
   onCustomize?: (project: Project) => void
+  onManage?: (project: Project) => void
 }) {
   const menu = useRef<HTMLDivElement>(null)
   useLayoutEffect(() => {
@@ -114,6 +116,11 @@ export default function ProjectContextMenu({
       >
         Customize project
       </button>
+      {onManage && (
+        <button role="menuitem" onClick={() => action(() => onManage(project))}>
+          Move or remove project
+        </button>
+      )}
     </div>,
     anchor.trigger.closest('.app-shell') ?? document.body,
   )

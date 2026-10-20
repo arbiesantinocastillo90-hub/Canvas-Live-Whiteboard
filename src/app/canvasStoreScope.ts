@@ -5,6 +5,7 @@ type Scope = {
   base: CanvasFileStore
   workspaceId: string
   presentation: (id: string) => ItemPresentation | undefined
+  visible: (id: string) => boolean
 }
 const scopes = new WeakMap<CanvasFileStore, Scope>()
 export function baseCanvasStore(store: CanvasFileStore): CanvasFileStore {
@@ -12,6 +13,9 @@ export function baseCanvasStore(store: CanvasFileStore): CanvasFileStore {
 }
 export function canvasStoreWorkspace(store: CanvasFileStore): string | null {
   return scopes.get(store)?.workspaceId ?? null
+}
+export function isCanvasFileVisible(store: CanvasFileStore, id: string) {
+  return scopes.get(store)?.visible(id) ?? true
 }
 export function scopedCanvasRecord(
   store: CanvasFileStore,
@@ -28,6 +32,7 @@ export function createWorkspaceCanvasStore(
   workspaceId: string,
   owns: (id: string) => boolean,
   presentation: (id: string) => ItemPresentation | undefined,
+  visible: (id: string) => boolean = () => true,
 ): CanvasFileStore {
   function requireProject(id: string) {
     if (!owns(id))
@@ -41,11 +46,14 @@ export function createWorkspaceCanvasStore(
       const result = await base.list(projectId)
       return {
         ...result,
-        value: result.value.map((record) => scopedCanvasRecord(store, record)),
+        value: result.value
+          .filter((record) => visible(record.id))
+          .map((record) => scopedCanvasRecord(store, record)),
       }
     },
     async get(projectId, id) {
       requireProject(projectId)
+      if (!visible(id)) return { value: null, persistence: 'browser' }
       const result = await base.get(projectId, id)
       return {
         ...result,
@@ -54,6 +62,7 @@ export function createWorkspaceCanvasStore(
     },
     async markOpened(projectId, id, now) {
       requireProject(projectId)
+      if (!visible(id)) return { value: null, persistence: 'browser' }
       const result = await base.markOpened(projectId, id, now)
       return {
         ...result,
@@ -62,6 +71,8 @@ export function createWorkspaceCanvasStore(
     },
     async save(record) {
       requireProject(record.projectId)
+      if (!visible(record.id))
+        throw new Error('This canvas is in Trash. Restore it before editing.')
       let input = record
       if (presentation(record.id)) {
         const original = (await base.get(record.projectId, record.id)).value
@@ -75,6 +86,6 @@ export function createWorkspaceCanvasStore(
       return { ...result, value: scopedCanvasRecord(store, result.value) }
     },
   }
-  scopes.set(store, { base, workspaceId, presentation })
+  scopes.set(store, { base, workspaceId, presentation, visible })
   return store
 }

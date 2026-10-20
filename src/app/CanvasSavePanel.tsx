@@ -16,6 +16,7 @@ type Props = {
   canChooseLocation: boolean
   needsLocation: boolean
   needsPermission: boolean
+  recoverySaved?: boolean
   onChange: (settings: CanvasSaveSettings) => void
   onSave: () => void
   onChooseLocation: () => void
@@ -31,6 +32,7 @@ export default function CanvasSavePanel({
   canChooseLocation,
   needsLocation,
   needsPermission,
+  recoverySaved = false,
   onChange,
   onSave,
   onChooseLocation,
@@ -106,6 +108,12 @@ export default function CanvasSavePanel({
       >
         {destination}
       </p>
+      {recoverySaved && (
+        <p className="canvas-save-warning" role="status">
+          Saved in the Canvas Live local library. The external .CLF file still
+          needs updating.
+        </p>
+      )}
       {needsLocation && (
         <p className="canvas-save-warning" role="status">
           The saved file was moved or deleted. Choose a new location; your edits
@@ -114,7 +122,9 @@ export default function CanvasSavePanel({
       )}
       {needsPermission && !needsLocation && (
         <p className="canvas-save-warning" role="status">
-          File access needs your approval. Use Save now to resume.
+          External file writes are paused. Use Save now to retry. If this view
+          blocks file access, open Canvas Live directly in Chrome or Edge, or
+          download a copy.
         </p>
       )}
       <label className="canvas-save-toggle">
@@ -181,7 +191,7 @@ export default function CanvasSavePanel({
         >
           Choose location
         </button>
-        {!canChooseLocation && (
+        {(!canChooseLocation || needsPermission || needsLocation) && (
           <button
             className="button secondary"
             disabled={!hasCanvas}

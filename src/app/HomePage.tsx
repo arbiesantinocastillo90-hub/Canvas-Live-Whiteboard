@@ -1,4 +1,9 @@
-import { baseCanvasStore, scopedCanvasRecord } from './canvasStoreScope'
+import {
+  baseCanvasStore,
+  scopedCanvasRecord,
+  isCanvasFileVisible,
+} from './canvasStoreScope'
+import type { WorkspaceActionItem } from './WorkspaceItemActions'
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import {
   canvasFileStore,
@@ -43,7 +48,13 @@ import {
 } from './homeView'
 import { projectDescendants, type Project } from './workspace'
 import { useSessionNotifications } from './notificationSession'
-import { localLibrary, sharedCanvasFileStore } from './localLibrary'
+import {
+  hasSharedCanvasFileCatalog,
+  localLibrary,
+  sharedCanvasFileCatalog,
+  sharedCanvasFileStore,
+  type LibraryFileSummary,
+} from './localLibrary'
 import './home-page.css'
 
 type HomeFile = { record: CanvasFileRecord; dirty: boolean; project: Project }
@@ -75,6 +86,8 @@ export default function HomePage({
   onCustomizeWorkspace,
   onCustomizeProject,
   onCustomizeFile,
+  onManageItem,
+  onOpenTrash,
   view,
   onViewChange,
   projectActions,
@@ -101,6 +114,8 @@ export default function HomePage({
   onCustomizeWorkspace?: () => void
   onCustomizeProject?: (project: Project) => void
   onCustomizeFile?: (projectId: string, fileId: string) => void
+  onManageItem?: (item: WorkspaceActionItem) => void
+  onOpenTrash?: () => void
   view?: HomeLibraryView
   onViewChange?: (value: HomeLibraryView) => void
   projectActions?: ReactNode
@@ -151,17 +166,48 @@ export default function HomePage({
     onViewChange?.(next)
   }
   const projectSignature = JSON.stringify(projects)
+  const selected = projects.find(
+    (project) => project.id === currentView.openedProjectId,
+  )
+  const browsingProjects = currentView.perspective === 'projects' && !selected
+  const nativeCatalogAvailable = hasSharedCanvasFileCatalog(
+    baseCanvasStore(store),
+  )
+  const catalogOnly = browsingProjects && nativeCatalogAvailable
+  const listingScope = nativeCatalogAvailable ? (selected?.id ?? '*') : '*'
   const [fileSnapshot, setFileSnapshot] = useState<{
     store: CanvasFileStore
     projectSignature: string
     files: HomeFile[]
+    catalogOnly: boolean
+    listingScope: string
+    summaries: LibraryFileSummary[]
+    warning: string | null
   } | null>(null)
   // A workspace switch must never paint the previous workspace's file rows
   // while its own scoped store is still loading.
   const snapshotCurrent =
     fileSnapshot?.store === store &&
-    fileSnapshot.projectSignature === projectSignature
-  const files = snapshotCurrent ? fileSnapshot.files : []
+    fileSnapshot.projectSignature === projectSignature &&
+    fileSnapshot.catalogOnly === catalogOnly &&
+    fileSnapshot.listingScope === listingScope
+  const files = snapshotCurrent
+    ? fileSnapshot.files.filter(({ record }) =>
+        isCanvasFileVisible(store, record.id),
+      )
+    : []
+  const fileMetrics = new Map(
+    (snapshotCurrent ? fileSnapshot.summaries : [])
+      .filter((file) => isCanvasFileVisible(store, file.id))
+      .map((file) => [file.id, file]),
+  )
+  for (const { record } of files)
+    fileMetrics.set(record.id, {
+      ...record,
+      key: '',
+      revision: 0,
+      name: record.document.name,
+    })
   const [loading, setLoading] = useState(true)
   const { notify } = useSessionNotifications(notificationScopeId)
   const setError = useCallback(
@@ -186,10 +232,6 @@ export default function HomePage({
       alive.current = false
     }
   }, [])
-  const selected = projects.find(
-    (project) => project.id === currentView.openedProjectId,
-  )
-  const browsingProjects = currentView.perspective === 'projects' && !selected
   const targetProject =
     selected ??
     projects.find((project) => project.id === selectedProjectId) ??
@@ -197,100 +239,145 @@ export default function HomePage({
   useEffect(() => {
     let cancelled = false
     const snapshot = JSON.parse(projectSignature) as Project[]
-    void mapBounded(
-      snapshot,
-      4,
-      async (project) => {
-        const recovery = await recoveryFor(store)
-          .list(project.id)
-          .then((drafts) => ({ drafts, error: null as string | null }))
-          .catch(() => ({
-            drafts: [],
-            error:
-              'Draft recovery could not be loaded. Open a saved .CLF file if needed.',
-          }))
-        if (cancelled) return { files: [], error: null }
-        const drafts = mergeRecoveredDrafts(
-          recovery.drafts,
-          projectDrafts(store).get(project.id) ?? [],
-        )
+    void (async () => {
+      let nativeCatalog: Awaited<ReturnType<typeof sharedCanvasFileCatalog>> =
+        null
+      let catalogError: string | null = null
+      if (nativeCatalogAvailable) {
         try {
-          const result = await store.list(project.id)
-          if (cancelled) return { files: [], error: null }
-          const savedEntries = await mapBounded(
-            result.value.filter((record) => record.projectId === project.id),
-            8,
-            async (record) => {
-              const bound = await localFilesFor(store)
-                .get(project.id, record.id)
-                .catch(() => null)
-              const savedRecord = scopedCanvasRecord(
-                store,
-                bound &&
-                  !(
-                    baseCanvasStore(store) === sharedCanvasFileStore &&
-                    localLibrary.available
-                  )
-                  ? { ...record, document: bound.savedDocument }
-                  : record,
-              )
-              return {
-                record: savedRecord,
-                dirty: false,
-                savedDocument: savedRecord.document,
-                persistence: result.persistence,
-              }
-            },
-            () => cancelled,
-          )
-          const restored = mergeRecoveredDrafts(
-            savedEntries,
-            drafts.map((draft) => ({
-              ...draft,
-              record: scopedCanvasRecord(store, draft.record),
-              savedDocument: scopedCanvasRecord(store, {
-                ...draft.record,
-                document: draft.savedDocument,
-              }).document,
-            })),
-          )
-          return {
-            files: restored.map((draft) => ({
-              record: draft.record,
-              project,
-              dirty: draft.dirty,
-            })),
-            error: result.error ?? recovery.error,
-          }
-        } catch {
-          return {
-            files: drafts.map((draft) => ({
-              record: draft.record,
-              dirty: draft.dirty,
-              project,
-            })),
-            error:
-              'Some saved files could not be loaded. Your open drafts are still available.',
-          }
+          nativeCatalog = await sharedCanvasFileCatalog(baseCanvasStore(store))
+        } catch (error) {
+          catalogError =
+            error instanceof Error
+              ? error.message
+              : 'The local library could not be reached.'
         }
-      },
-      () => cancelled,
-    ).then((results) => {
+      }
+      const results = await mapBounded(
+        snapshot,
+        4,
+        async (project) => {
+          const recovery = await recoveryFor(store)
+            .list(project.id)
+            .then((drafts) => ({ drafts, error: null as string | null }))
+            .catch(() => ({
+              drafts: [],
+              error:
+                'Draft recovery could not be loaded. Open a saved .CLF file if needed.',
+            }))
+          if (cancelled) return { files: [], error: null }
+          const drafts = mergeRecoveredDrafts(
+            recovery.drafts,
+            projectDrafts(store).get(project.id) ?? [],
+          )
+          if (
+            catalogOnly ||
+            (listingScope !== '*' &&
+              !projectDescendants(snapshot, listingScope).has(project.id))
+          )
+            return {
+              files: drafts.map((draft) => ({
+                record: scopedCanvasRecord(store, draft.record),
+                dirty: draft.dirty,
+                project,
+              })),
+              error: catalogError ?? nativeCatalog?.error ?? recovery.error,
+            }
+          try {
+            const result = await store.list(project.id)
+            if (cancelled) return { files: [], error: null }
+            const savedEntries = await mapBounded(
+              result.value.filter((record) => record.projectId === project.id),
+              8,
+              async (record) => {
+                const bound = await localFilesFor(store)
+                  .get(project.id, record.id)
+                  .catch(() => null)
+                const savedRecord = scopedCanvasRecord(
+                  store,
+                  bound &&
+                    !(
+                      baseCanvasStore(store) === sharedCanvasFileStore &&
+                      localLibrary.available
+                    )
+                    ? { ...record, document: bound.savedDocument }
+                    : record,
+                )
+                return {
+                  record: savedRecord,
+                  dirty: false,
+                  savedDocument: savedRecord.document,
+                  persistence: result.persistence,
+                }
+              },
+              () => cancelled,
+            )
+            const restored = mergeRecoveredDrafts(
+              savedEntries,
+              drafts.map((draft) => ({
+                ...draft,
+                record: scopedCanvasRecord(store, draft.record),
+                savedDocument: scopedCanvasRecord(store, {
+                  ...draft.record,
+                  document: draft.savedDocument,
+                }).document,
+              })),
+            )
+            return {
+              files: restored.map((draft) => ({
+                record: draft.record,
+                project,
+                dirty: draft.dirty,
+              })),
+              error: result.error ?? recovery.error,
+            }
+          } catch (error) {
+            return {
+              files: drafts.map((draft) => ({
+                record: draft.record,
+                dirty: draft.dirty,
+                project,
+              })),
+              error:
+                `Saved files could not be reached. Your open drafts are still available. Reconnect your drive and retry loading. ${error instanceof Error ? error.message : ''}`.trim(),
+            }
+          }
+        },
+        () => cancelled,
+      )
       if (cancelled) return
+      const warning = results.find((result) => result.error)?.error ?? null
       setFileSnapshot({
         store,
         projectSignature,
         files: results
           .flatMap((result) => result.files)
           .sort((a, b) => b.record.lastOpenedAt - a.record.lastOpenedAt),
+        catalogOnly,
+        listingScope,
+        summaries:
+          nativeCatalog?.files.filter(
+            (file) =>
+              isCanvasFileVisible(store, file.id) &&
+              snapshot.some((project) => project.id === file.projectId),
+          ) ?? [],
+        warning,
       })
-      setError(results.find((result) => result.error)?.error ?? null)
+      setError(warning)
       setLoading(false)
-    })
+    })()
     return () => {
       cancelled = true
     }
-  }, [projectSignature, store, setError, refresh])
+  }, [
+    projectSignature,
+    store,
+    setError,
+    refresh,
+    catalogOnly,
+    nativeCatalogAvailable,
+    listingScope,
+  ])
   const selectedIds = selected
     ? projectDescendants(projects, selected.id)
     : null
@@ -305,12 +392,22 @@ export default function HomePage({
           : b.record.lastOpenedAt - a.record.lastOpenedAt,
   )
   const hierarchyFiles = currentView.hierarchyShowCanvases
-    ? sortedFiles.map(({ record, project, dirty }) => ({
-        id: record.id,
-        name: record.document.name,
-        projectId: project.id,
-        dirty,
-      }))
+    ? [...fileMetrics.values()]
+        .sort((a, b) =>
+          currentView.sort === 'name'
+            ? a.name.localeCompare(b.name)
+            : currentView.sort === 'created'
+              ? b.createdAt - a.createdAt
+              : currentView.sort === 'modified'
+                ? b.updatedAt - a.updatedAt
+                : b.lastOpenedAt - a.lastOpenedAt,
+        )
+        .map((file) => ({
+          id: file.id,
+          name: file.name,
+          projectId: file.projectId,
+          dirty: files.some((item) => item.record.id === file.id && item.dirty),
+        }))
     : []
   const visible = sortedFiles.filter(
     (file) =>
@@ -322,11 +419,11 @@ export default function HomePage({
   const projectModified = (project: Project) =>
     Math.max(
       project.updatedAt ?? project.createdAt,
-      ...files
+      ...[...fileMetrics.values()]
         .filter((file) =>
-          projectDescendants(projects, project.id).has(file.project.id),
+          projectDescendants(projects, project.id).has(file.projectId),
         )
-        .map((file) => file.record.updatedAt),
+        .map((file) => file.updatedAt),
     )
   const sortedProjects = [...projects].sort((a, b) =>
     currentView.sort === 'name'
@@ -522,7 +619,9 @@ export default function HomePage({
               flat
               count={(id) => {
                 const ids = projectDescendants(projects, id)
-                return files.filter((file) => ids.has(file.project.id)).length
+                return [...fileMetrics.values()].filter((file) =>
+                  ids.has(file.projectId),
+                ).length
               }}
             />
             <section
@@ -559,6 +658,7 @@ export default function HomePage({
                   onNewChild={onNewProject}
                   onRename={onRenameProject}
                   onCustomize={onCustomizeProject}
+                  onManageItem={onManageItem}
                 />
               )}
             </section>
@@ -631,8 +731,28 @@ export default function HomePage({
             <h1>
               {selected?.name ?? (browsingProjects ? 'Projects' : 'Canvases')}
             </h1>
+            {selected && onManageItem && (
+              <button
+                className="button secondary"
+                onClick={() =>
+                  onManageItem({
+                    kind: 'project',
+                    id: selected.id,
+                    projectId: selected.id,
+                    name: selected.name,
+                  })
+                }
+              >
+                Manage project
+              </button>
+            )}
           </div>
           <div className="home-actions">
+            {onOpenTrash && (
+              <button className="button secondary" onClick={onOpenTrash}>
+                Trash
+              </button>
+            )}
             {browsingProjects ? (
               <>
                 <button
@@ -732,6 +852,17 @@ export default function HomePage({
               onImport(targetProject?.id ?? null, selectedFiles)
           }}
         />
+        {snapshotCurrent && fileSnapshot.warning && (
+          <div className="home-library-recovery" role="status">
+            <p>{fileSnapshot.warning}</p>
+            <button
+              className="button secondary"
+              onClick={() => setRefresh((value) => value + 1)}
+            >
+              Retry loading saved files
+            </button>
+          </div>
+        )}
         {loading || !snapshotCurrent ? (
           <div className="home-empty" role="status">
             Loading files…
@@ -783,6 +914,7 @@ export default function HomePage({
                 onNewChild={onNewProject}
                 onRename={onRenameProject}
                 onCustomize={onCustomizeProject}
+                onManageItem={onManageItem}
                 search={search}
               />
             </div>
@@ -793,8 +925,8 @@ export default function HomePage({
                   project.presentation,
                   'folder',
                 )
-                const count = files.filter((file) =>
-                  projectDescendants(projects, project.id).has(file.project.id),
+                const count = [...fileMetrics.values()].filter((file) =>
+                  projectDescendants(projects, project.id).has(file.projectId),
                 ).length
                 return (
                   <article
@@ -842,6 +974,22 @@ export default function HomePage({
                         <small>.CLP</small>
                       </div>
                     </button>
+                    {onManageItem && (
+                      <button
+                        className="button secondary"
+                        aria-label={`Manage project ${project.name}`}
+                        onClick={() =>
+                          onManageItem({
+                            kind: 'project',
+                            id: project.id,
+                            projectId: project.id,
+                            name: project.name,
+                          })
+                        }
+                      >
+                        Manage
+                      </button>
+                    )}
                     {onCustomizeProject && (
                       <button
                         className="icon-button home-card-customize"
@@ -898,6 +1046,19 @@ export default function HomePage({
                     aria-label={`Open canvas ${record.document.name} in ${project.name}`}
                     title={`${record.document.name}.CLF`}
                     onClick={() => onOpenFile(project.id, record.id)}
+                    onContextMenu={
+                      onManageItem
+                        ? (event) => {
+                            event.preventDefault()
+                            onManageItem({
+                              kind: 'file',
+                              id: record.id,
+                              projectId: project.id,
+                              name: record.document.name,
+                            })
+                          }
+                        : undefined
+                    }
                   >
                     <div className="home-file-preview" aria-hidden="true">
                       <CanvasThumbnail document={record.document} />
@@ -927,6 +1088,22 @@ export default function HomePage({
                       <small>.CLF</small>
                     </div>
                   </button>
+                  {onManageItem && (
+                    <button
+                      className="button secondary"
+                      aria-label={`Manage canvas ${record.document.name}`}
+                      onClick={() =>
+                        onManageItem({
+                          kind: 'file',
+                          id: record.id,
+                          projectId: project.id,
+                          name: record.document.name,
+                        })
+                      }
+                    >
+                      Manage
+                    </button>
+                  )}
                   {onCustomizeFile && (
                     <button
                       className="icon-button home-card-customize"
@@ -966,6 +1143,17 @@ export default function HomePage({
             onNewChild={onNewProject}
             onRename={onRenameProject}
             onCustomize={onCustomizeProject}
+            onManage={
+              onManageItem
+                ? (project) =>
+                    onManageItem({
+                      kind: 'project',
+                      id: project.id,
+                      projectId: project.id,
+                      name: project.name,
+                    })
+                : undefined
+            }
           />
         )}
     </section>

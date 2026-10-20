@@ -39,6 +39,12 @@ type ToolValue = {
   affectedIds?: string[]
   error?: { code: string; message: string }
   total?: number
+  canvases?: {
+    sessionId: string
+    fileId: string
+    name: string
+    revision: number
+  }[]
 }
 function value(result: CallToolResult): ToolValue {
   expect(result.structuredContent).toBeDefined()
@@ -254,7 +260,7 @@ describe('official MCP client against the local companion', () => {
   it('initializes, advertises a narrow tool set and exposes no file, shell or save tools', async () => {
     expect(active.client.getServerVersion()).toMatchObject({
       name: 'canvas-live',
-      version: '0.2.0',
+      version: '0.3.0',
     })
     const listed = await active.client.listTools()
     expect(listed.tools.map((tool) => tool.name).sort()).toEqual(
@@ -266,6 +272,7 @@ describe('official MCP client against the local companion', () => {
         'delete_shape',
         'get_canvas_state',
         'get_shape',
+        'list_shared_canvases',
         'move_shape',
         'redo_operation',
         'reorder_layer',
@@ -845,6 +852,101 @@ describe('official MCP client against the local companion', () => {
 })
 
 describe('browser ownership and acknowledgment security', () => {
+  it('lists two explicit browser grants and routes real SDK edits only to the selected canvas', async () => {
+    await active.share()
+    const otherDocument = createCanvasDocument(
+      'Second explicitly shared canvas',
+    )
+    const response = await active.post('/bridge/connect', {
+      clientId: 'browser-two',
+      projectId: 'project-two',
+      fileId: 'file-two',
+      projectName: 'Second project',
+      document: otherDocument,
+    })
+    expect(response.status).toBe(200)
+    const other = (await response.json()) as BridgeResponse
+    const listed = value(await active.tool('list_shared_canvases'))
+    expect(listed.canvases).toEqual([
+      expect.objectContaining({
+        sessionId: active.sessionId,
+        fileId: 'file-one',
+      }),
+      expect.objectContaining({
+        sessionId: other.sessionId,
+        fileId: 'file-two',
+      }),
+    ])
+    expect(value(await active.tool('get_canvas_state')).error?.code).toBe(
+      'SELECT_CANVAS',
+    )
+    const secondRead = value(
+      await active.tool('get_canvas_state', { sessionId: other.sessionId }),
+    )
+    expect(secondRead).toMatchObject({
+      ok: true,
+      fileId: 'file-two',
+      elements: [],
+    })
+    const pending = active.tool('create_shape', {
+      sessionId: other.sessionId,
+      expectedRevision: 0,
+      operationId: 'second-canvas-edit',
+      element: rectangle,
+    })
+    let command: BridgeResponse['command']
+    for (let attempt = 0; attempt < 50 && !command; attempt++) {
+      const poll = await active.post('/bridge/poll', {
+        clientId: 'browser-two',
+        sessionId: other.sessionId,
+        revision: 0,
+        contentRevision: 0,
+        document: otherDocument,
+      })
+      command = ((await poll.json()) as BridgeResponse).command
+      if (!command) await delay(5)
+    }
+    expect(command?.sessionId).toBe(other.sessionId)
+    expect(
+      ((await (await active.poll()).json()) as BridgeResponse).command,
+    ).toBeUndefined()
+    const changed = applyCanvasCommand(otherDocument, {
+      kind: 'create',
+      element: rectangle,
+    }).document
+    const ack = await active.post('/bridge/poll', {
+      clientId: 'browser-two',
+      sessionId: other.sessionId,
+      revision: 1,
+      contentRevision: 1,
+      document: changed,
+      ack: {
+        requestId: command!.requestId,
+        ok: true,
+        revision: 1,
+        document: changed,
+      },
+    })
+    expect(ack.status).toBe(200)
+    expect(value(await pending)).toMatchObject({
+      ok: true,
+      sessionId: other.sessionId,
+      revision: 1,
+    })
+    expect(
+      value(
+        await active.tool('get_canvas_state', { sessionId: active.sessionId }),
+      ),
+    ).toMatchObject({ elements: [], revision: 0 })
+    await active.post('/bridge/disconnect', {
+      clientId: 'browser-two',
+      sessionId: other.sessionId,
+    })
+    expect(value(await active.tool('get_canvas_state')).sessionId).toBe(
+      active.sessionId,
+    )
+  })
+
   it('preserves the browser content stamp when an AI acknowledgment includes a later camera revision', async () => {
     expect(await active.share()).toMatchObject({ contentRevision: 0 })
     const pending = active.tool('create_shape', {
@@ -1051,12 +1153,12 @@ describe('browser ownership and acknowledgment security', () => {
     })
   })
 
-  it('refuses another tab and revokes in-flight work when sharing stops', async () => {
+  it('refuses a second owner of the same canvas and revokes in-flight work when sharing stops', async () => {
     await active.share()
     const second = await active.post('/bridge/connect', {
       clientId: 'browser-two',
-      projectId: 'other-project',
-      fileId: 'other-file',
+      projectId: 'project-one',
+      fileId: 'file-one',
       projectName: 'Other',
       document: createCanvasDocument('Other'),
     })

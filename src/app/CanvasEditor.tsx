@@ -114,6 +114,7 @@ import './canvas-quick-panel.css'
 
 export type CanvasEditorProps = {
   active?: boolean
+  allowBackgroundCommands?: boolean
   document: CanvasDocument
   grid: 'dots' | 'lines' | 'none'
   aiOpen: boolean
@@ -434,6 +435,7 @@ function objectLabel(element: CanvasElement) {
 
 export default function CanvasEditor({
   active = true,
+  allowBackgroundCommands = false,
   document,
   grid,
   aiOpen,
@@ -470,6 +472,7 @@ export default function CanvasEditor({
     ),
   )
   const activeRef = useRef(active)
+  const mountedRef = useRef(true)
   const currentHistory = useRef(history)
   const notified = useRef(document)
   const stage = useRef<HTMLDivElement>(null)
@@ -740,7 +743,7 @@ export default function CanvasEditor({
   }
 
   function executeBridgeCommand(command: BridgeCommand): CanvasCommandResult {
-    if (!activeRef.current)
+    if (!mountedRef.current || (!activeRef.current && !allowBackgroundCommands))
       throw new Error('Open this canvas before editing it.')
     if (gesture.current) throw new Error('Finish the current drag first.')
     if (inlineEditRef.current)
@@ -868,6 +871,13 @@ export default function CanvasEditor({
       activeRef.current = false
     }
   }, [active])
+
+  useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+    }
+  }, [])
 
   useEffect(() => {
     onControllerReady?.(controller.current)

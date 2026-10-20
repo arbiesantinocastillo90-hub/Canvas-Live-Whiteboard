@@ -28,4 +28,5 @@ export type BridgeResponse = {
   mcpClient: string | null
   mcpLastSeen: number | null
   lastOperation?: { summary: string; at: number } | null
+  activity?: { kind: 'read' | 'edit'; at: number } | null
 }
