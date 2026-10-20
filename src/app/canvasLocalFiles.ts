@@ -63,6 +63,23 @@ export function isMissingLocalCanvas(error: unknown): boolean {
       error.name === 'NotFoundError')
   )
 }
+export class LocalCanvasPermissionError extends Error {
+  constructor() {
+    super(
+      'The external .CLF file was not updated because this browser blocked file access. Use Save now to retry, open Canvas Live directly in Chrome or Edge, or download a copy.',
+    )
+    this.name = 'LocalCanvasPermissionError'
+  }
+}
+export function isLocalCanvasPermissionError(error: unknown): boolean {
+  return (
+    error instanceof LocalCanvasPermissionError ||
+    (!!error &&
+      typeof error === 'object' &&
+      'name' in error &&
+      ['NotAllowedError', 'SecurityError'].includes(String(error.name)))
+  )
+}
 export type LocalCanvasFiles = {
   get: (projectId: string, fileId: string) => Promise<LocalCanvasBinding | null>
   set: (
@@ -226,6 +243,8 @@ export async function writeLocalCanvas(
         }
       } catch (error) {
         if (isMissingLocalCanvas(error)) throw new LocalCanvasMissingError()
+        if (isLocalCanvasPermissionError(error))
+          throw new LocalCanvasPermissionError()
         throw error
       }
     })

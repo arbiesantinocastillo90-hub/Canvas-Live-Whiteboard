@@ -54,7 +54,7 @@ Full screen focuses on the current file, hides surrounding panels and fits visib
 
 Save options show the destination, Save now, Choose location and autosave timing. Native-library saves retain content in the package's `data/` folder. Supported browsers can also write a chosen physical `.CLF`; bound autosaving uses already granted permission. Browser recovery and current-tab drafts remain separate from a completed save. Export includes current unsaved document content. See [Save options](SAVE_OPTIONS.md) and [File formats](FILE_FORMATS.md).
 
-Home and Options retain the mounted editor and history while disabling commands and AI sharing. Switching files or projects begins fresh history. A completed drag or batch is one Undo step. History retains at most 100 prior snapshots within an estimated 32 MiB budget and is excluded from exported files.
+Home and Options retain the mounted editor and history while disabling manual canvas commands. An explicitly shared AI connection continues there; stopping sharing or switching files/projects ends its grant. Separate views can explicitly share different canvases. See [AI mini and shared canvases](AI_MINI.md). A completed drag or batch is one Undo step. History retains at most 100 prior snapshots within an estimated 32 MiB budget and is excluded from exported files.
 
 LCANVAS v2 is the current document payload. Supported v1 files migrate in memory, preserving geometry and camera; Save/export writes v2. Unknown versions or unsupported fields are rejected. Each document is bounded to 10 MiB, 5,000 objects and 100 layers. The native library rejects stale record revisions; it does not automatically merge concurrent canvas edits or provide real-time multiplayer.
 

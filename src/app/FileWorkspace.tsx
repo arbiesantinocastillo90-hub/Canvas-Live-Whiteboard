@@ -16,6 +16,7 @@ import CanvasEditor, {
   type EditorViewState,
 } from './CanvasEditor'
 import WorkspaceAI from './WorkspaceAI'
+import CanvasAiMini from './CanvasAiMini'
 import useMcpBridge from './useMcpBridge'
 import useCanvasFocus from './useCanvasFocus'
 import {
@@ -42,6 +43,8 @@ import {
   boundedAutosaveInterval,
   DEFAULT_AUTOSAVE_INTERVAL_MS,
   isMissingLocalCanvas,
+  isLocalCanvasPermissionError,
+  LocalCanvasPermissionError,
   localFilesFor,
   supportsLocalCanvasOpen,
   supportsLocalCanvasSave,
@@ -60,6 +63,7 @@ import {
   baseCanvasStore,
   canvasStoreWorkspace,
   scopedCanvasRecord,
+  isCanvasFileVisible,
 } from './canvasStoreScope'
 import {
   canvasFileStore,
@@ -353,6 +357,7 @@ export default function FileWorkspace({
   const rightPanel = focused ? focusRightPanel : layout.rightPanel
   const rightPinned = focused ? focusRightPinned : layout.rightPinned
   const aiOpen = rightPanel === 'ai'
+  const [miniSettingsOpen, setMiniSettingsOpen] = useState(false)
   const filesSide = layout.panelsSwapped ? 'right' : 'left'
   const toolsSide = layout.panelsSwapped ? 'left' : 'right'
   useCanvasDraftProtection(store)
@@ -381,6 +386,9 @@ export default function FileWorkspace({
       active.record.document,
       boundBaseline(store, active.record, localBinding),
     ),
+  )
+  const recoverySaved = Boolean(
+    sharedStoreActive && active && localDirty && !active.dirty,
   )
   useLayoutEffect(() => {
     entriesRef.current = entries
@@ -456,13 +464,15 @@ export default function FileWorkspace({
   const bridge = useMcpBridge({
     projectId: project.id,
     projectName: project.name,
-    fileId: workspaceActive ? activeId : null,
+    fileId: activeId,
     getController,
   })
-  const visible = entries.filter((entry) =>
-    entry.record.document.name
-      .toLocaleLowerCase()
-      .includes(search.trim().toLocaleLowerCase()),
+  const visible = entries.filter(
+    (entry) =>
+      isCanvasFileVisible(store, entry.record.id) &&
+      entry.record.document.name
+        .toLocaleLowerCase()
+        .includes(search.trim().toLocaleLowerCase()),
   )
 
   function toggleFocus() {
@@ -907,7 +917,10 @@ export default function FileWorkspace({
               ),
           ),
         )
-        let restored = mergeRecoveredDrafts(savedEntries, scopedRecovery)
+        let restored = mergeRecoveredDrafts(
+          savedEntries,
+          scopedRecovery,
+        ).filter((entry) => isCanvasFileVisible(store, entry.record.id))
         const remembered = await Promise.all(
           restored.map(async (entry) => {
             try {
@@ -945,7 +958,7 @@ export default function FileWorkspace({
               : entry
           }),
           scopedRecovery,
-        )
+        ).filter((entry) => isCanvasFileVisible(store, entry.record.id))
         if (sharedStoreActive)
           restored = restored.map((entry) => {
             const saved = files.find((record) => record.id === entry.record.id)
@@ -1708,19 +1721,15 @@ export default function FileWorkspace({
   ) {
     const previousSave = pendingFileSaves.current.get(id)
     // Ask only during the explicit save gesture; autosave may query existing grants only.
-    const permission = newTarget
-      ? Promise.resolve(true)
-      : allowLocalWrite(target.handle, interactive)
+    const permission = (
+      newTarget
+        ? Promise.resolve(true)
+        : allowLocalWrite(target.handle, interactive)
+    ).then(
+      (granted) => ({ granted }),
+      (failure: unknown) => ({ failure }),
+    )
     const task = (async () => {
-      if (!(await permission)) {
-        if (alive.current)
-          setPermissionIds((current) => new Set(current).add(id))
-        if (interactive)
-          throw new Error(
-            'Local file permission was not granted. Save again to allow access, or use Save as.',
-          )
-        return
-      }
       await previousSave?.catch(() => undefined)
       if (!alive.current || (!interactive && !workspaceActiveRef.current))
         return
@@ -1730,7 +1739,35 @@ export default function FileWorkspace({
       const expected = newTarget
         ? undefined
         : (latest?.savedDocument ?? target.savedDocument)
-      await writeLocalCanvas(target.handle, snapshot.document, expected)
+      try {
+        const result = await permission
+        if ('failure' in result) throw result.failure
+        if (!result.granted) throw new LocalCanvasPermissionError()
+        await writeLocalCanvas(target.handle, snapshot.document, expected)
+      } catch (failure) {
+        // Pause the external destination after any failed attempt. It keeps its
+        // old baseline; saving an owned copy must never imply a physical commit.
+        if (alive.current)
+          setPermissionIds((current) => new Set(current).add(id))
+        if (sharedStoreActive) {
+          try {
+            const entry = entriesRef.current.find(
+              (item) => item.record.id === id,
+            )
+            if (entry && !sameContent(entry.savedDocument, snapshot.document)) {
+              if (remoteConflicts.current.has(id))
+                throw new Error('This canvas changed in another view.')
+              const result = await store.save(snapshot)
+              rememberSaved(result.value, result.persistence)
+            }
+          } catch (recoveryFailure) {
+            throw new Error(
+              `The external .CLF file was not updated: ${message(failure)} The local-library recovery save also failed: ${message(recoveryFailure)} Your edits remain open; download a copy before closing.`,
+            )
+          }
+        }
+        throw failure
+      }
       const nextBinding = {
         ...target,
         autoSave: bindingsRef.current.get(id)?.autoSave ?? target.autoSave,
@@ -1785,7 +1822,7 @@ export default function FileWorkspace({
     }
   }
 
-  async function saveLibraryFile(id: string) {
+  async function saveLibraryFile(id: string, preserveExternalState = false) {
     const previous = pendingFileSaves.current.get(id)
     const task = (async () => {
       await previous?.catch(() => undefined)
@@ -1794,16 +1831,18 @@ export default function FileWorkspace({
       const result = await store.save(snapshot)
       rememberSaved(result.value, result.persistence)
       if (alive.current) {
-        setFailedSaveIds((current) => {
-          const next = new Set(current)
-          next.delete(id)
-          return next
-        })
-        setPermissionIds((current) => {
-          const next = new Set(current)
-          next.delete(id)
-          return next
-        })
+        if (!preserveExternalState) {
+          setFailedSaveIds((current) => {
+            const next = new Set(current)
+            next.delete(id)
+            return next
+          })
+          setPermissionIds((current) => {
+            const next = new Set(current)
+            next.delete(id)
+            return next
+          })
+        }
         if (result.error) setNotice(result.error)
       }
     })()
@@ -1826,19 +1865,35 @@ export default function FileWorkspace({
 
   function reportSaveFailure(id: string, failure: unknown, automatic = false) {
     if (!alive.current) return
+    const entry = entriesRef.current.find((item) => item.record.id === id)
+    const ownedCopySaved =
+      sharedStoreActive &&
+      entry &&
+      sameContent(entry.savedDocument, entry.record.document)
+    const prefix = ownedCopySaved
+      ? 'Your changes are saved in the Canvas Live local library. '
+      : ''
     if (isMissingLocalCanvas(failure)) {
       setMissingFileIds((current) => new Set(current).add(id))
-      setEntries((current) =>
-        current.map((entry) =>
-          entry.record.id === id ? { ...entry, dirty: true } : entry,
-        ),
-      )
+      if (!sharedStoreActive)
+        setEntries((current) =>
+          current.map((entry) =>
+            entry.record.id === id ? { ...entry, dirty: true } : entry,
+          ),
+        )
       setError(
-        'The local file was moved or deleted. Open Save options and choose a new location; your edits are still here.',
+        `${prefix}The local file was moved or deleted. Open Save options and choose a new location; your edits are still here.`,
       )
-    } else setError(message(failure))
+    } else
+      setError(
+        prefix +
+          (isLocalCanvasPermissionError(failure)
+            ? new LocalCanvasPermissionError().message
+            : message(failure)),
+      )
     setFailedSaveIds((current) => new Set(current).add(id))
-    if (automatic) setPermissionIds((current) => new Set(current).add(id))
+    if (automatic || isLocalCanvasPermissionError(failure))
+      setPermissionIds((current) => new Set(current).add(id))
   }
 
   async function saveFile(saveAs = false) {
@@ -1926,6 +1981,10 @@ export default function FileWorkspace({
     const entry = entriesRef.current.find((item) => item.record.id === id)
     if (!entry) return
     const target = bindingsRef.current.get(id)
+    const externalBlocked = Boolean(
+      target && (permissionIds.has(id) || missingFileIds.has(id)),
+    )
+    const libraryOnly = sharedStoreActive && externalBlocked
     const settings = target
       ? {
           autoSave: target.autoSave,
@@ -1937,21 +1996,22 @@ export default function FileWorkspace({
         })
     if (
       !settings.autoSave ||
-      permissionIds.has(id) ||
-      missingFileIds.has(id) ||
+      (!libraryOnly && (permissionIds.has(id) || missingFileIds.has(id))) ||
       pendingFileSaves.current.has(id) ||
       (!target && (!sharedStoreActive || remoteConflicts.current.has(id))) ||
+      (libraryOnly && remoteConflicts.current.has(id)) ||
       (sharedStoreActive ? sameContent : sameDocument)(
         entry.record.document,
-        target
+        target && !libraryOnly
           ? boundBaseline(store, entry.record, target)
           : entry.savedDocument,
       )
     )
       return
-    const save = target
-      ? saveBoundFile(id, target, false, false)
-      : saveLibraryFile(id)
+    const save =
+      target && !libraryOnly
+        ? saveBoundFile(id, target, false, false)
+        : saveLibraryFile(id, libraryOnly)
     void save.catch((failure: unknown) => reportSaveFailure(id, failure, true))
   })
   useEffect(() => {
@@ -1960,6 +2020,10 @@ export default function FileWorkspace({
       for (const entry of entries) {
         const id = entry.record.id
         const target = localBindings.get(id)
+        const externalBlocked = Boolean(
+          target && (permissionIds.has(id) || missingFileIds.has(id)),
+        )
+        const libraryOnly = sharedStoreActive && externalBlocked
         const settings = target
           ? {
               autoSave: target.autoSave,
@@ -1971,14 +2035,14 @@ export default function FileWorkspace({
             })
         if (
           !settings.autoSave ||
-          permissionIds.has(id) ||
-          missingFileIds.has(id) ||
+          (!libraryOnly && (permissionIds.has(id) || missingFileIds.has(id))) ||
           pendingFileSaves.current.has(id) ||
           (!target &&
             (!sharedStoreActive || remoteConflicts.current.has(id))) ||
+          (libraryOnly && remoteConflicts.current.has(id)) ||
           (sharedStoreActive ? sameContent : sameDocument)(
             entry.record.document,
-            target
+            target && !libraryOnly
               ? boundBaseline(store, entry.record, target)
               : entry.savedDocument,
           )
@@ -2065,17 +2129,18 @@ export default function FileWorkspace({
     void localBinding.handle.getFile().catch((failure: unknown) => {
       if (!cancelled && alive.current && isMissingLocalCanvas(failure)) {
         setMissingFileIds((current) => new Set(current).add(id))
-        setEntries((current) =>
-          current.map((entry) =>
-            entry.record.id === id ? { ...entry, dirty: true } : entry,
-          ),
-        )
+        if (!sharedStoreActive)
+          setEntries((current) =>
+            current.map((entry) =>
+              entry.record.id === id ? { ...entry, dirty: true } : entry,
+            ),
+          )
       }
     })
     return () => {
       cancelled = true
     }
-  }, [savePanelOpen, activeId, localBinding])
+  }, [savePanelOpen, activeId, localBinding, sharedStoreActive])
 
   function exportFile() {
     if (!activeId) return
@@ -2540,6 +2605,7 @@ export default function FileWorkspace({
                 key={`${active.record.id}:${editorEpochs[active.record.id] ?? 0}`}
                 document={active.record.document}
                 active={workspaceActive}
+                allowBackgroundCommands={bridge.status === 'sharing'}
                 grid={preferences.grid}
                 aiOpen={aiOpen}
                 rightInset={rightPanel === 'none' ? 0 : rightInset}
@@ -2616,6 +2682,15 @@ export default function FileWorkspace({
                 </button>
               </div>
             )}
+            <CanvasAiMini
+              scopeId={canvasStoreWorkspace(store) ?? project.id}
+              state={bridge}
+              onOpenAI={() => setAiOpen(true)}
+              onStopSharing={bridge.disconnect}
+              reduceMotion={preferences.reduceMotion}
+              settingsOpen={miniSettingsOpen}
+              onSettingsOpenChange={setMiniSettingsOpen}
+            />
           </div>
           <div
             className="file-statusbar"
@@ -2645,23 +2720,25 @@ export default function FileWorkspace({
               {active
                 ? savingIds.has(active.record.id)
                   ? 'Saving to file…'
-                  : active.dirty || localDirty
-                    ? 'Unsaved changes'
-                    : failedSaveIds.has(active.record.id)
-                      ? 'Save failed'
-                      : missingFileIds.has(active.record.id)
-                        ? 'Choose save location'
-                        : permissionIds.has(active.record.id)
-                          ? 'File access needed'
-                          : localBinding
-                            ? 'Saved to file'
-                            : downloadedIds.has(active.record.id)
-                              ? 'Download copy requested'
-                              : active.persistence === 'browser'
-                                ? sharedStoreActive
-                                  ? 'Local library'
-                                  : 'Browser copy'
-                                : 'Session only'
+                  : recoverySaved
+                    ? 'Local library saved · external file pending'
+                    : active.dirty || localDirty
+                      ? 'Unsaved changes'
+                      : failedSaveIds.has(active.record.id)
+                        ? 'Save failed'
+                        : missingFileIds.has(active.record.id)
+                          ? 'Choose save location'
+                          : permissionIds.has(active.record.id)
+                            ? 'File access needed'
+                            : localBinding
+                              ? 'Saved to file'
+                              : downloadedIds.has(active.record.id)
+                                ? 'Download copy requested'
+                                : active.persistence === 'browser'
+                                  ? sharedStoreActive
+                                    ? 'Local library'
+                                    : 'Browser copy'
+                                  : 'Session only'
                 : 'No canvas open'}
             </span>
             {bridge.status === 'sharing' && (
@@ -2767,6 +2844,7 @@ export default function FileWorkspace({
                 canvasName={active?.record.document.name ?? null}
                 bridge={bridge}
                 onClose={() => setAiOpen(false)}
+                onConfigureMini={() => setMiniSettingsOpen(true)}
               />
             </div>
           </div>
@@ -2802,6 +2880,7 @@ export default function FileWorkspace({
           canChooseLocation={supportsLocalCanvasSave()}
           needsLocation={Boolean(activeId && missingFileIds.has(activeId))}
           needsPermission={Boolean(activeId && permissionIds.has(activeId))}
+          recoverySaved={recoverySaved}
           onChange={(settings) => {
             void changeSaveSettings(settings)
           }}

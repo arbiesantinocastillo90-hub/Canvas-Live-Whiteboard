@@ -85,14 +85,15 @@ type Job = {
   timer: ReturnType<typeof setTimeout>
 }
 
-/** One explicit browser owner, one pending transaction, no filesystem access. */
-export class CanvasBridge {
+/** One explicitly shared canvas, one pending transaction, no filesystem access. */
+class CanvasSessionBridge {
   private owner: Owner | null = null
   private jobs = new Map<string, Job>()
   private pending: Job | null = null
   private mcpLastSeen: number | null = null
   private mcpClient: string | null = null
   private lastOperation: { summary: string; at: number } | null = null
+  private activity: { kind: 'read' | 'edit'; at: number } | null = null
   private readonly leaseMs: number
   private readonly operationMs: number
   constructor(leaseMs = 5000, operationMs = 8000) {
@@ -124,6 +125,7 @@ export class CanvasBridge {
     this.pending = null
     this.owner = null
     this.lastOperation = null
+    this.activity = null
     this.mcpLastSeen = null
   }
   close() {
@@ -149,12 +151,18 @@ export class CanvasBridge {
       )
     return this.owner
   }
+  current() {
+    if (this.owner && Date.now() - this.owner.lastSeen > this.leaseMs)
+      this.revoke()
+    return this.owner
+  }
   private status(): BridgeResponse {
     return {
       mcpClient:
         this.mcpLastSeen === null ? null : (this.mcpClient ?? 'MCP client'),
       mcpLastSeen: this.mcpLastSeen,
       lastOperation: this.lastOperation,
+      activity: this.activity,
     }
   }
   connect(input: unknown): BridgeResponse {
@@ -320,6 +328,7 @@ export class CanvasBridge {
         'The selected canvas has changed. Read its current state.',
       )
     this.mcpLastSeen = Date.now()
+    this.activity = { kind: 'read', at: this.mcpLastSeen }
     return { ...owner, document: structuredClone(owner.document) }
   }
   mutate(
@@ -401,6 +410,116 @@ export class CanvasBridge {
     }
     this.jobs.set(operationId, job)
     this.pending = job
+    this.activity = { kind: 'edit', at: Date.now() }
     return promise
+  }
+}
+
+/** Independent browser grants; knowing one session never authorizes another. */
+export class CanvasBridge {
+  private sessions = new Map<string, CanvasSessionBridge>()
+  private clientName: string | undefined
+  private readonly leaseMs: number
+  private readonly operationMs: number
+  constructor(leaseMs = 5000, operationMs = 8000) {
+    this.leaseMs = leaseMs
+    this.operationMs = operationMs
+  }
+
+  private liveSessions() {
+    for (const [id, bridge] of this.sessions)
+      if (!bridge.current()) this.sessions.delete(id)
+    return [...this.sessions.values()]
+  }
+  private selected(sessionId?: string) {
+    const sessions = this.liveSessions()
+    if (!sessions.length)
+      throw new BridgeError(
+        'NOT_SHARED',
+        'Open a canvas and choose Share this canvas in Workspace AI.',
+      )
+    if (sessionId) {
+      const selected = this.sessions.get(sessionId)
+      if (!selected)
+        throw new BridgeError(
+          'WRONG_SESSION',
+          'This sharing session has ended. List the shared canvases and read the intended canvas again.',
+        )
+      return selected
+    }
+    if (sessions.length !== 1)
+      throw new BridgeError(
+        'SELECT_CANVAS',
+        'Several canvases are shared. Call list_shared_canvases, then get_canvas_state with the intended sessionId.',
+      )
+    return sessions[0]
+  }
+  close() {
+    for (const session of this.sessions.values()) session.close()
+    this.sessions.clear()
+  }
+  identifyClient(name: string | undefined) {
+    this.clientName = name
+    for (const session of this.liveSessions()) session.identifyClient(name)
+  }
+  connect(input: unknown): BridgeResponse {
+    const data = connectSchema.parse(input)
+    const sessions = this.liveSessions()
+    const existing = sessions.find((bridge) => {
+      const owner = bridge.current()
+      return owner?.projectId === data.projectId && owner.fileId === data.fileId
+    })
+    if (existing) return existing.connect(data)
+    if (sessions.length >= 16)
+      throw new BridgeError(
+        'SHARING_LIMIT',
+        'Up to 16 canvases can be shared. Stop sharing one before adding another.',
+      )
+    const bridge = new CanvasSessionBridge(this.leaseMs, this.operationMs)
+    bridge.identifyClient(this.clientName)
+    const reply = bridge.connect(data)
+    this.sessions.set(reply.sessionId!, bridge)
+    return reply
+  }
+  disconnect(input: unknown) {
+    const data = disconnectSchema.parse(input)
+    const bridge = this.sessions.get(data.sessionId)
+    if (bridge?.current()?.clientId === data.clientId) {
+      bridge.disconnect(data)
+      this.sessions.delete(data.sessionId)
+    }
+    return { ok: true }
+  }
+  poll(input: unknown): BridgeResponse {
+    const data = pollSchema.parse(input)
+    return this.selected(data.sessionId).poll(data)
+  }
+  read(sessionId?: string) {
+    return this.selected(sessionId).read(sessionId)
+  }
+  list() {
+    return this.liveSessions().map((bridge) => {
+      const owner = bridge.read()
+      return {
+        sessionId: owner.sessionId,
+        revision: owner.revision,
+        project: { id: owner.projectId, name: owner.projectName },
+        fileId: owner.fileId,
+        name: owner.document.name,
+      }
+    })
+  }
+  mutate(
+    sessionId: string,
+    expectedRevision: number,
+    operationId: string,
+    command: BridgeCommand,
+  ): Promise<ToolOutcome> {
+    return this.selected(sessionId).mutate(
+      sessionId,
+      expectedRevision,
+      operationId,
+      command,
+    )
   }
 }

@@ -11,6 +11,7 @@ import {
   baseCanvasStore,
   canvasStoreWorkspace,
   createWorkspaceCanvasStore,
+  isCanvasFileVisible,
 } from './canvasStoreScope'
 import { projectDrafts } from './canvasDrafts'
 
@@ -50,6 +51,27 @@ function fixture(presented = true) {
 }
 
 describe('workspace canvas store isolation', () => {
+  it('hides workspace Trash from every file operation while retaining canonical data for restore', async () => {
+    const { base, original } = fixture()
+    let visible = false
+    const scoped = createWorkspaceCanvasStore(
+      base,
+      'workspace-a',
+      () => true,
+      () => undefined,
+      () => visible,
+    )
+    expect(isCanvasFileVisible(scoped, 'file')).toBe(false)
+    expect((await scoped.list('project')).value).toEqual([])
+    expect((await scoped.get('project', 'file')).value).toBeNull()
+    expect((await scoped.markOpened('project', 'file')).value).toBeNull()
+    await expect(scoped.save(original)).rejects.toThrow('in Trash')
+    expect(base.get).not.toHaveBeenCalled()
+    expect(base.save).not.toHaveBeenCalled()
+    visible = true
+    expect((await scoped.get('project', 'file')).value).toBe(original)
+    expect(isCanvasFileVisible(base, 'file')).toBe(true)
+  })
   it('decorates reads independently for two workspaces without mutating canonical records', async () => {
     const { base, original, presentation, revision } = fixture()
     const red = normalizeItemPresentation({

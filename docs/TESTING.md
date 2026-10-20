@@ -29,6 +29,7 @@ Vite normally serves `http://127.0.0.1:5173`. If that strict development port is
 | `npm run package:windows`                                                              | Build the portable Windows package                             |
 | `npm run test:launcher`                                                                | Native site/launcher checks on Windows                         |
 | `npm run test:library`                                                                 | Native library/media checks on Windows                         |
+| `npm run test:library:v2`                                                              | Native migration, catalog and per-record recovery checks       |
 | `npm run test:mcp`                                                                     | Run MCP protocol tests independently                           |
 | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/test-windows-mcp.ps1` | Portable companion checks on Windows                           |
 
@@ -36,7 +37,9 @@ Windows checks create disposable packages and manage their own processes. Read t
 
 ## Latest dated evidence
 
-The October 19 relationship endpoint revision passed 1,096 application tests across 181 suites, 64 MCP tests, types, lint, formatting, the production build and documentation/demo validation. Its 21 isolated production-browser scenarios cover both endpoint handles and all four sides, cancellation, protected targets, camera coordinates, Undo/Redo and saved-file reopening. See [endpoint verification](RELATIONSHIP_ENDPOINTS_VERIFICATION.md) for the actual build identity and installation checks.
+The October 20 [durable-library and AI refinement](BUGS_REFINEMENTS_VERIFICATION.md) passed 1,205 application tests across 91 test files, 71 MCP tests and 22 isolated production-browser scenarios. The same native source passed 67 new storage checks and 55 existing native library/media checks. Types, lint, formatting, the production build and documentation/demo validation also passed. The report records the build identity and distinguishes installation from cloud-account acceptance.
+
+The earlier October 19 [endpoint revision](RELATIONSHIP_ENDPOINTS_VERIFICATION.md) records 1,096 application tests and 21 browser scenarios for endpoint dragging and cancellation.
 
 The earlier October 18 interaction revision records:
 

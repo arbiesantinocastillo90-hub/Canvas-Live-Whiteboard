@@ -52,6 +52,7 @@ export type McpBridgeState = {
   mcpLastSeen: number | null
   lastOperation: string | null
   error: string | null
+  activity?: { kind: 'read' | 'edit'; at: number } | null
 }
 const INITIAL_STATE: McpBridgeState = {
   status: 'idle',
@@ -59,6 +60,7 @@ const INITIAL_STATE: McpBridgeState = {
   mcpLastSeen: null,
   lastOperation: null,
   error: null,
+  activity: null,
 }
 
 function scope(options: Options) {
@@ -255,6 +257,19 @@ export default function useMcpBridge(options: Options) {
       setState((previous) => ({
         ...previous,
         status: 'sharing',
+        activity:
+          reply.activity &&
+          typeof reply.activity === 'object' &&
+          'kind' in reply.activity &&
+          ['read', 'edit'].includes(String(reply.activity.kind)) &&
+          'at' in reply.activity &&
+          typeof reply.activity.at === 'number' &&
+          Number.isFinite(reply.activity.at)
+            ? {
+                kind: reply.activity.kind as 'read' | 'edit',
+                at: reply.activity.at,
+              }
+            : null,
         mcpClient:
           typeof reply.mcpClient === 'string'
             ? reply.mcpClient.slice(0, 120)

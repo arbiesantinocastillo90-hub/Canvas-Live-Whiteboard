@@ -1,6 +1,6 @@
 # Architecture
 
-Current implementation as of October 18, 2026. Canvas Live is a single-user, local-first React/TypeScript application with an optional MCP companion. Manual and AI edits use the same validated document operations. Real-time multi-user collaboration is future work.
+Current implementation as of October 19, 2026. Canvas Live is a single-user, local-first React/TypeScript application with an optional MCP companion. Manual and AI edits use the same validated document operations. Real-time multi-user collaboration is future work.
 
 ```mermaid
 flowchart TD
@@ -22,7 +22,7 @@ flowchart TD
 
 `App.tsx` owns Home, Work, Options and named workspaces. `HomePage.tsx` and `ProjectHierarchy.tsx` display projects belonging to the active workspace. Creation requires a destination project; projects may also be created at the workspace root. This is a logical parent choice, separate from physical file saving. Workspace membership and presentation metadata are separated so changing one workspace's cards does not restyle another's.
 
-`FileWorkspace.tsx` owns project files, tabs, saving and dock context. Home and Options retain the mounted editor and its history while making it inert, disabling canvas commands and revoking sharing. Switching documents or projects starts a new content history. Closing a tab does not delete its file.
+`FileWorkspace.tsx` owns project files, tabs, saving and dock context. Home and Options retain the mounted editor and its history while making manual controls inert. An explicitly shared connection can continue using the retained controller there; stopping sharing or unmounting revokes background command permission. Switching documents or projects starts a new content history and ends that view's grant. Closing a tab does not delete its file.
 
 `lcanvas.ts` validates the LCANVAS v2 payload and migrates supported v1 documents in memory. Stable identifiers link objects, connections and layers. Documents are bounded to 10 MiB, 5,000 elements and 100 layers; coordinates, references, colors and optional fields are validated. `.CLF`, `.CLP` and `.CLW` serve different document, project and workspace purposes; see [File formats](FILE_FORMATS.md).
 
@@ -38,11 +38,13 @@ Side handles start attached connections; transparent edge targets resize objects
 
 ## Persistence and recovery
 
-The development/browser-only app uses project-indexed IndexedDB documents and validated local metadata. The packaged app additionally uses `LocalLibrary.cs` and `localLibrary.ts` to persist a shared library in the package's `data/library.json`. Browser profiles connected to that running package use the same native library even when its loopback port changes. Browser-only storage remains specific to its profile and origin.
+The development/browser-only app uses project-indexed IndexedDB documents and validated local metadata. The packaged app uses `LocalLibrary.cs` and `localLibrary.ts` for individual atomic records in `data/library-v2/`, with project/workspace folders and previous-copy recovery. A staged conversion retains the earlier `library.json` and its backup. A lightweight catalog permits project browsing without downloading every drawing; bodies load by project and are cached by revision. Browser profiles connected to that package share its native library even when its loopback port changes. Browser-only storage remains specific to its profile and origin. See [local folders and recovery](DURABLE_LIBRARY.md).
 
 Native writes require an `If-Match` record revision; stale writes receive a conflict instead of silently replacing newer content. `librarySync.ts` merges locally changed metadata fields with the current stored metadata. These are optimistic save safeguards, not real-time multiplayer or automatic merging of concurrent canvas edits.
 
-`canvasRecovery.ts` retains dirty snapshots without overwriting newer explicit saves. `canvasLocalFiles.ts` stores user-selected native file handles separately and acknowledges writes after stream close. Bound autosaving uses already granted permission. Draft recovery, native-library saving, physical Save/Save as and portable Export are distinct paths; see [Save options](SAVE_OPTIONS.md).
+`canvasRecovery.ts` retains dirty snapshots without overwriting newer explicit saves. `canvasLocalFiles.ts` stores user-selected native file handles separately and acknowledges writes after stream close. Bound autosaving uses already granted permission. When an embedded view blocks external writes, a successful owned-library recovery commit is reported separately and the external baseline remains pending. Draft recovery, native-library saving, physical Save/Save as and portable Export are distinct paths; see [Save options](SAVE_OPTIONS.md).
+
+`workspaceTrash.ts` stores bounded workspace-local removal references, retaining canonical projects and files for restoration. Project moves change membership; file moves persist a destination record before hiding the source reference. Dirty drafts, ownership and destination checks prevent an action from silently discarding open work.
 
 `canvasMedia.ts` validates supported local media up to 20 MiB, stores binary data separately and references it by content hash. The native package keeps it in `data/media/`; appearance assets live in `data/appearance/`. Paused or minimized embeds unload players/frames. Website frames are sandboxed and subject to the provider's framing and authentication rules. An exported media reference does not contain the media bytes: portable backups must include the relevant data folder.
 
@@ -62,12 +64,14 @@ Named UI sessions, layout, backgrounds and exact/latest view links reference doc
 
 ## MCP authority and synchronization
 
-`server/http.ts` exposes authenticated Streamable HTTP with distinct random credentials for MCP access and browser pairing, exact Host/origin checks, bounded requests and rate limits. `server/tools.ts` registers 15 tools. Reads return at most 100 objects, batches contain at most 25 operations, and cumulative deletion is limited to 10 objects. No unrestricted filesystem, shell, browser, save/export or unrelated-document tools are exposed.
+`server/http.ts` exposes authenticated Streamable HTTP with distinct random credentials for MCP access and browser pairing, exact Host/origin checks, bounded requests and rate limits. `server/tools.ts` registers 16 tools, including `list_shared_canvases`. Reads return at most 100 objects, batches contain at most 25 operations, and cumulative deletion is limited to 10 objects. No unrestricted filesystem, shell, browser, save/export or unshared-document tools are exposed.
 
 The native discovery endpoint returns only its matching companion's address and browser pairing credential; the separate MCP access token is not returned to the browser. Sharing still requires an explicit **Share this canvas** action. Client identity is reported from the authenticated MCP initialization message; it does not establish which model is running.
 
-`useMcpBridge.ts` publishes committed state through sequential 500 ms polls. One browser tab owns the shared file. Writes carry session, revision and operation identifiers, are validated again by the editor and succeed only after browser acknowledgment. Active gestures reject edits; identical retries do not duplicate mutations. Expiring commands and revision checks reject late or stale writes. The session permits 128 logical operations before renewal.
+`useMcpBridge.ts` publishes committed state through sequential 500 ms polls. Each browser view owns one explicitly shared file; the companion supports up to 16 independent grants with separate pending transactions and retry histories. An untargeted read is rejected when several canvases are shared. Writes carry session, revision and operation identifiers, are validated again by the editor and succeed only after browser acknowledgment. Active gestures reject edits; identical retries do not duplicate mutations. Expiring commands and revision checks reject late or stale writes. Each session permits 128 logical operations before renewal.
 
-Content stamps exclude the viewport so completed camera navigation does not invalidate an otherwise current ordinary edit. Actual content changes invalidate older writes; Undo/Redo retain exact revision checks. Leaving Work, switching files, Stop sharing or a lost heartbeat revokes authority. Hiding the AI panel does not. Sharing includes unsaved content in that document; successful edits use the same history and save controls as manual edits.
+Content stamps exclude the viewport so completed camera navigation does not invalidate an otherwise current ordinary edit. Actual content changes invalidate older writes; Undo/Redo retain exact revision checks. Switching files/projects/workspaces, Stop sharing, closing the view or a lost heartbeat revokes authority. Home, Options and hiding the AI panel do not. Sharing includes unsaved content in that document; successful edits use the same history and save controls as manual edits.
+
+`CanvasAiMini.tsx` is a draggable UI overlay driven by reported client identity and observed read/edit activity. Its validated, workspace-scoped settings use ordinary library settings records; custom images use the existing appearance asset store. The mascot supports reduced motion and has no ability to execute arbitrary animation code. See [AI mini and sharing](AI_MINI.md).
 
 Local SDK and browser checks establish the local integration, not an external account's approval or live cloud editing. Cloud clients need their supported tunnel/HTTPS transport; Canvas Live does not call a model inference API. See [ChatGPT setup](CHATGPT_MCP.md), [MCP verification](MCP_VERIFICATION.md) and [current workspace verification](WORKSPACE_INTERACTIONS_VERIFICATION.md).

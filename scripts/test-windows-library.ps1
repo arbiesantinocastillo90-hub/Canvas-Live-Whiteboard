@@ -166,7 +166,9 @@ try {
     Assert-Library ($metadata.Status -eq 200 -and $metadata.Json.revision -eq 1) 'Independent canonical metadata is durably stored'
     $crossClient = Invoke-LibraryRequest $url $target
     Assert-Library ($crossClient.Status -eq 200 -and $crossClient.Json.value.id -eq 'test-file') 'A separate HTTP connection reads the identical saved file'
-    $libraryPath = Join-Path $taskPackage 'data/library.json'
+    $taskProjectHash = (Image-Hash ([Text.Encoding]::UTF8.GetBytes('project'))).Substring(0, 32)
+    $taskFileHash = (Image-Hash ([Text.Encoding]::UTF8.GetBytes($fileKey))).Substring(0, 32)
+    $libraryPath = Join-Path $taskPackage ('data/library-v2/projects/' + $taskProjectHash + '/canvases/' + $taskFileHash + '.json')
     $beforeConflict = (Get-FileHash -LiteralPath $libraryPath -Algorithm SHA256).Hash
     $canvas.document.name = 'Rejected stale edit'
     $stale = Invoke-LibraryPut $url $fileKey $canvas 0
@@ -196,10 +198,10 @@ try {
     $canvas.updatedAt = 2
     $updated = Invoke-LibraryPut $url $fileKey $canvas 1
     Assert-Library ($updated.Status -eq 200 -and $updated.Json.revision -eq 2) 'Current revision commits the next canvas edit'
-    $backupPath = Join-Path $taskPackage 'data/library.previous.json'
+    $backupPath = $libraryPath.Replace('.json', '.previous.json')
     $backup = ConvertFrom-Json -InputObject (Get-Content -LiteralPath $backupPath -Raw)
-    Assert-Library ($backup.entries.PSObject.Properties[$fileKey].Value.value.document.name -eq 'Original') 'Atomic replacement retains the previous valid library as a backup'
-    Assert-Library (@(Get-ChildItem -LiteralPath (Join-Path $taskPackage 'data') -Filter 'library-*.tmp').Count -eq 0) 'Completed writes leave no partial transaction files'
+    Assert-Library ($backup.key -eq $fileKey -and $backup.value.document.name -eq 'Original') 'Atomic replacement retains the previous valid canvas record as a backup'
+    Assert-Library (@(Get-ChildItem -LiteralPath (Join-Path $taskPackage 'data') -Filter 'write-*.tmp' -Recurse).Count -eq 0) 'Completed writes leave no partial record transaction files'
     Stop-OwnedLauncher
     $url = Start-OwnedLauncher
     $reopened = Invoke-LibraryRequest $url $target

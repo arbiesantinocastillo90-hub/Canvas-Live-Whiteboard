@@ -11,7 +11,7 @@ View state and canvas content are saved independently. Moving the camera in the 
 
 ## Where the files live
 
-The Windows executable now stores its shared library inside **data/library.json**, beside the executable. It writes atomically and retains the previous successful library as **data/library.previous.json**. Keep this data folder with the app and include it in your backups. Browser saves are migrated into the library when their IDs do not already have a saved native copy. Existing drafts and chosen local file bindings remain in their original browser profile.
+The Windows executable stores its shared library in **data/library-v2/** beside the executable, with automatic project/workspace folders, individual atomic record saves and previous copies. Home reads a lightweight catalog instead of downloading every drawing. Existing **data/library.json** and **data/library.previous.json** are retained after the staged upgrade. See [durable folders and recovery](DURABLE_LIBRARY.md) before updating or downgrading a package. Keep the complete data folder with the app and include it in your backups. Browser saves are migrated when their IDs do not already have a saved native copy. Existing drafts and chosen local file bindings remain in their original browser profile.
 
 The same running executable serves all browser profiles and embedded views on its loopback address. The native library is available without the AI companion or a Node installation. It accepts bounded JSON records and revision-checked writes only; it does not expose arbitrary filesystem paths. A conflicting save is rejected. Storage failures retain existing data and appear in session notifications.
 

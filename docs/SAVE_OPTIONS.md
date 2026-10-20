@@ -14,3 +14,5 @@ Physical autosave uses only existing permission grants. It never opens a chooser
 If a selected file is moved or deleted, Canvas Live stops automatic writes, retains the editable draft and recovery protection, and reports the missing destination. Open Save options and choose a replacement, or use Save now after the missing file has been detected. The next picker begins from that explicit gesture. Cancelling the chooser keeps the draft and previous binding. A conflicting external edit is protected separately; it is never treated as permission to recreate or overwrite a file.
 
 Automated checks use controlled file handles and an isolated browser profile. They do not exercise the user's physical files or a real Windows chooser.
+
+The native package now stores independent canvas records in automatic project/workspace folders. Creation and duplication save immediately. A blocked external write can retain an owned-library recovery copy while the linked `.CLF` remains pending. Save options distinguish those outcomes, pause repeated external retries and offer Download copy. See [local folders, Trash and recovery](DURABLE_LIBRARY.md).

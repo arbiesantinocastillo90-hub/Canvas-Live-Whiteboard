@@ -14,7 +14,9 @@ The optional **Canvas Live MCP.exe** icon at the USB root is a small forwarder w
 2. Choose **Share this canvas**. The packaged app finds the companion belonging to its own folder; no pairing-code copy is normally needed.
 3. Add the companion to your chosen MCP-compatible AI client and approve that client's connection. Local clients use the address in the MCP status window and the bearer token available through **Copy MCP access token**.
 
-The canvas panel shows project, canvas, and connected-client information only while sharing. The client name comes from the authenticated MCP client's initialization message. It may identify Claude, ChatGPT, Codex, or another client; it is client-reported information and does not prove which model is running. A model name is not guessed. Stop sharing, change files, or leave Work to revoke the canvas session. Ordinary AI edits appear live and participate in Undo. Saving retains the edits.
+The canvas panel shows project, canvas, and connected-client information only while sharing. The client name comes from the authenticated MCP client's initialization message. It may identify Claude, ChatGPT, Codex, or another client; it is client-reported information and does not prove which model is running. A model name is not guessed. Sharing continues on Home and Options. Stop sharing, change that view's file/project/workspace, or close the view to revoke its canvas session. Ordinary AI edits appear live and participate in Undo. Saving retains the edits.
+
+To share another canvas, open another Canvas Live view and explicitly share it there. The companion supports up to 16 independent grants; clients use `list_shared_canvases` and select the intended session before reading or editing. The [AI mini guide](AI_MINI.md) explains the interactive connection indicator and its customization.
 
 Sharing includes unsaved canvas content. A cloud AI client may send that content to its provider. The companion exposes validated canvas operations only. It does not provide arbitrary file, shell, browser, or computer access.
 

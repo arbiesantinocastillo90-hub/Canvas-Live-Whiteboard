@@ -14,11 +14,12 @@ The screenshot uses the [included sample canvas](examples/portfolio-demo.CLF), w
 
 ## What you can do
 
-- Organize workspaces, nested projects and canvases, with explicit creation destinations and independent appearance settings.
+- Organize workspaces, nested projects and canvases, with explicit creation destinations, recoverable Trash, moves between workspaces and independent appearance settings.
 - Edit shapes, text, areas and attached relationships. Drag either relationship endpoint to another object's side; blank drops keep its previous attachment. Use group selection, text formatting, snapping, expandable layers, layer dragging and Undo/Redo.
 - Add images, GIFs, audio, video, websites and supported documents. Pause or minimize embeds; website interactivity depends on the provider's framing policy.
-- Save and recover local work, import/export validated `.CLF`, `.CLP` and `.CLW` files, and copy exact/latest local workspace links.
-- Share one canvas with an MCP client through 15 bounded tools. Edits use the same validated operations as manual editing.
+- Save and recover local work using individual native records and automatic project/workspace folders. Import/export validated `.CLF`, `.CLP` and `.CLW` files, and copy exact/latest local workspace links.
+- Explicitly share canvases from separate views through 16 bounded MCP tools. Edits use the same validated operations as manual editing, and sharing continues on Home and Options.
+- Customize an interactive AI mini with its appearance, motion and status bubbles. Client logos identify reported clients; activity reflects observed MCP events.
 - Build a Windows package containing the local site, C# launchers and a verified Node runtime for the optional companion.
 
 ## Try it from source
@@ -64,7 +65,7 @@ Read the [case study](docs/CASE_STUDY.md) for the problem, tradeoffs and lessons
 
 The [timeline](docs/TIMELINE.md) links real commits and retains their timezone offsets. The [roadmap](docs/ROADMAP.md) separates delivered behavior, remaining acceptance work and future scope. Dates describe evidence and commits, not estimated effort or retroactively assigned deadlines.
 
-The October 19 endpoint revision passed **1,096 application tests**, **64 MCP protocol tests**, and **21 isolated browser scenarios**. The earlier October 18 interaction record includes a real local MCP read/edit/Undo round trip. Native media and portable-launcher checks are recorded separately; overlapping runs are not added into one total. See [endpoint verification](docs/RELATIONSHIP_ENDPOINTS_VERIFICATION.md), [interaction verification](docs/WORKSPACE_INTERACTIONS_VERIFICATION.md) and [testing instructions](docs/TESTING.md).
+The October 20 refinement passed **1,205 application tests**, **71 MCP protocol tests**, and **22 isolated browser scenarios**, plus **67 new native storage checks** and **55 existing native checks**. Browser evidence includes two independent shared canvases, background AI editing, mini customization, iframe save recovery and damaged-record recovery. These are separate executions; overlapping focused runs are not added to their totals. See [refinement verification](docs/BUGS_REFINEMENTS_VERIFICATION.md) and [testing instructions](docs/TESTING.md).
 
 ```sh
 npm run check

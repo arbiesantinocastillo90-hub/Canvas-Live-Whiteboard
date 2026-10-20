@@ -52,6 +52,8 @@ function server() {
     expect(init?.redirect).toBe('error')
     if (path === '/__canvas_live_library')
       return response({ version: 1, entries: structuredClone(entries) })
+    if (path === '/__canvas_live_library/catalog')
+      return response({ error: 'Legacy host' }, 404)
     const key = decodeURIComponent(path.slice('/__canvas_live_library/'.length))
     if (method === 'GET')
       return response(
@@ -137,7 +139,7 @@ describe('native local library transport', () => {
     document.head.append(meta)
     expect(await client.initialize()).toEqual({ available: true })
     expect(client.available).toBe(true)
-    expect(native.fetcher).toHaveBeenCalledOnce()
+    expect(native.fetcher).toHaveBeenCalledTimes(2)
     const forced = createLocalLibraryClient({
       fetch: native.fetcher,
       enabled: () => false,
@@ -233,9 +235,9 @@ describe('native local library transport', () => {
   it.each([
     { version: 2, entries: {} },
     { version: 1, entries: { 'file:invalid/key': { revision: 1, value: {} } } },
-    { version: 1, entries: { 'file:YWJj': { revision: 0, value: {} } } },
-    { version: 1, entries: { 'file:YWJj': { revision: 1.5, value: {} } } },
-    { version: 1, entries: { 'file:YWJj': { revision: 1, value: [] } } },
+    { version: 1, entries: { 'metadata:YWJj': { revision: 0, value: {} } } },
+    { version: 1, entries: { 'metadata:YWJj': { revision: 1.5, value: {} } } },
+    { version: 1, entries: { 'metadata:YWJj': { revision: 1, value: [] } } },
     {
       version: 1,
       entries: Object.fromEntries(
@@ -521,7 +523,10 @@ describe('shared physical-library canvas store', () => {
       revision: 2,
       value: { ...file, projectId: 'project', document: { bad: true } },
     }
-    await expect(store.list('project')).rejects.toThrow()
+    expect(await store.list('project')).toMatchObject({
+      value: [],
+      error: expect.stringContaining('could not be loaded'),
+    })
     await expect(store.get('project', 'file')).rejects.toThrow()
     native.entries[libraryKey('file', 'file')] = {
       revision: 3,

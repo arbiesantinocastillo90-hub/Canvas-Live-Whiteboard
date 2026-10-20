@@ -31,7 +31,9 @@ The C# launchers use the target computer's .NET Framework runtime. Microsoft's r
 
 ## Fonts, branding and historical engine evaluation
 
-The app has no redistributed fonts. CSS requests system fonts. Controls use original SVG and the owner's supplied logo; embedded user media is user content, not a bundled dependency.
+The app has no redistributed fonts. CSS requests system fonts. Controls and mascot presets use original SVG, alongside the owner's supplied app logo. Embedded user media is user content, not a bundled dependency.
+
+The AI mini also displays unchanged official OpenAI, Claude and Anthropic marks to identify reported MCP clients. These marks retain their owners' trademark rights and are excluded from the project's MIT grant. Their exact sources and usage context are recorded in [the bundled marks notice](../public/assets/ai-clients/NOTICE.txt) and [the mini guide](AI_MINI.md). The notice ships with the assets and is appended to the production `THIRD_PARTY_NOTICES.txt`. Marks remain static and separate from the customizable mascot; their display does not establish endorsement or verify a model.
 
 Excalidraw is not installed or redistributed. Its October 9 evaluation considered MIT code and separately licensed OFL font assets, with a remaining transitive/font review and runtime proof. The project subsequently implemented its original SVG editor. The engine evaluation is deferred, not a blocking requirement or a license approval for future adoption. Reopen that review if the dependency is actually proposed; see [the historical inspection](INSPECTION.md) and [decisions](DECISIONS.md).
 

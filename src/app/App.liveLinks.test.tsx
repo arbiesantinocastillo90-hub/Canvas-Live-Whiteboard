@@ -303,6 +303,88 @@ describe('live view links in the application', () => {
     )
   })
 
+  it('resumes the latest modified canvas when Work has no mounted view yet', async () => {
+    const { beta } = await fixture()
+    await canvasFileStore.save({ ...beta, updatedAt: Date.now() + 60_000 })
+    render(<App />)
+    expect(
+      screen.queryByRole('region', { name: 'Alpha canvas view' }),
+    ).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Work' }))
+    await screen.findByRole('region', { name: 'Beta canvas view' })
+    expect(screen.getByRole('tab', { name: 'Beta' })).toHaveAttribute(
+      'aria-selected',
+      'true',
+    )
+  })
+
+  it('returns to the mounted exact view with its Undo history and MCP grant when another canvas is newer', async () => {
+    const { beta } = await fixture()
+    const first = render(<App />)
+    await openWork()
+    const url = await copyLink('exact')
+    first.unmount()
+    projectDrafts(canvasFileStore).clear()
+    await canvasFileStore.save({ ...beta, updatedAt: Date.now() + 60_000 })
+    window.history.replaceState({}, '', new URL(url).hash)
+
+    const fetchMock = vi.fn((url: string) =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify(
+            url.endsWith('/bridge/connect')
+              ? { sessionId: 'exact-view-session', revision: 0 }
+              : { mcpClient: null, mcpLastSeen: null, ok: true },
+          ),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+      ),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    render(<App />)
+    const originalView = await screen.findByRole('region', {
+      name: 'Alpha canvas view',
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Open right panel' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Add rectangle' }))
+    await screen.findByLabelText('Alpha: 2 visible objects')
+    fireEvent.click(screen.getByRole('tab', { name: 'AI' }))
+    fireEvent.click(screen.getByText('Use a pairing code instead'))
+    fireEvent.change(screen.getByLabelText('Browser pairing code'), {
+      target: { value: 'exact-view-test-pairing-code-only' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Pair and share' }))
+    await screen.findByText('This canvas is shared')
+
+    fireEvent.click(screen.getByRole('link', { name: 'Canvas Live home' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Options' }))
+    const list = vi.spyOn(canvasFileStore, 'list')
+    fireEvent.click(screen.getByRole('button', { name: 'Work' }))
+    await waitFor(() =>
+      expect(screen.getByRole('region', { name: 'Alpha canvas view' })).toBe(
+        originalView,
+      ),
+    )
+    expect(list).not.toHaveBeenCalled()
+    expect(screen.getByRole('tab', { name: /Alpha/u })).toHaveAttribute(
+      'aria-selected',
+      'true',
+    )
+    expect(screen.getByText('This canvas is shared')).toBeInTheDocument()
+    expect(
+      fetchMock.mock.calls.filter(([url]) =>
+        url.endsWith('/bridge/disconnect'),
+      ),
+    ).toHaveLength(0)
+    expect(
+      fetchMock.mock.calls.filter(([url]) => url.endsWith('/bridge/connect')),
+    ).toHaveLength(1)
+    fireEvent.click(screen.getByRole('button', { name: 'Undo' }))
+    expect(
+      screen.getByLabelText('Alpha: 1 visible objects'),
+    ).toBeInTheDocument()
+  })
+
   it('retains a newly moved camera when an exact-linked project is left and reopened', async () => {
     const { projectId } = await fixture()
     const otherId = `other-project-${sequence}`

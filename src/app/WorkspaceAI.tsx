@@ -8,11 +8,13 @@ export default function WorkspaceAI({
   canvasName,
   bridge,
   onClose,
+  onConfigureMini,
 }: {
   projectName: string
   canvasName: string | null
   bridge: ReturnType<typeof useMcpBridge>
   onClose: () => void
+  onConfigureMini?: () => void
 }) {
   const [pairingCode, setPairingCode] = useState('')
   const sharing = bridge.status === 'sharing'
@@ -134,14 +136,27 @@ export default function WorkspaceAI({
           </details>
         </>
       )}
+      {onConfigureMini && (
+        <button className="button secondary" onClick={onConfigureMini}>
+          Customize AI mini
+        </button>
+      )}
       <details className="ai-setup ai-sharing-details">
         <summary>Sharing details</summary>
         <p>
           The connected AI can read and edit this canvas, including unsaved
           content. Cloud clients may send it to their AI provider. Save keeps AI
-          edits; Undo reverses them. Switching files or leaving Work stops
-          sharing.
+          edits; Undo reverses them. Sharing continues on Home and Options. Stop
+          sharing, close this view, or switch files to end its grant.
         </p>
+        <p>
+          For several canvases, open each in a separate Canvas Live view and
+          share it there. The AI can list the shared canvases and select one by
+          its session ID. Unshared canvases remain private.
+        </p>
+        <a href="/" target="_blank" rel="noopener noreferrer">
+          Open another Canvas Live view
+        </a>
       </details>
       <details className="ai-setup">
         <summary>Connect your AI</summary>

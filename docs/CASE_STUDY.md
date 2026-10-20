@@ -10,7 +10,7 @@ The initial target is one person on a Windows laptop with local storage and a po
 
 The implementation uses React and TypeScript for the workspace, an original SVG renderer, validated JSON documents, and a shared operations/history layer. The workspace adds project organization, physical file saving and recovery, layers, relationships, text controls and media embeds.
 
-A separate Node MCP companion provides 15 tools for the canvas explicitly shared by its browser user. C# launchers serve the packaged website and manage the companion with bundled Node. The native package retains saved library data and binary assets beside the executable.
+A separate Node MCP companion provides 16 tools for canvases explicitly shared by their browser views. C# launchers serve the packaged website and manage the companion with bundled Node. The native package retains saved library data and binary assets beside the executable, with individual recoverable records and automatic project/workspace folders.
 
 The [timeline](TIMELINE.md) connects increments to Git commits. The [roadmap](ROADMAP.md) records remaining acceptance criteria.
 
@@ -26,7 +26,7 @@ The cost is implementing the custom editor's own gestures, geometry, text layout
 
 Pan and zoom change the viewport, but ordinary AI content edits should not fail merely because the person navigated. The revision model separates content changes from camera changes while preserving checks for actual conflicting edits. Undo/Redo retain stricter history expectations.
 
-This is a limited conflict model for one shared canvas. It does not implement real-time multiplayer or automatically merge simultaneous document edits.
+Each explicitly shared canvas has an independent conflict and retry history. This does not implement real-time multiplayer or automatically merge simultaneous document edits.
 
 ### An edit needs a browser acknowledgment
 
@@ -38,13 +38,19 @@ These controls make a local round trip testable. An external ChatGPT account and
 
 Logical workspaces, canvas content, physical file handles, media blobs and credentials have different lifetimes. They are not embedded in one export. Native writes use optimistic record revisions; draft recovery protects unsaved work; media is stored separately from library JSON.
 
-Sharing grants access to one canvas. Switching files or stopping sharing revokes the session. MCP does not expose arbitrary filesystem, shell or browser access, and does not save edits automatically.
+Each view grants access to one canvas, and separate views can grant independent sessions. Switching that view's files or stopping sharing revokes its session; Home and Options retain it. MCP does not expose arbitrary filesystem, shell or browser access, and does not save edits automatically.
+
+### Isolate storage failures and expose recovery
+
+A monolithic library made unrelated drawings part of the same load and write. The native library now keeps atomic per-record saves with previous copies, rebuildable project/workspace descriptors and a lightweight catalog. Home can list projects without downloading their drawing bodies. The original library remains available after migration, and an unreadable record is isolated instead of triggering an empty reset.
+
+An external `.CLF` and the owned library are distinct destinations. If an embedded browser blocks an external write, the app can keep a recovery copy in its own library while clearly reporting that the external file is pending. Workspace Trash and moves retain canonical data, and a destination copy is saved before the source is hidden. See [durable storage](DURABLE_LIBRARY.md).
 
 ## Verification and its limits
 
 Verification combines operation/schema tests, UI component tests, real SDK protocol tests, native Windows checks and isolated Chrome scenarios. Browser checks inspect rendered output and gestures; component tests alone do not establish visual correctness.
 
-The October 19 [relationship endpoint revision](RELATIONSHIP_ENDPOINTS_VERIFICATION.md) passed 1,096 application tests, 64 MCP tests and 21 browser scenarios. The October 18 interaction record retains its earlier results, including a local MCP read/edit/Undo workflow. These are dated executions, not a coverage percentage or a production-readiness claim. Additional native runs overlap with earlier app suites and are listed separately in [testing](TESTING.md).
+The October 20 [durable-library and AI refinement](BUGS_REFINEMENTS_VERIFICATION.md) passed 1,205 application tests, 71 MCP tests and 22 browser scenarios, with native suites of 67 new and 55 existing checks. The earlier endpoint and interaction reports retain their own results. These are dated executions, not a coverage percentage or a production-readiness claim. Focused runs overlap with full suites and are listed separately in [testing](TESTING.md).
 
 The current owner's ChatGPT workflow awaits tunnel runtime-key setup and a successful call through that account. Another physical PC, school restrictions, large-board performance and broader assistive-technology behavior remain open.
 

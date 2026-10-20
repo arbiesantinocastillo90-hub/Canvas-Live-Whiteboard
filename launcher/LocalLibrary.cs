@@ -19,6 +19,13 @@ internal sealed class LocalLibrary
     private readonly string folder;
     private readonly JavaScriptSerializer json = new JavaScriptSerializer { MaxJsonLength = MaxLibrary, RecursionLimit = 64 };
     private Dictionary<string, object> entries;
+    private readonly Dictionary<string, string> recordPaths = new Dictionary<string, string>(StringComparer.Ordinal);
+    private readonly Dictionary<string, object> issues = new Dictionary<string, object>(StringComparer.Ordinal);
+    private readonly HashSet<string> blocked = new HashSet<string>(StringComparer.Ordinal);
+    private readonly HashSet<string> blockedHashes = new HashSet<string>(StringComparer.Ordinal);
+    private readonly HashSet<string> recovered = new HashSet<string>(StringComparer.Ordinal);
+    private readonly Dictionary<string, string> descriptorHashes = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+    private long storedBytes;
 
     internal LocalLibrary(string directory) { folder = Path.GetFullPath(directory); }
 
@@ -28,41 +35,286 @@ internal sealed class LocalLibrary
             if ((File.Exists(current) || Directory.Exists(current)) && (File.GetAttributes(current) & FileAttributes.ReparsePoint) != 0)
                 throw new IOException("Local library folders must not contain links.");
     }
-    private void Load()
+    private string V2Folder { get { return Path.Combine(folder, "library-v2"); } }
+    private static bool ValidKey(string key) { return Regex.IsMatch(key, "^(file|metadata|sessions|latest|view|settings):[A-Za-z0-9_-]{1,280}$"); }
+    private static string Digest(string text)
     {
-        if (entries != null) return;
-        Ordinary(folder);
-        string file = Path.Combine(folder, "library.json");
-        Ordinary(file);
-        if (!File.Exists(file)) { entries = new Dictionary<string, object>(StringComparer.Ordinal); return; }
-        if (new FileInfo(file).Length > MaxLibrary) throw new IOException("The local library is too large.");
-        var root = json.DeserializeObject(File.ReadAllText(file, Encoding.UTF8)) as Dictionary<string, object>;
-        if (root == null || !root.ContainsKey("version") || Convert.ToInt32(root["version"], CultureInfo.InvariantCulture) != 1 || !root.ContainsKey("entries")) throw new IOException("The local library is invalid; its saved file was retained.");
-        var loaded = root["entries"] as Dictionary<string, object>;
-        if (loaded == null || loaded.Count > 2000) throw new IOException("The local library is invalid; its saved file was retained.");
-        foreach (var item in loaded)
-        {
-            var entry = item.Value as Dictionary<string, object>;
-            if (!Regex.IsMatch(item.Key, "^(file|metadata|sessions|latest|view|settings):[A-Za-z0-9_-]{1,280}$") || entry == null || !entry.ContainsKey("revision") || !entry.ContainsKey("value") || !(entry["value"] is Dictionary<string, object>) || Convert.ToInt64(entry["revision"], CultureInfo.InvariantCulture) < 1)
-                throw new IOException("The local library is invalid; its saved file was retained.");
-        }
-        entries = loaded;
+        // Stable 128-bit names keep nested portable paths below legacy Windows limits.
+        // The complete key is stored and verified inside every record.
+        using (SHA256 hash = SHA256.Create()) return BitConverter.ToString(hash.ComputeHash(Encoding.UTF8.GetBytes(text))).Replace("-", "").ToLowerInvariant().Substring(0, 32);
     }
-    private void Persist(Dictionary<string, object> next)
+    private static string EncodedKey(string kind, string id) { return kind + ":" + Convert.ToBase64String(Encoding.UTF8.GetBytes(id)).TrimEnd('=').Replace('+', '-').Replace('/', '_'); }
+    private static Dictionary<string, object> ObjectValue(object value) { return value as Dictionary<string, object>; }
+    private static bool ValidEntry(Dictionary<string, object> entry)
     {
-        Ordinary(folder);
-        Directory.CreateDirectory(folder);
-        string target = Path.Combine(folder, "library.json"), backup = Path.Combine(folder, "library.previous.json");
-        Ordinary(target); Ordinary(backup);
-        byte[] bytes = new UTF8Encoding(false, true).GetBytes(json.Serialize(new Dictionary<string, object> { { "version", 1 }, { "entries", next } }));
-        if (bytes.Length > MaxLibrary) throw new IOException("The local library is full. Export your projects before adding more.");
-        string temporary = Path.Combine(folder, "library-" + Guid.NewGuid().ToString("N") + ".tmp");
+        object revision, value; long number;
+        return entry != null && entry.TryGetValue("revision", out revision) && !(revision is string) && !(revision is bool) && Int64.TryParse(Convert.ToString(revision, CultureInfo.InvariantCulture), NumberStyles.None, CultureInfo.InvariantCulture, out number) && number >= 1 && number < 9007199254740991L && entry.TryGetValue("value", out value) && value is Dictionary<string, object>;
+    }
+    private static bool DateValue(object value)
+    {
+        long number;
+        return value != null && !(value is string) && !(value is bool) && Int64.TryParse(Convert.ToString(value, CultureInfo.InvariantCulture), NumberStyles.None, CultureInfo.InvariantCulture, out number) && number >= 0 && number <= 8640000000000000L;
+    }
+    private static string PreviousPath(string path) { return path.Substring(0, path.Length - 5) + ".previous.json"; }
+    private byte[] JsonBytes(object value) { return new UTF8Encoding(false, true).GetBytes(json.Serialize(value)); }
+    private void AtomicWrite(string target, byte[] bytes, string backup)
+    {
+        string directory = Path.GetDirectoryName(target);
+        Ordinary(directory); Ordinary(target); if (backup != null) Ordinary(backup);
+        Directory.CreateDirectory(directory);
+        string temporary = Path.Combine(directory, "write-" + Guid.NewGuid().ToString("N") + ".tmp");
         try
         {
             using (var file = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None, 8192, FileOptions.WriteThrough)) { file.Write(bytes, 0, bytes.Length); file.Flush(true); }
             if (File.Exists(target)) File.Replace(temporary, target, backup); else File.Move(temporary, target);
         }
         finally { if (File.Exists(temporary)) File.Delete(temporary); }
+    }
+    private string RelativeRecordPath(string key, Dictionary<string, object> value)
+    {
+        object id, project;
+        if (key.StartsWith("file:", StringComparison.Ordinal) && value.TryGetValue("id", out id) && id is string && EncodedKey("file", (string)id) == key && value.TryGetValue("projectId", out project) && project is string && ((string)project).Length > 0 && ((string)project).Length <= 200)
+            return Path.Combine("projects", Digest((string)project), "canvases", Digest(key) + ".json");
+        return Path.Combine("records", Digest(key) + ".json");
+    }
+    private Dictionary<string, object> ReadJson(string path, int maximum)
+    {
+        Ordinary(path);
+        if (!File.Exists(path)) return null;
+        if (new FileInfo(path).Length > maximum) throw new IOException("The saved record exceeds its size limit.");
+        return json.DeserializeObject(File.ReadAllText(path, new UTF8Encoding(false, true))) as Dictionary<string, object>;
+    }
+    private Dictionary<string, object> ReadLegacy(string path)
+    {
+        Ordinary(path); if (!File.Exists(path)) return null;
+        var root = ReadJson(path, MaxLibrary); object version, raw;
+        if (root == null || !root.TryGetValue("version", out version) || !(version is int) || (int)version != 1 || !root.TryGetValue("entries", out raw) || !(raw is Dictionary<string, object>)) throw new IOException("The saved library is invalid.");
+        var result = (Dictionary<string, object>)raw;
+        if (result.Count > 2000) throw new IOException("The local library has reached its item limit.");
+        return result;
+    }
+    private void Issue(string key, bool restored, string message) { issues[key] = new { key = key, recovered = restored, message = message }; }
+    private static bool RecoverableReadError(Exception error) { return error is IOException || error is UnauthorizedAccessException || error is ArgumentException || error is InvalidOperationException || error is FormatException || error is OverflowException; }
+    private void Load()
+    {
+        if (entries != null) return;
+        Ordinary(folder); Ordinary(V2Folder);
+        recordPaths.Clear(); issues.Clear(); blocked.Clear(); blockedHashes.Clear(); recovered.Clear(); descriptorHashes.Clear(); storedBytes = 0;
+        if (!Directory.Exists(V2Folder)) Migrate();
+        var marker = ReadJson(Path.Combine(V2Folder, "format.json"), 1024);
+        object version;
+        if (marker == null || !marker.TryGetValue("version", out version) || !(version is int) || (int)version != 2) throw new IOException("The folder library is incomplete; existing data was retained.");
+        var loaded = new Dictionary<string, object>(StringComparer.Ordinal);
+        try
+        {
+            var migration = ReadJson(Path.Combine(V2Folder, "migration-issues.json"), 1024 * 1024);
+            if (migration != null) foreach (var item in migration) if (ValidKey(item.Key) || item.Key == "") issues[item.Key] = item.Value;
+        }
+        catch (Exception error) { if (!RecoverableReadError(error)) throw; Issue("", false, "A recovery note could not be read. Saved item records were retained."); }
+        foreach (string path in RecordFiles()) LoadRecord(path, loaded);
+        if (loaded.Count + blocked.Count > 2000 || storedBytes > MaxLibrary) throw new IOException("The local library exceeds its size limit; its saved files were retained.");
+        entries = loaded;
+        RefreshDescriptors();
+    }
+    private void Migrate()
+    {
+        Dictionary<string, object> primary = null, previous = null;
+        bool damagedPrimary = false;
+        string old = Path.Combine(folder, "library.json"), oldPrevious = Path.Combine(folder, "library.previous.json");
+        try { primary = ReadLegacy(old); } catch (Exception error) { if (!RecoverableReadError(error)) throw; damagedPrimary = true; }
+        try { previous = ReadLegacy(oldPrevious); } catch (Exception error) { if (!RecoverableReadError(error)) throw; }
+        if (damagedPrimary && previous == null) throw new IOException("The saved library and its previous copy could not be opened; both were retained.");
+        if (primary == null && previous != null) { primary = previous; Issue("", true, "The previous saved library was recovered. The original files were retained."); }
+        if (primary == null) primary = new Dictionary<string, object>(StringComparer.Ordinal);
+        var selected = new Dictionary<string, object>(StringComparer.Ordinal);
+        foreach (var item in primary)
+        {
+            if (!ValidKey(item.Key)) throw new IOException("The saved library contains an invalid identifier; its source was retained.");
+            var entry = ObjectValue(item.Value);
+            if (!ValidEntry(entry))
+            {
+                object alternate;
+                entry = previous != null && previous.TryGetValue(item.Key, out alternate) ? ObjectValue(alternate) : null;
+                if (!ValidEntry(entry)) { blocked.Add(item.Key); Issue(item.Key, false, "This saved item could not be opened. Its original data was retained for recovery."); continue; }
+                Issue(item.Key, true, "This item was recovered from its previous saved copy. The original data was retained.");
+            }
+            selected[item.Key] = entry;
+        }
+        // The previous format had no delete operation. A backup-only key can
+        // therefore be salvaged without reversing a supported user deletion.
+        // Canvas recovery does not invent project or workspace membership.
+        if (previous != null) foreach (var item in previous)
+        {
+            if (primary.ContainsKey(item.Key)) continue;
+            if (!ValidKey(item.Key)) { Issue("", false, "An item with an invalid identifier remains in the previous library for manual recovery."); continue; }
+            var entry = ObjectValue(item.Value);
+            if (!ValidEntry(entry)) { blocked.Add(item.Key); Issue(item.Key, false, "An unreadable item remains in the previous library for recovery. Its identifier is protected from replacement."); continue; }
+            selected[item.Key] = entry;
+            Issue(item.Key, true, "This saved item was recovered from the previous library. Project and workspace membership was not changed.");
+        }
+        if (selected.Count + blocked.Count > 2000) throw new IOException("The recovered library exceeds its item limit; both original files were retained.");
+        string staging = Path.Combine(folder, "v2-stage-" + Guid.NewGuid().ToString("N").Substring(0, 12));
+        Ordinary(staging); Directory.CreateDirectory(staging);
+        // An interrupted migration remains a retained staging folder. It is never served.
+        foreach (var item in selected)
+        {
+            var entry = (Dictionary<string, object>)item.Value;
+            string target = Path.Combine(staging, RelativeRecordPath(item.Key, (Dictionary<string, object>)entry["value"]));
+            byte[] bytes = JsonBytes(new { version = 2, key = item.Key, revision = entry["revision"], value = entry["value"] });
+            if (bytes.Length > MaxBody + 1024 || (storedBytes += bytes.Length) > MaxLibrary) throw new IOException("The saved library exceeds its size limit; its source was retained.");
+            AtomicWrite(target, bytes, null);
+            object before;
+            var oldEntry = previous != null && previous.TryGetValue(item.Key, out before) ? ObjectValue(before) : null;
+            if (ValidEntry(oldEntry)) AtomicWrite(PreviousPath(target), JsonBytes(new { version = 2, key = item.Key, revision = oldEntry["revision"], value = oldEntry["value"] }), null);
+        }
+        if (issues.Count > 0) AtomicWrite(Path.Combine(staging, "migration-issues.json"), JsonBytes(issues), null);
+        // Store unreadable keys as explicit tombstones so a later PUT cannot erase them.
+        if (blocked.Count > 0) AtomicWrite(Path.Combine(staging, "blocked.json"), JsonBytes(new { keys = new List<string>(blocked).ToArray() }), null);
+        AtomicWrite(Path.Combine(staging, "format.json"), JsonBytes(new { version = 2 }), null);
+        Ordinary(V2Folder); Directory.Move(staging, V2Folder);
+        storedBytes = 0;
+    }
+    private IEnumerable<string> RecordFiles()
+    {
+        var paths = new List<string>();
+        string records = Path.Combine(V2Folder, "records"); Ordinary(records);
+        if (Directory.Exists(records)) AddRecordFiles(records, paths);
+        string projects = Path.Combine(V2Folder, "projects"); Ordinary(projects);
+        int scannedProjects = 0;
+        if (Directory.Exists(projects)) foreach (string project in Directory.EnumerateDirectories(projects))
+        {
+            if (++scannedProjects > 2000) throw new IOException("The local library has too many project folders.");
+            if (!Regex.IsMatch(Path.GetFileName(project), "^[a-f0-9]{32}$")) continue;
+            Ordinary(project); string canvases = Path.Combine(project, "canvases"); Ordinary(canvases);
+            if (Directory.Exists(canvases)) AddRecordFiles(canvases, paths);
+            if (paths.Count > 2000) throw new IOException("The local library has reached its item limit.");
+        }
+        string blockedPath = Path.Combine(V2Folder, "blocked.json");
+        var tombstones = ReadJson(blockedPath, 1024 * 1024); object raw;
+        if (File.Exists(blockedPath))
+        {
+            if (tombstones == null || !tombstones.TryGetValue("keys", out raw) || !(raw is object[]) || ((object[])raw).Length > 2000) throw new IOException("The recovery protection file is invalid; saved records were retained.");
+            foreach (object key in (object[])raw) { if (!(key is string) || !ValidKey((string)key)) throw new IOException("The recovery protection file is invalid; saved records were retained."); blocked.Add((string)key); }
+        }
+        return paths;
+    }
+    private void AddRecordFiles(string directory, List<string> paths)
+    {
+        int scanned = 0;
+        foreach (string path in Directory.EnumerateFiles(directory, "*.json"))
+        {
+            if (++scanned > 8000) throw new IOException("The saved record folder has too many files.");
+            string name = Path.GetFileName(path);
+            if (Regex.IsMatch(name, "^[a-f0-9]{32}\\.json$")) { if (!paths.Contains(path)) paths.Add(path); }
+            else if (Regex.IsMatch(name, "^[a-f0-9]{32}\\.previous\\.json$"))
+            {
+                string current = Path.Combine(directory, name.Replace(".previous.json", ".json"));
+                if (!paths.Contains(current)) paths.Add(current);
+            }
+            if (paths.Count > 2000) throw new IOException("The local library has reached its item limit.");
+        }
+    }
+    private Dictionary<string, object> ReadRecord(string path, out string key)
+    {
+        key = null; var entry = ReadJson(path, MaxBody + 1024); object rawKey, version;
+        if (entry != null && entry.TryGetValue("key", out rawKey) && rawKey is string && ValidKey((string)rawKey)) key = (string)rawKey;
+        if (!ValidEntry(entry) || key == null || !entry.TryGetValue("version", out version) || !(version is int) || (int)version != 2 || Path.GetFileName(path).Split('.')[0] != Digest(key)) throw new IOException("The saved record is invalid.");
+        return new Dictionary<string, object> { { "revision", entry["revision"] }, { "value", entry["value"] } };
+    }
+    private void LoadRecord(string path, Dictionary<string, object> loaded)
+    {
+        Dictionary<string, object> entry = null; string key = null, previousKey = null;
+        try { entry = ReadRecord(path, out key); if (entry == null) throw new IOException("The current saved record is missing."); }
+        catch (Exception error)
+        {
+            if (!RecoverableReadError(error)) throw;
+            try { entry = ReadRecord(PreviousPath(path), out previousKey); } catch (Exception second) { if (!RecoverableReadError(second)) throw; }
+            if (entry != null && (key == null || key == previousKey)) { key = previousKey; recovered.Add(key); Issue(key, true, "This item was recovered from its previous saved copy. Its damaged file was retained."); }
+            else { if (key != null) blocked.Add(key); blockedHashes.Add(Path.GetFileName(path).Split('.')[0]); Issue(key ?? "", false, "A saved item could not be opened. Its original files were retained for recovery."); return; }
+        }
+        if (entry == null) { if (key != null) blocked.Add(key); return; }
+        if (loaded.ContainsKey(key)) throw new IOException("The folder library contains duplicate identifiers; all copies were retained.");
+        loaded[key] = entry; recordPaths[key] = path;
+        storedBytes += JsonBytes(new { version = 2, key = key, revision = entry["revision"], value = entry["value"] }).Length;
+        if (storedBytes > MaxLibrary) throw new IOException("The local library exceeds its size limit; its saved files were retained.");
+    }
+    private void PersistRecord(string key, Dictionary<string, object> updated)
+    {
+        if (blocked.Contains(key) || blockedHashes.Contains(Digest(key))) throw new IOException("This saved item needs recovery before it can be replaced.");
+        string target;
+        if (!recordPaths.TryGetValue(key, out target))
+        {
+            target = Path.Combine(V2Folder, RelativeRecordPath(key, (Dictionary<string, object>)updated["value"]));
+            Ordinary(target); Ordinary(PreviousPath(target));
+            if (File.Exists(target) || Directory.Exists(target) || File.Exists(PreviousPath(target))) throw new IOException("An unindexed saved file already occupies this location; it was retained for recovery.");
+        }
+        byte[] bytes = JsonBytes(new { version = 2, key = key, revision = updated["revision"], value = updated["value"] });
+        long before = entries.ContainsKey(key) ? JsonBytes(new { version = 2, key = key, revision = ((Dictionary<string, object>)entries[key])["revision"], value = ((Dictionary<string, object>)entries[key])["value"] }).Length : 0;
+        if (bytes.Length > MaxBody + 1024 || storedBytes - before + bytes.Length > MaxLibrary) throw new IOException("The local library is full. Export your projects before adding more.");
+        if (recovered.Contains(key) && File.Exists(target))
+        {
+            string retained = Path.Combine(V2Folder, "recovery", Digest(key) + "-" + Guid.NewGuid().ToString("N").Substring(0, 12) + ".json");
+            Ordinary(Path.GetDirectoryName(retained)); Directory.CreateDirectory(Path.GetDirectoryName(retained));
+            Ordinary(target); Ordinary(retained); File.Copy(target, retained, false);
+        }
+        AtomicWrite(target, bytes, recovered.Contains(key) ? null : PreviousPath(target));
+        recordPaths[key] = target; storedBytes = storedBytes - before + bytes.Length; recovered.Remove(key);
+    }
+    private object FileSummary(string key, Dictionary<string, object> entry)
+    {
+        var value = (Dictionary<string, object>)entry["value"]; object id, project, document, created, updated, opened, name;
+        if (!value.TryGetValue("id", out id) || !(id is string) || EncodedKey("file", (string)id) != key || !value.TryGetValue("projectId", out project) || !(project is string) || ((string)project).Length < 1 || ((string)project).Length > 200 || !value.TryGetValue("document", out document) || !(document is Dictionary<string, object>) || !((Dictionary<string, object>)document).TryGetValue("name", out name) || !(name is string) || !value.TryGetValue("createdAt", out created) || !DateValue(created) || !value.TryGetValue("updatedAt", out updated) || !DateValue(updated) || !value.TryGetValue("lastOpenedAt", out opened) || !DateValue(opened) || Convert.ToInt64(updated) < Convert.ToInt64(created) || Convert.ToInt64(opened) < Convert.ToInt64(created))
+        { Issue(key, false, "This canvas has invalid saved details. Its data was retained for recovery."); return null; }
+        return new { key = key, revision = entry["revision"], id = id, projectId = project, name = name, createdAt = created, updatedAt = updated, lastOpenedAt = opened };
+    }
+    private object Catalog()
+    {
+        var index = new Dictionary<string, object>(StringComparer.Ordinal); var files = new List<object>();
+        foreach (var item in entries)
+        {
+            if (IsAsset(item.Key)) continue;
+            if (item.Key.StartsWith("file:", StringComparison.Ordinal)) { object summary = FileSummary(item.Key, (Dictionary<string, object>)item.Value); if (summary != null) files.Add(summary); }
+            else index[item.Key] = item.Value;
+        }
+        return new { version = 2, entries = index, files = files.ToArray(), issues = new List<object>(issues.Values).ToArray() };
+    }
+    private void RefreshDescriptors()
+    {
+        // These human-readable folder descriptors are derived, never transaction authority.
+        // A denied descriptor write must not turn an already durable record save into a failure.
+        try
+        {
+            object raw;
+            if (entries.TryGetValue(EncodedKey("metadata", "main"), out raw))
+            {
+                var value = (Dictionary<string, object>)((Dictionary<string, object>)raw)["value"]; object projects;
+                if (value.TryGetValue("projects", out projects) && projects is object[]) foreach (object item in (object[])projects)
+                {
+                    var project = ObjectValue(item); object id;
+                    if (project == null || !project.TryGetValue("id", out id) || !(id is string)) continue;
+                    WriteDescriptor(Path.Combine(V2Folder, "projects", Digest((string)id), "project.json"), project);
+                }
+            }
+            if (entries.TryGetValue(EncodedKey("sessions", "main"), out raw))
+            {
+                var value = (Dictionary<string, object>)((Dictionary<string, object>)raw)["value"]; object items;
+                if (value.TryGetValue("items", out items) && items is object[]) foreach (object item in (object[])items)
+                {
+                    var workspace = ObjectValue(item); object id;
+                    if (workspace == null || !workspace.TryGetValue("id", out id) || !(id is string)) continue;
+                    WriteDescriptor(Path.Combine(V2Folder, "workspaces", Digest((string)id), "workspace.json"), workspace);
+                }
+            }
+        }
+        catch (Exception error) { if (!RecoverableReadError(error)) throw; Issue("", true, "Saved content is available; its folder descriptions will be refreshed on the next start."); }
+    }
+    private void WriteDescriptor(string path, object value)
+    {
+        byte[] bytes = JsonBytes(value); string hash = ImageHash(bytes), previous;
+        if (descriptorHashes.TryGetValue(path, out previous) && previous == hash) return;
+        Ordinary(path);
+        if (!File.Exists(path) || new FileInfo(path).Length != bytes.Length || ImageHash(File.ReadAllBytes(path)) != hash) AtomicWrite(path, bytes, null);
+        descriptorHashes[path] = hash;
     }
     // Large immutable raster records live separately from rapidly changing view metadata.
     private static bool IsAsset(string key) { return key.StartsWith("settings:YXNzZXQt", StringComparison.Ordinal); }
@@ -323,6 +575,7 @@ internal sealed class LocalLibrary
         string path = rawTarget.Split('?')[0];
         const string prefix = "/__canvas_live_library";
         if (path != prefix && !path.StartsWith(prefix + "/", StringComparison.Ordinal)) return false;
+        var responseJson = new JavaScriptSerializer { MaxJsonLength = MaxLibrary, RecursionLimit = 64 };
         try
         {
             var headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -330,7 +583,7 @@ internal sealed class LocalLibrary
             {
                 int separator = lines[i].IndexOf(':'); if (separator < 1) continue;
                 string name = lines[i].Substring(0, separator).Trim();
-                if (headers.ContainsKey(name)) { Reply(stream, 400, "Bad Request", new { error = "Duplicate request header." }, json); return true; }
+                if (headers.ContainsKey(name)) { Reply(stream, 400, "Bad Request", new { error = "Duplicate request header." }, responseJson); return true; }
                 headers[name] = lines[i].Substring(separator + 1).Trim();
             }
             if (ServeMedia(stream, method, path, headers, origin)) return true;
@@ -342,47 +595,64 @@ internal sealed class LocalLibrary
             {
                 string rawLength;
                 int length;
-                if (headers.ContainsKey("Transfer-Encoding") || !headers.TryGetValue("Content-Length", out rawLength) || !Int32.TryParse(rawLength, NumberStyles.None, CultureInfo.InvariantCulture, out length) || length < 2 || length > MaxBody) { Reply(stream, 413, "Payload Too Large", new { error = "The saved item exceeds its size limit." }, json); return true; }
+                if (headers.ContainsKey("Transfer-Encoding") || !headers.TryGetValue("Content-Length", out rawLength) || !Int32.TryParse(rawLength, NumberStyles.None, CultureInfo.InvariantCulture, out length) || length < 2 || length > MaxBody) { Reply(stream, 413, "Payload Too Large", new { error = "The saved item exceeds its size limit." }, responseJson); return true; }
                 bytes = new byte[length];
                 for (int read = 0; read < length;) { int count = stream.Read(bytes, read, length - read); if (count == 0) throw new IOException("The saved item was incomplete."); read += count; }
             }
             string source;
             if ((headers.TryGetValue("Origin", out source) && source != origin) || (headers.TryGetValue("Sec-Fetch-Site", out source) && source == "cross-site"))
-            { Reply(stream, 403, "Forbidden", new { error = "Only Canvas Live can access its local library." }, json); return true; }
+            { Reply(stream, 403, "Forbidden", new { error = "Only Canvas Live can access its local library." }, responseJson); return true; }
+            object response; int status; string reason;
             lock (gate)
             {
-                Load();
-                if (method == "GET" && path == prefix) {
-                    var index = new Dictionary<string, object>(StringComparer.Ordinal);
-                    foreach (var item in entries) if (!IsAsset(item.Key)) index[item.Key] = item.Value;
-                    Reply(stream, 200, "OK", new { version = 1, entries = index }, json); return true;
-                }
-                string key = path.Length > prefix.Length + 1 ? Uri.UnescapeDataString(path.Substring(prefix.Length + 1)) : "";
-                if (!Regex.IsMatch(key, "^(file|metadata|sessions|latest|view|settings):[A-Za-z0-9_-]{1,280}$")) { Reply(stream, 400, "Bad Request", new { error = "Invalid library identifier." }, json); return true; }
-                object existing;
-                var entry = IsAsset(key) ? ReadAsset(key) : entries.TryGetValue(key, out existing) ? existing as Dictionary<string, object> : null;
-                long revision = entry == null ? 0 : Convert.ToInt64(entry["revision"], CultureInfo.InvariantCulture);
-                if (method == "GET") { Reply(stream, 200, "OK", entry ?? new Dictionary<string, object> { { "revision", 0 }, { "value", null } }, json); return true; }
-                if (method != "PUT") { Reply(stream, 405, "Method Not Allowed", new { error = "Use GET or PUT." }, json); return true; }
-                string match;
-                long expected;
-                if (!headers.TryGetValue("If-Match", out match) || !Int64.TryParse(match, NumberStyles.None, CultureInfo.InvariantCulture, out expected)) { Reply(stream, 428, "Precondition Required", new { error = "A library revision is required." }, json); return true; }
-                if (expected != revision) { Reply(stream, 409, "Conflict", new { error = "This item changed in another view. Reload it before saving." }, json); return true; }
-                string contentType;
-                if (!headers.TryGetValue("Content-Type", out contentType) || !contentType.StartsWith("application/json", StringComparison.OrdinalIgnoreCase) || headers.ContainsKey("Transfer-Encoding")) { Reply(stream, 415, "Unsupported Media Type", new { error = "Use bounded JSON content." }, json); return true; }
-                var value = json.DeserializeObject(new UTF8Encoding(false, true).GetString(bytes)) as Dictionary<string, object>;
-                if (value == null || value.ContainsKey("__proto__") || value.ContainsKey("constructor")) { Reply(stream, 400, "Bad Request", new { error = "Invalid saved item." }, json); return true; }
-                var updated = new Dictionary<string, object> { { "revision", revision + 1 }, { "value", value } };
-                var next = new Dictionary<string, object>(entries, StringComparer.Ordinal); next[key] = updated;
-                if (next.Count > 2000) throw new IOException("The local library has reached its item limit.");
-                if (IsAsset(key)) PersistAsset(key, updated);
-                else { Persist(next); entries = next; }
-                Reply(stream, 200, "OK", updated, json);
+                response = Handle(method, path, headers, bytes, out status, out reason);
             }
+            // Responses reference immutable saved values. Serialization and socket writes
+            // occur outside the commit gate so a slow reader cannot stall autosaving.
+            Reply(stream, status, reason, response, responseJson);
         }
-        catch (ArgumentException) { Reply(stream, 400, "Bad Request", new { error = "The saved item is invalid JSON." }, json); }
-        catch (InvalidOperationException) { Reply(stream, 400, "Bad Request", new { error = "The saved item is invalid JSON." }, json); }
-        catch (Exception) { Reply(stream, 503, "Service Unavailable", new { error = "The local library could not save or open this item. Existing data was retained." }, json); }
+        catch (ArgumentException) { Reply(stream, 400, "Bad Request", new { error = "The saved item is invalid JSON." }, responseJson); }
+        catch (InvalidOperationException) { Reply(stream, 400, "Bad Request", new { error = "The saved item is invalid JSON." }, responseJson); }
+        catch (Exception) { Reply(stream, 503, "Service Unavailable", new { error = "The local library could not save or open this item. Existing data was retained." }, responseJson); }
         return true;
+    }
+    private object Handle(string method, string path, Dictionary<string, string> headers, byte[] bytes, out int status, out string reason)
+    {
+        const string prefix = "/__canvas_live_library";
+        status = 200; reason = "OK"; Load();
+        if (method == "GET" && path == prefix)
+        {
+            var index = new Dictionary<string, object>(StringComparer.Ordinal);
+            foreach (var item in entries) if (!IsAsset(item.Key)) index[item.Key] = item.Value;
+            return new { version = 1, entries = index };
+        }
+        if (method == "GET" && path == prefix + "/catalog") return Catalog();
+        string key = path.Length > prefix.Length + 1 ? Uri.UnescapeDataString(path.Substring(prefix.Length + 1)) : "";
+        if (!ValidKey(key)) { status = 400; reason = "Bad Request"; return new { error = "Invalid library identifier." }; }
+        if (blocked.Contains(key) || blockedHashes.Contains(Digest(key))) { status = 503; reason = "Service Unavailable"; return new { error = "This saved item could not be opened. Its original data was retained for recovery; it cannot be overwritten." }; }
+        object existing;
+        var entry = IsAsset(key) ? ReadAsset(key) : entries.TryGetValue(key, out existing) ? existing as Dictionary<string, object> : null;
+        if (entry == null && IsAsset(key) && entries.TryGetValue(key, out existing)) entry = ObjectValue(existing);
+        long revision = entry == null ? 0 : Convert.ToInt64(entry["revision"], CultureInfo.InvariantCulture);
+        if (method == "GET") return entry ?? new Dictionary<string, object> { { "revision", 0 }, { "value", null } };
+        if (method != "PUT") { status = 405; reason = "Method Not Allowed"; return new { error = "Use GET or PUT." }; }
+        string match; long expected;
+        if (!headers.TryGetValue("If-Match", out match) || !Int64.TryParse(match, NumberStyles.None, CultureInfo.InvariantCulture, out expected)) { status = 428; reason = "Precondition Required"; return new { error = "A library revision is required." }; }
+        if (expected != revision) { status = 409; reason = "Conflict"; return new { error = "This item changed in another view. Reload it before saving." }; }
+        if (revision >= 9007199254740990L) throw new IOException("This saved item has reached its revision limit.");
+        string contentType;
+        if (!headers.TryGetValue("Content-Type", out contentType) || !contentType.StartsWith("application/json", StringComparison.OrdinalIgnoreCase) || headers.ContainsKey("Transfer-Encoding")) { status = 415; reason = "Unsupported Media Type"; return new { error = "Use bounded JSON content." }; }
+        var value = json.DeserializeObject(new UTF8Encoding(false, true).GetString(bytes)) as Dictionary<string, object>;
+        if (value == null || value.ContainsKey("__proto__") || value.ContainsKey("constructor") || value.ContainsKey("prototype")) { status = 400; reason = "Bad Request"; return new { error = "Invalid saved item." }; }
+        var updated = new Dictionary<string, object> { { "revision", revision + 1 }, { "value", value } };
+        if (!entries.ContainsKey(key) && entries.Count + blocked.Count >= 2000) throw new IOException("The local library has reached its item limit.");
+        if (IsAsset(key)) PersistAsset(key, updated);
+        else
+        {
+            PersistRecord(key, updated);
+            entries[key] = updated;
+            if (key == EncodedKey("metadata", "main") || key == EncodedKey("sessions", "main")) RefreshDescriptors();
+        }
+        return updated;
     }
 }

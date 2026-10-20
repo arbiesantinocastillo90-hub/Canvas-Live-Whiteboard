@@ -414,8 +414,11 @@ describe('home project and file library', () => {
     )
     await screen.findByRole('button', { name: 'Open canvas Roadmap in Alpha' })
     expect(screen.getByRole('alert')).toHaveTextContent(
-      'Some saved files could not be loaded',
+      'Reconnect your drive and retry loading',
     )
+    expect(
+      screen.getByRole('button', { name: 'Retry loading saved files' }),
+    ).toBeInTheDocument()
   })
   it('requests import into the chosen project and lets projects be browsed without entering the editor', async () => {
     const { props } = setup()
