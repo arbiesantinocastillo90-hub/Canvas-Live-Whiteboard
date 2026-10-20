@@ -34,6 +34,8 @@ On October 19, commit [`4dc0b2e`](https://github.com/arbiesantinocastillo90-hub/
 
 ## Request dates and integration dates
 
+On October 20, commit [`8791a8e`](https://github.com/arbiesantinocastillo90-hub/Canvas-Live-Whiteboard/commit/8791a8e) delivered individual native records and catalog loading, recoverable workspace Trash and transfers, independent explicit MCP grants, background sharing and the customizable AI mini with an offline preview. Its author and committer timestamps both record `2026-10-20T04:56:02-05:00`. The feature requests and the first preview installation preceded this commit; they are not its publication date. See [refinement verification](BUGS_REFINEMENTS_VERIFICATION.md).
+
 Some older documents identify when work was requested rather than when it was committed. The Home/local-file scope began October 12 and was delivered in the October 13 commit. The scoped Bugs, Errors & Revision work began October 14 and was committed October 15. Those dates describe different events and should not be substituted for one another.
 
 The original GitHub integration records are preserved:
@@ -48,6 +50,8 @@ The original GitHub integration records are preserved:
 The portfolio branch brought the later implementation history together with that main-branch history in merge [`3dc3b6b`](https://github.com/arbiesantinocastillo90-hub/Canvas-Live-Whiteboard/commit/3dc3b6b) on October 18. [Pull request #5](https://github.com/arbiesantinocastillo90-hub/Canvas-Live-Whiteboard/pull/5) published the verified app and portfolio documentation to `main` in merge [`e0e4607`](https://github.com/arbiesantinocastillo90-hub/Canvas-Live-Whiteboard/commit/e0e4607). That merge records `2026-10-19T04:35:59+08:00`, equivalent to October 18 at 15:35:59 in America/Chicago. The original implementation commit IDs and dates remain intact.
 
 ## Verification checkpoints
+
+The latest October 20 [refinement checkpoint](BUGS_REFINEMENTS_VERIFICATION.md) passed 1,205 application tests across 91 files, 71 MCP tests and 22 isolated browser scenarios. Native suites of 67 new and 55 existing checks were run on October 19 against the same storage source. Focused regression runs are included in the full app/protocol totals.
 
 These are documented runs for specific builds, rather than cumulative totals. Focused tests and later full suites overlap. See [Testing](TESTING.md) for current commands and how to interpret the evidence.
 
