@@ -2,13 +2,35 @@
 
 Workspace AI can display a small interactive companion while its canvas is connecting or shared. The mini represents that explicit MCP connection. It is an interface overlay, not an object added to the drawing or an AI model running inside Canvas Live.
 
-Click the mini to open its actions and status bubble. Drag it within the canvas pane, or move its focused control with the keyboard. Minimize it to keep a smaller indicator. Use **Customize AI mini** in Workspace AI to open settings, including before sharing.
+Click the mini to open its recent-activity bubble. Double-click it to open Workspace AI; **Alt+Enter** does the same while the mini has keyboard focus. Drag it within the canvas pane, or move its focused control with the arrow keys. Minimize it to keep a smaller indicator. Sharing and customization controls live in Workspace AI, leaving the bubble for activity.
+
+Open **Options → AI presence → Customize AI character and indicators** or **Customize AI mini** in Workspace AI to change settings, including before sharing. Both entry points edit the same workspace settings and stay synchronized in the current view.
 
 The settings dialog includes a live appearance preview and an Idle/Working preview selector. It works before connecting, so you can see and customize the mini without an AI runtime key. The preview is labeled separately from actual connection activity; the floating mini appears while connecting or sharing.
 
-Settings include a robot, cat or orb, a name, colors, size, speech bubbles, separate idle and working motions, speed and movement amount. A bounded PNG, GIF or WebP can replace the built-in mascot. Settings and image references belong to the workspace and use native storage when available. Reduced-motion preferences stop movement and avoid playing a custom animation.
+Settings include a robot, cat or orb, a name, colors, size, speech bubbles, separate idle and working motions, speed and movement amount. A bounded PNG, GIF or WebP can replace the built-in mascot. Canvas indicators have their own read, requested-edit and completed-edit colors, pulse/ripple/static styles, duration and labels. Settings and image references belong to the workspace and use native storage when available. Reduced-motion preferences stop movement and avoid playing a custom animation.
 
-The bubble reports observable connection events: waiting, reading or editing, the latest acknowledged operation, and connection errors. An animation is a short indicator of that activity, not a progress estimate or a representation of the model's private reasoning. Labels and operation summaries are displayed as literal text.
+The bubble shows up to five recent MCP activities, and Workspace AI shows up to twenty. A request is updated in place when its local edit is acknowledged. Repeated polls and acknowledgments do not create duplicate entries. These short-lived entries belong to the current sharing session; they are not exported with the canvas. Labels and operation summaries are displayed as literal text.
+
+An animation indicates an observable MCP event, not a progress estimate or a representation of the model's private reasoning. A requested edit and a completed change have distinct states. If confirmation is lost, the history reports an unconfirmed request rather than claiming that an edit succeeded.
+
+## Activity locations on the canvas
+
+With **Show activity on canvas** enabled, targeted reads and edits briefly highlight the actual affected objects and display the same character beside them. Pan and zoom keep indicators aligned with the drawing. A move can show its former position; an acknowledged deletion can briefly mark the deleted object's former bounds. An offscreen cue points toward work outside the current view without moving your camera.
+
+- **Read here** means an MCP read returned that object. Listing available shared canvases does not highlight every board.
+- **Edit queued here** means a validated request is waiting for the local editor. Fast edits may proceed directly to the completed state between polls.
+- **Edited here** or **Removed here** follows a successful local acknowledgment. New automatically generated objects get locations after their actual IDs and geometry exist.
+
+Hidden objects are excluded from location indicators. The overlay does not select objects, change the camera, add canvas elements or create Undo steps. Its character opens Workspace AI on double-click or Enter/Space. Stop sharing or switch the current canvas/project/workspace to clear that session's activity. Each explicitly shared view keeps its own locations and history.
+
+Indicators expire after the configured two to fifteen seconds, measured from the event rather than the latest poll. A maximum of 32 targets is rendered per event, with up to 100 target IDs accepted from the companion. The activity log retains at most twenty entries. These bounds limit UI work; they are not large-board performance measurements.
+
+Both application and operating-system reduced-motion settings keep location cues static and replace animated raster characters with the built-in robot. You can also disable location animation or hide location labels independently. See the [dated presence verification](AI_PRESENCE_VERIFICATION.md) for tested behavior and remaining acceptance.
+
+![Targeted queued edit, matching character and recent AI activity](assets/ai-presence.png)
+
+This disposable SDK test canvas shows an authentic queued request with controlled command delivery, not an external model's thinking time. Its selection and camera remain under the user's control.
 
 Client branding comes from the authenticated MCP client's reported name. It identifies that client, not its underlying model or subscription. Unknown clients retain a neutral badge and their reported name. Provider marks remain separate from the customizable mascot.
 

@@ -32,6 +32,13 @@ export type AiMiniSettings = {
   x: number
   y: number
   minimized: boolean
+  showCanvasActivity: boolean
+  presenceReadColor: string
+  presenceWorkingColor: string
+  presenceCompleteColor: string
+  presenceAnimation: 'pulse' | 'ripple' | 'none'
+  presenceDuration: number
+  presenceLabels: boolean
 }
 export const DEFAULT_AI_MINI_SETTINGS: Readonly<AiMiniSettings> = {
   version: 1,
@@ -50,6 +57,13 @@ export const DEFAULT_AI_MINI_SETTINGS: Readonly<AiMiniSettings> = {
   x: 0.85,
   y: 0.76,
   minimized: false,
+  showCanvasActivity: true,
+  presenceReadColor: '#68B8FF',
+  presenceWorkingColor: '#F6BE4F',
+  presenceCompleteColor: '#8FF0D0',
+  presenceAnimation: 'pulse',
+  presenceDuration: 5,
+  presenceLabels: true,
 }
 function record(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -112,6 +126,37 @@ export function normalizeAiMiniSettings(value: unknown): AiMiniSettings {
     y: bounded(item.y, 0, 1, defaults.y),
     minimized:
       typeof item.minimized === 'boolean' ? item.minimized : defaults.minimized,
+    showCanvasActivity:
+      typeof item.showCanvasActivity === 'boolean'
+        ? item.showCanvasActivity
+        : defaults.showCanvasActivity,
+    presenceReadColor: color(
+      item.presenceReadColor,
+      defaults.presenceReadColor,
+    ),
+    presenceWorkingColor: color(
+      item.presenceWorkingColor,
+      defaults.presenceWorkingColor,
+    ),
+    presenceCompleteColor: color(
+      item.presenceCompleteColor,
+      defaults.presenceCompleteColor,
+    ),
+    presenceAnimation: ['pulse', 'ripple', 'none'].includes(
+      item.presenceAnimation as string,
+    )
+      ? (item.presenceAnimation as AiMiniSettings['presenceAnimation'])
+      : defaults.presenceAnimation,
+    presenceDuration: bounded(
+      item.presenceDuration,
+      2,
+      15,
+      defaults.presenceDuration,
+    ),
+    presenceLabels:
+      typeof item.presenceLabels === 'boolean'
+        ? item.presenceLabels
+        : defaults.presenceLabels,
   }
 }
 export function aiMiniStorageKey(scopeId: string) {
@@ -171,6 +216,7 @@ export function useAiMiniSettings(
   const active = useRef(scopeId)
   const change = useRef(0)
   const latest = useRef(current.settings)
+  const sender = useRef({})
   useEffect(() => {
     active.current = scopeId
     latest.current = current.settings
@@ -211,10 +257,26 @@ export function useAiMiniSettings(
     const changed = (event: StorageEvent) => {
       if (event.key === aiMiniStorageKey(scopeId)) void load()
     }
+    const localChanged = (event: Event) => {
+      if (!(event instanceof CustomEvent) || !record(event.detail)) return
+      if (
+        event.detail.scopeId !== scopeId ||
+        event.detail.sender === sender.current ||
+        !record(event.detail.settings) ||
+        event.detail.settings.version !== 1
+      )
+        return
+      const settings = normalizeAiMiniSettings(event.detail.settings)
+      change.current++
+      latest.current = settings
+      setSnapshot({ scopeId, settings, error: null, loading: false })
+    }
     window.addEventListener('storage', changed)
+    window.addEventListener('canvas-live:ai-mini-settings', localChanged)
     return () => {
       cancelled = true
       window.removeEventListener('storage', changed)
+      window.removeEventListener('canvas-live:ai-mini-settings', localChanged)
     }
   }, [scopeId, client, storage])
   const update = useCallback(
@@ -235,6 +297,11 @@ export function useAiMiniSettings(
         cacheError =
           'Mini settings are open here, but the browser cache could not be saved.'
       }
+      window.dispatchEvent(
+        new CustomEvent('canvas-live:ai-mini-settings', {
+          detail: { scopeId, settings, sender: sender.current },
+        }),
+      )
       if (client.available) {
         void Promise.resolve()
           .then(() =>
@@ -265,6 +332,11 @@ export function useAiMiniSettings(
             } catch {
               /* The native library has the complete settings. */
             }
+            window.dispatchEvent(
+              new CustomEvent('canvas-live:ai-mini-settings', {
+                detail: { scopeId, settings: merged, sender: sender.current },
+              }),
+            )
           })
           .catch((reason: unknown) => {
             if (active.current === scopeId && change.current === revision)

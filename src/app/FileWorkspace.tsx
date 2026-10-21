@@ -17,6 +17,10 @@ import CanvasEditor, {
 } from './CanvasEditor'
 import WorkspaceAI from './WorkspaceAI'
 import CanvasAiMini from './CanvasAiMini'
+import {
+  DEFAULT_AI_MINI_SETTINGS,
+  type AiMiniSettings,
+} from './useAiMiniSettings'
 import useMcpBridge from './useMcpBridge'
 import useCanvasFocus from './useCanvasFocus'
 import {
@@ -358,6 +362,21 @@ export default function FileWorkspace({
   const rightPinned = focused ? focusRightPinned : layout.rightPinned
   const aiOpen = rightPanel === 'ai'
   const [miniSettingsOpen, setMiniSettingsOpen] = useState(false)
+  const miniScopeId = canvasStoreWorkspace(store) ?? project.id
+  const [miniAppearance, setMiniAppearance] = useState<{
+    scopeId: string
+    settings: AiMiniSettings
+  } | null>(null)
+  const rememberMiniAppearance = useCallback(
+    (scopeId: string, settings: AiMiniSettings) => {
+      setMiniAppearance((previous) =>
+        previous?.scopeId === scopeId && previous.settings === settings
+          ? previous
+          : { scopeId, settings },
+      )
+    },
+    [],
+  )
   const filesSide = layout.panelsSwapped ? 'right' : 'left'
   const toolsSide = layout.panelsSwapped ? 'left' : 'right'
   useCanvasDraftProtection(store)
@@ -2606,6 +2625,20 @@ export default function FileWorkspace({
                 document={active.record.document}
                 active={workspaceActive}
                 allowBackgroundCommands={bridge.status === 'sharing'}
+                aiPresence={
+                  bridge.status === 'sharing' &&
+                  bridge.presence?.scope ===
+                    JSON.stringify([project.id, active.record.id])
+                    ? bridge.presence
+                    : null
+                }
+                aiMiniSettings={
+                  miniAppearance?.scopeId === miniScopeId
+                    ? miniAppearance.settings
+                    : DEFAULT_AI_MINI_SETTINGS
+                }
+                aiClient={bridge.mcpClient}
+                reduceMotion={preferences.reduceMotion}
                 grid={preferences.grid}
                 aiOpen={aiOpen}
                 rightInset={rightPanel === 'none' ? 0 : rightInset}
@@ -2683,13 +2716,14 @@ export default function FileWorkspace({
               </div>
             )}
             <CanvasAiMini
-              scopeId={canvasStoreWorkspace(store) ?? project.id}
+              scopeId={miniScopeId}
               state={bridge}
               onOpenAI={() => setAiOpen(true)}
               onStopSharing={bridge.disconnect}
               reduceMotion={preferences.reduceMotion}
               settingsOpen={miniSettingsOpen}
               onSettingsOpenChange={setMiniSettingsOpen}
+              onSettingsChange={rememberMiniAppearance}
             />
           </div>
           <div

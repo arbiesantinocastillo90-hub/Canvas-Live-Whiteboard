@@ -2,6 +2,7 @@ import { useState, type FormEvent } from 'react'
 import Icon from './Icon'
 import type useMcpBridge from './useMcpBridge'
 import './workspace-ai.css'
+import McpActivityLog from './McpActivityLog'
 
 export default function WorkspaceAI({
   projectName,
@@ -82,6 +83,15 @@ export default function WorkspaceAI({
           <span>Latest MCP operation</span>
           <p>{bridge.lastOperation}</p>
         </div>
+      )}
+      {!!bridge.activities?.length && (
+        <McpActivityLog entries={bridge.activities} />
+      )}
+      {sharing && (
+        <p className="ai-introduction">
+          Click your mini for recent activity. Double-click it to open this
+          panel.
+        </p>
       )}
       {sharing || connecting ? (
         <button

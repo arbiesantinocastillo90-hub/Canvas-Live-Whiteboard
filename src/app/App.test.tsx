@@ -449,32 +449,41 @@ describe('workspace navigation and appearance', () => {
   })
 
   it('follows live system appearance changes until an explicit mode is chosen', () => {
-    let listener: (() => void) | undefined
+    const listeners = new Set<() => void>()
     const query = {
       matches: false,
       addEventListener: vi.fn((_event: string, cb: () => void) => {
-        listener = cb
+        listeners.add(cb)
       }),
+      removeEventListener: vi.fn((_event: string, cb: () => void) => {
+        listeners.delete(cb)
+      }),
+    }
+    const motionQuery = {
+      matches: false,
+      addEventListener: vi.fn(),
       removeEventListener: vi.fn(),
     }
     vi.stubGlobal(
       'matchMedia',
-      vi.fn(() => query),
+      vi.fn((media: string) =>
+        media === '(prefers-color-scheme: dark)' ? query : motionQuery,
+      ),
     )
     const view = render(<App />)
     expect(view.container.firstChild).toHaveAttribute('data-theme', 'light')
     fireEvent.click(screen.getByRole('button', { name: 'Options' }))
     act(() => {
       query.matches = true
-      listener?.()
+      listeners.forEach((listener) => listener())
     })
     expect(view.container.firstChild).toHaveAttribute('data-theme', 'dark')
     fireEvent.click(screen.getByRole('radio', { name: 'Light' }))
     act(() => {
       query.matches = false
-      listener?.()
+      listeners.forEach((listener) => listener())
       query.matches = true
-      listener?.()
+      listeners.forEach((listener) => listener())
     })
     expect(view.container.firstChild).toHaveAttribute('data-theme', 'light')
     vi.unstubAllGlobals()

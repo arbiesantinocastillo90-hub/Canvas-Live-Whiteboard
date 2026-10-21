@@ -4,6 +4,19 @@ import type { BridgeCommand } from '../mcp/bridgeProtocol'
 import { serializedCanvasContent } from '../mcp/canvasRevision'
 import type { CanvasEditorController } from './CanvasEditor'
 import { validateCanvasDocument, type CanvasDocument } from './lcanvas'
+import {
+  createCanvasAiPresence,
+  resolveCanvasAiObjectTargets,
+  type CanvasAiPresenceEvent,
+} from './canvasAiPresenceState'
+import {
+  appendMcpActivity,
+  observedActivityEntry,
+  parseMcpActivity,
+  settleMcpActivities,
+  type McpActivityEntry,
+} from './mcpActivity'
+import type { BridgeActivity } from '../mcp/bridgeProtocol'
 
 export const DEFAULT_MCP_BRIDGE_URL = 'http://127.0.0.1:8787'
 const POLL_INTERVAL = 500
@@ -52,7 +65,9 @@ export type McpBridgeState = {
   mcpLastSeen: number | null
   lastOperation: string | null
   error: string | null
-  activity?: { kind: 'read' | 'edit'; at: number } | null
+  activity?: BridgeActivity | null
+  presence?: CanvasAiPresenceEvent | null
+  activities?: McpActivityEntry[]
 }
 const INITIAL_STATE: McpBridgeState = {
   status: 'idle',
@@ -61,6 +76,8 @@ const INITIAL_STATE: McpBridgeState = {
   lastOperation: null,
   error: null,
   activity: null,
+  presence: null,
+  activities: [],
 }
 
 function scope(options: Options) {
@@ -179,6 +196,10 @@ function isExpired(expiresAt: unknown) {
   )
 }
 
+function operationActivityStamp(sessionId: string | null, requestId: string) {
+  return { id: `edit:${sessionId}:${requestId}`, at: Date.now() }
+}
+
 export default function useMcpBridge(options: Options) {
   const latest = useRef(options)
   const session = useRef<Session | null>(null)
@@ -254,32 +275,82 @@ export default function useMcpBridge(options: Options) {
         current.handled.set(confirmed.requestId, confirmed)
         current.ack = null
       }
-      setState((previous) => ({
-        ...previous,
-        status: 'sharing',
-        activity:
-          reply.activity &&
-          typeof reply.activity === 'object' &&
-          'kind' in reply.activity &&
-          ['read', 'edit'].includes(String(reply.activity.kind)) &&
-          'at' in reply.activity &&
-          typeof reply.activity.at === 'number' &&
-          Number.isFinite(reply.activity.at)
-            ? {
-                kind: reply.activity.kind as 'read' | 'edit',
-                at: reply.activity.at,
-              }
-            : null,
-        mcpClient:
-          typeof reply.mcpClient === 'string'
-            ? reply.mcpClient.slice(0, 120)
-            : null,
-        mcpLastSeen:
-          typeof reply.mcpLastSeen === 'number' &&
-          Number.isFinite(reply.mcpLastSeen)
-            ? reply.mcpLastSeen
-            : null,
-      }))
+      const observed = parseMcpActivity(reply.activity)
+      const observedPresence =
+        observed?.id && observed.targetIds?.length
+          ? createCanvasAiPresence({
+              id: observed.id,
+              kind: observed.kind,
+              phase:
+                observed.phase ??
+                (observed.kind === 'read' ? 'complete' : 'working'),
+              at: observed.at,
+              scope: current.scope,
+              before: currentDocument(current).document,
+              targetIds: observed.targetIds,
+            })
+          : null
+      const queuedId =
+        reply.command &&
+        typeof reply.command === 'object' &&
+        'requestId' in reply.command &&
+        typeof reply.command.requestId === 'string'
+          ? `edit:${current.sessionId}:${reply.command.requestId}`
+          : null
+      setState((previous) => {
+        // A delayed pending snapshot must not resurrect an already resolved request.
+        const terminal =
+          observed?.id &&
+          observed.kind === 'edit' &&
+          previous.activities?.some(
+            (entry) =>
+              entry.id === observed.id &&
+              (entry.kind === 'error' ||
+                (observed.phase !== 'complete' && entry.phase !== 'working')),
+          )
+        const activity = terminal ? null : observed
+        const activities = activity
+          ? appendMcpActivity(
+              previous.activities,
+              observedActivityEntry(activity),
+              true,
+            )
+          : previous.activities
+        return {
+          ...previous,
+          status: 'sharing',
+          activity:
+            observed?.id &&
+            observed.id === previous.activity?.id &&
+            previous.activity.phase === 'complete'
+              ? previous.activity
+              : activity,
+          presence:
+            observed?.id &&
+            observed.id === previous.presence?.id &&
+            previous.presence.phase === 'complete'
+              ? previous.presence
+              : terminal
+                ? null
+                : observedPresence,
+          activities: settleMcpActivities(
+            activities,
+            queuedId ??
+              (activity?.kind === 'edit' && activity.phase !== 'complete'
+                ? (activity.id ?? null)
+                : null),
+          ),
+          mcpClient:
+            typeof reply.mcpClient === 'string'
+              ? reply.mcpClient.slice(0, 120)
+              : null,
+          mcpLastSeen:
+            typeof reply.mcpLastSeen === 'number' &&
+            Number.isFinite(reply.mcpLastSeen)
+              ? reply.mcpLastSeen
+              : null,
+        }
+      })
       if (reply.command) {
         const queued = replyObject(reply.command)
         if (
@@ -295,7 +366,7 @@ export default function useMcpBridge(options: Options) {
         else {
           let ack: Ack
           try {
-            const { controller } = currentDocument(current)
+            const { controller, document: before } = currentDocument(current)
             const command = parseCommand(queued.command)
             const history = command.kind === 'undo' || command.kind === 'redo'
             const expectedRevision = queued.expectedRevision
@@ -322,6 +393,26 @@ export default function useMcpBridge(options: Options) {
               )
             const result = controller.execute(command)
             currentDocument(current)
+            const { at: completedAt, id: activityId } = operationActivityStamp(
+              current.sessionId,
+              queued.requestId,
+            )
+            const targetIds = resolveCanvasAiObjectTargets(
+              before,
+              current.document,
+              result.affectedIds,
+              command,
+            )
+            const presence = createCanvasAiPresence({
+              id: activityId,
+              kind: 'edit',
+              phase: 'complete',
+              at: completedAt,
+              scope: current.scope,
+              before,
+              after: current.document,
+              targetIds,
+            })
             ack = {
               requestId: queued.requestId,
               ok: true,
@@ -333,16 +424,48 @@ export default function useMcpBridge(options: Options) {
             setState((previous) => ({
               ...previous,
               lastOperation: result.summary,
+              activity: {
+                id: activityId,
+                kind: 'edit',
+                phase: 'complete',
+                at: completedAt,
+                targetIds: targetIds.slice(0, 100),
+              },
+              presence,
+              activities: appendMcpActivity(previous.activities, {
+                id: activityId,
+                kind: 'edit',
+                phase: 'complete',
+                at: completedAt,
+                summary: result.summary,
+              }),
               error: null,
             }))
           } catch (error) {
+            const { at: failedAt, id: failedId } = operationActivityStamp(
+              current.sessionId,
+              queued.requestId,
+            )
+            const failure = failureMessage(error)
             ack = {
               requestId: queued.requestId,
               ok: false,
               revision: current.revision,
-              error: failureMessage(error),
+              error: failure,
             }
-            setState((previous) => ({ ...previous, error: ack.error ?? null }))
+            setState((previous) => ({
+              ...previous,
+              error: failure,
+              presence: null,
+              activity: null,
+              activities: appendMcpActivity(previous.activities, {
+                id: failedId,
+                kind: 'error',
+                phase: 'failed',
+                at: failedAt,
+                summary: `Edit not applied: ${failure}`,
+              }),
+            }))
           }
           current.ack = ack
           current.handled.set(ack.requestId, ack)
@@ -360,6 +483,13 @@ export default function useMcpBridge(options: Options) {
       setState((previous) => ({
         ...previous,
         status: 'error',
+        presence: null,
+        activity: null,
+        activities: settleMcpActivities(
+          previous.activities,
+          null,
+          'Connection lost before the change was confirmed. Read the canvas to check its outcome.',
+        ),
         mcpClient: null,
         mcpLastSeen: null,
         error: failureMessage(error),

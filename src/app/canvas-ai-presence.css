@@ -1,0 +1,165 @@
+.canvas-ai-presence {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  overflow: hidden;
+  pointer-events: none;
+  contain: layout paint;
+}
+.canvas-ai-presence-geometry {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+.canvas-ai-presence-ring {
+  fill: none;
+  stroke: var(--presence-color);
+  stroke-width: 2;
+  stroke-dasharray: 6 5;
+  opacity: 0.9;
+}
+.canvas-ai-presence[data-animation='pulse'] .canvas-ai-presence-ring {
+  animation: canvas-ai-presence-ring 1.6s ease-in-out infinite;
+}
+.canvas-ai-presence[data-animation='ripple'] .canvas-ai-presence-ring {
+  animation: canvas-ai-presence-ripple 1.8s ease-out infinite;
+}
+.canvas-ai-presence [data-removed='true'] .canvas-ai-presence-ring {
+  stroke-dasharray: 2 5;
+  opacity: 0.65;
+}
+.canvas-ai-presence-trail {
+  stroke: var(--presence-accent);
+  stroke-width: 2;
+  stroke-dasharray: 4 5;
+  opacity: 0.65;
+}
+.canvas-ai-presence-avatar {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  max-width: calc(100% - 16px);
+  padding: 3px 7px 3px 3px;
+  border: 1px solid var(--presence-color);
+  border-radius: 14px;
+  color: var(--ink);
+  background: var(--panel);
+  box-shadow: 0 3px 12px #0003;
+  pointer-events: auto;
+  cursor: pointer;
+  text-align: left;
+  transition:
+    left 220ms ease,
+    top 220ms ease;
+}
+.canvas-ai-presence-avatar:focus-visible {
+  outline: 2px solid var(--presence-accent);
+  outline-offset: 2px;
+}
+.canvas-ai-presence-mascot {
+  display: block;
+  width: var(--presence-size);
+  height: var(--presence-size);
+  flex-shrink: 0;
+  animation-duration: var(--presence-speed);
+  animation-timing-function: ease-in-out;
+  animation-iteration-count: infinite;
+}
+.canvas-ai-presence-mascot svg,
+.canvas-ai-presence-mascot > img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+.canvas-ai-presence-mascot[data-animation='float'] {
+  animation-name: canvas-ai-presence-float;
+}
+.canvas-ai-presence-mascot[data-animation='bounce'] {
+  animation-name: canvas-ai-presence-bounce;
+}
+.canvas-ai-presence-mascot[data-animation='wiggle'] {
+  animation-name: canvas-ai-presence-wiggle;
+}
+.canvas-ai-presence-mascot[data-animation='spin'] {
+  animation-name: canvas-ai-presence-spin;
+}
+.canvas-ai-presence-label {
+  display: grid;
+  gap: 3px;
+  font-size: 11px;
+  line-height: 1.25;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.canvas-ai-presence-client {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 10px;
+}
+.canvas-ai-presence-client img {
+  width: 15px;
+  height: 15px;
+  object-fit: contain;
+}
+.canvas-ai-presence[data-reduce-motion='true'] *,
+.canvas-ai-presence[data-reduce-motion='true'] {
+  animation: none;
+  transition: none;
+}
+@keyframes canvas-ai-presence-ring {
+  50% {
+    opacity: 0.45;
+    stroke-dashoffset: 11;
+  }
+}
+@keyframes canvas-ai-presence-ripple {
+  0% {
+    stroke-width: 2;
+    opacity: 1;
+  }
+  70% {
+    stroke-width: 9;
+    opacity: 0.1;
+  }
+  100% {
+    stroke-width: 2;
+    opacity: 0.1;
+  }
+}
+@keyframes canvas-ai-presence-float {
+  50% {
+    transform: translateY(calc(-1 * var(--presence-amplitude)));
+  }
+}
+@keyframes canvas-ai-presence-bounce {
+  50% {
+    transform: translateY(calc(-1 * var(--presence-amplitude)))
+      scale(1.03, 0.97);
+  }
+}
+@keyframes canvas-ai-presence-wiggle {
+  25% {
+    transform: rotate(-7deg);
+  }
+  75% {
+    transform: rotate(7deg);
+  }
+}
+@keyframes canvas-ai-presence-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .canvas-ai-presence *,
+  .canvas-ai-presence {
+    animation: none;
+    transition: none;
+  }
+}

@@ -30,6 +30,7 @@ import {
 import AppearanceOptions from './AppearanceOptions'
 import CanvasControlOptions from './CanvasControlOptions'
 import WorkspaceAppearanceOptions from './WorkspaceAppearanceOptions'
+import CanvasAiOptions from './CanvasAiOptions'
 import ItemAppearanceDialog from './ItemAppearanceDialog'
 import {
   normalizeItemPresentation,
@@ -1756,6 +1757,11 @@ function WorkspaceApp({
                   }
                 />
               </div>
+              <CanvasAiOptions
+                scopeId={savedWorkspace.id}
+                workspaceName={savedWorkspace.name}
+                reduceMotion={workspace.preferences.reduceMotion}
+              />
               <HotkeyOptions />
             </div>
           )}

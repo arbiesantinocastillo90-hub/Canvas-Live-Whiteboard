@@ -111,6 +111,9 @@ import {
 } from './canvasObjectSnapping'
 import { canvasFontFamily, canvasTextPlacement } from './canvasText'
 import './canvas-quick-panel.css'
+import CanvasAiPresence from './CanvasAiPresence'
+import type { CanvasAiPresenceEvent } from './canvasAiPresenceState'
+import type { AiMiniSettings } from './useAiMiniSettings'
 
 export type CanvasEditorProps = {
   active?: boolean
@@ -140,6 +143,10 @@ export type CanvasEditorProps = {
   statusInFooter?: boolean
   textOptions?: TextLayoutOptions
   controlOptions?: CanvasControlSettings
+  aiPresence?: CanvasAiPresenceEvent | null
+  aiMiniSettings?: AiMiniSettings
+  aiClient?: string | null
+  reduceMotion?: boolean
 }
 
 export type EditorSession = { tool: string; activeLayerId: string | null }
@@ -461,6 +468,10 @@ export default function CanvasEditor({
   dockSide = 'right',
   textOptions = DEFAULT_TEXT_OPTIONS,
   controlOptions = DEFAULT_CANVAS_CONTROLS,
+  aiPresence = null,
+  aiMiniSettings,
+  aiClient = null,
+  reduceMotion = false,
 }: CanvasEditorProps) {
   const controls = normalizeCanvasControls(controlOptions)
   const dockMode = dockHost !== undefined
@@ -476,6 +487,30 @@ export default function CanvasEditor({
   const currentHistory = useRef(history)
   const notified = useRef(document)
   const stage = useRef<HTMLDivElement>(null)
+  const [presenceSize, setPresenceSize] = useState({ width: 0, height: 0 })
+  const hasAiPresence = aiPresence !== null
+  useLayoutEffect(() => {
+    if (!active || !stage.current || !hasAiPresence) return
+    const element = stage.current
+    const measure = () => {
+      const width = element.clientWidth
+      const height = element.clientHeight
+      setPresenceSize((current) =>
+        current.width === width && current.height === height
+          ? current
+          : { width, height },
+      )
+    }
+    measure()
+    const observer =
+      typeof ResizeObserver === 'function' ? new ResizeObserver(measure) : null
+    observer?.observe(element)
+    window.addEventListener('resize', measure)
+    return () => {
+      observer?.disconnect()
+      window.removeEventListener('resize', measure)
+    }
+  }, [active, hasAiPresence])
   const deckGeometry = useCanvasDeck(stage, active && dockMode)
   const gesture = useRef<Gesture | null>(null)
   const pointerSample = useRef<PointerSample | null>(null)
@@ -3347,6 +3382,21 @@ export default function CanvasEditor({
               )}
             </g>
           </svg>
+          {active && aiMiniSettings && aiPresence && (
+            <CanvasAiPresence
+              event={aiPresence}
+              document={board}
+              viewport={view}
+              width={presenceSize.width}
+              height={presenceSize.height}
+              settings={aiMiniSettings}
+              client={aiClient}
+              reduceMotion={reduceMotion}
+              onOpenAI={() => {
+                if (!aiOpen) onToggleAI()
+              }}
+            />
+          )}
           {controls.rulers && (
             <CanvasRulers viewport={view} unit={controls.rulerUnit} />
           )}

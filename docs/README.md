@@ -24,7 +24,7 @@ Start with the [overview](../README.md), [sample canvas](../examples/README.md),
 - [Editor](EDITOR.md) and [adaptable panels](ADAPTABLE_WORKSPACE.md)
 - [Save options](SAVE_OPTIONS.md)
 - [Automatic local folders, Trash and recovery](DURABLE_LIBRARY.md)
-- [Interactive AI mini and shared canvases](AI_MINI.md)
+- [Interactive AI mini, activity locations and shared canvases](AI_MINI.md)
 - [Snapping, rulers and precision](CANVAS_PRECISION.md)
 - [Notifications and copying](NOTIFICATIONS_AND_COPYING.md)
 - [Live links and the local library](LIVE_LINKS_AND_LIBRARY.md)
@@ -37,6 +37,7 @@ Start with the [overview](../README.md), [sample canvas](../examples/README.md),
 
 Each record describes its own execution. An older report's environment or "next task" is historical context, not the current roadmap. Do not sum overlapping test counts.
 
+- [October 21 AI locations, activity history and customization](AI_PRESENCE_VERIFICATION.md)
 - [October 20 durable library, recovery and AI mini](BUGS_REFINEMENTS_VERIFICATION.md)
 - [October 19 relationship endpoint editing](RELATIONSHIP_ENDPOINTS_VERIFICATION.md)
 - [October 18 interactions and MCP activation](WORKSPACE_INTERACTIONS_VERIFICATION.md)

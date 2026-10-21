@@ -19,6 +19,14 @@ export type BridgeAcknowledgment = {
   summary?: string
   error?: string
 }
+/** Observed MCP work only; targets are object IDs, never supplied coordinates. */
+export type BridgeActivity = {
+  kind: 'read' | 'edit'
+  at: number
+  id?: string
+  targetIds?: string[]
+  phase?: 'working' | 'complete'
+}
 export type BridgeResponse = {
   sessionId?: string
   revision?: number
@@ -28,5 +36,5 @@ export type BridgeResponse = {
   mcpClient: string | null
   mcpLastSeen: number | null
   lastOperation?: { summary: string; at: number } | null
-  activity?: { kind: 'read' | 'edit'; at: number } | null
+  activity?: BridgeActivity | null
 }

@@ -245,6 +245,90 @@ afterEach(async () => {
 })
 
 describe('official MCP client against the local companion', () => {
+  it('reports only successfully returned page, shape and search targets in their selected canvas', async () => {
+    const document = applyCanvasCommand(createCanvasDocument('Targets'), {
+      kind: 'batch',
+      operations: [
+        { kind: 'create', element: rectangle },
+        { kind: 'create', element: { ...rectangle, id: 'two', text: 'Other' } },
+        {
+          kind: 'create',
+          element: { ...rectangle, id: 'three', text: 'First again' },
+        },
+      ],
+    }).document
+    await active.share(document)
+    const otherDocument = createCanvasDocument('Other view')
+    const other = (await (
+      await active.post('/bridge/connect', {
+        clientId: 'other-browser',
+        projectId: 'other-project',
+        fileId: 'other-file',
+        projectName: 'Other project',
+        document: otherDocument,
+      })
+    ).json()) as BridgeResponse
+    const pollOther = async () =>
+      (await (
+        await active.post('/bridge/poll', {
+          clientId: 'other-browser',
+          sessionId: other.sessionId,
+          revision: 0,
+          document: otherDocument,
+        })
+      ).json()) as BridgeResponse
+    const activity = async () =>
+      ((await (await active.poll()).json()) as BridgeResponse).activity
+    await active.tool('list_shared_canvases')
+    expect(await activity()).toBeNull()
+    expect((await pollOther()).activity).toBeNull()
+    const page = value(
+      await active.tool('get_canvas_state', {
+        sessionId: active.sessionId,
+        offset: 1,
+        limit: 1,
+      }),
+    )
+    expect(page.elements?.map((element) => element.id)).toEqual(['two'])
+    const firstRead = await activity()
+    expect(firstRead).toMatchObject({
+      id: expect.any(String),
+      phase: 'complete',
+      targetIds: ['two'],
+    })
+    await active.tool('get_shape', { sessionId: active.sessionId, id: 'three' })
+    const shapeRead = await activity()
+    expect(shapeRead).toMatchObject({ targetIds: ['three'] })
+    expect(shapeRead?.id).not.toBe(firstRead?.id)
+    const missing = value(
+      await active.tool('get_shape', {
+        sessionId: active.sessionId,
+        id: 'missing',
+      }),
+    )
+    expect(missing.ok).toBe(false)
+    expect(await activity()).toEqual(shapeRead)
+    const found = value(
+      await active.tool('search_canvas', {
+        sessionId: active.sessionId,
+        query: 'First',
+        offset: 1,
+        limit: 1,
+      }),
+    )
+    expect(found.elements?.map((element) => element.id)).toEqual(['three'])
+    expect(await activity()).toMatchObject({ targetIds: ['three'] })
+    await active.tool('search_canvas', {
+      sessionId: active.sessionId,
+      query: 'unmatched',
+    })
+    expect(await activity()).toMatchObject({ targetIds: [] })
+    const last = await activity()
+    await active.tool('list_shared_canvases')
+    expect(await activity()).toEqual(last)
+    expect((await pollOther()).activity).toBeNull()
+  })
+
   it('identifies another MCP client from its authenticated initialization without guessing a model', async () => {
     const other = await fixture(new CanvasBridge(), 'Claude Desktop')
     try {

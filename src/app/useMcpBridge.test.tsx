@@ -41,8 +41,9 @@ function queued(overrides: Record<string, unknown> = {}) {
 function fixture(
   poll: (body: Record<string, unknown>) => Promise<Response> = () =>
     json(emptyReply),
+  initialDocument = createCanvasDocument('Shared canvas'),
 ) {
-  let document = createCanvasDocument('Shared canvas')
+  let document = initialDocument
   const execute = vi.fn((command: BridgeCommand) => {
     if (command.kind === 'undo' || command.kind === 'redo')
       throw new Error('Not used by this fixture.')
@@ -346,6 +347,346 @@ describe('explicit single-canvas MCP browser sharing', () => {
       'ChatGPT admin definitely verified',
     )
     expect(test.result.current.mcpLastSeen).toBe(123)
+  })
+
+  it('captures read locations from visible local geometry and does not replay duplicate activity', async () => {
+    let document = createElement(
+      createCanvasDocument('Shared canvas'),
+      command.element,
+    )
+    document.layers.push({
+      id: 'hidden',
+      name: 'Hidden',
+      visible: true,
+      locked: false,
+    })
+    document = createElement(document, {
+      ...command.element,
+      id: 'secret',
+      layerId: 'hidden',
+    })
+    document.layers.find((layer) => layer.id === 'hidden')!.visible = false
+    const activity = {
+      id: 'read-one',
+      kind: 'read',
+      phase: 'complete',
+      at: Date.now(),
+      targetIds: ['ai-box', 'secret'],
+    }
+    const test = fixture(() => json({ ...emptyReply, activity }), document)
+    await test.share()
+    const presence = test.result.current.presence
+    expect(presence).toMatchObject({
+      id: 'read-one',
+      kind: 'read',
+      phase: 'complete',
+      scope: JSON.stringify(['project', 'file']),
+      targets: [
+        { id: 'ai-box', bounds: { x: 10, y: 20, width: 100, height: 80 } },
+      ],
+    })
+    await test.nextPoll()
+    expect(test.result.current.presence).toBe(presence)
+    expect(test.result.current.activities).toHaveLength(1)
+    expect(test.execute).not.toHaveBeenCalled()
+  })
+
+  it('keeps one actual move result with its previous geometry across completion and delayed pending metadata', async () => {
+    const document = createElement(
+      createCanvasDocument('Shared canvas'),
+      command.element,
+    )
+    const activity = {
+      id: 'edit:session-1:operation-1',
+      kind: 'edit',
+      phase: 'working',
+      at: Date.now(),
+      targetIds: ['ai-box'],
+    }
+    let polls = 0
+    const test = fixture(() => {
+      const index = polls++
+      return json({
+        ...emptyReply,
+        activity:
+          index === 2
+            ? { ...activity, phase: 'complete', at: Date.now() }
+            : activity,
+        ...(index === 1 || index === 3
+          ? {
+              command: queued({
+                command: { kind: 'move', id: 'ai-box', x: 150, y: 200 },
+              }),
+            }
+          : {}),
+        ...(index === 2 ? { ackId: 'operation-1' } : {}),
+      })
+    }, document)
+    await test.share()
+    expect(test.result.current.presence?.phase).toBe('working')
+    expect(test.execute).not.toHaveBeenCalled()
+    await test.nextPoll()
+    const completed = test.result.current.presence
+    expect(completed).toMatchObject({
+      phase: 'complete',
+      targets: [
+        {
+          id: 'ai-box',
+          bounds: { x: 150, y: 200 },
+          previousBounds: { x: 10, y: 20 },
+        },
+      ],
+    })
+    const history = test.result.current.activities
+    expect(history).toHaveLength(1)
+    expect(history?.[0]).toMatchObject({
+      phase: 'complete',
+      summary: test.result.current.lastOperation,
+    })
+    await test.nextPoll()
+    await test.nextPoll()
+    expect(test.execute).toHaveBeenCalledTimes(1)
+    expect(test.result.current.presence).toBe(completed)
+    expect(test.result.current.activities).toBe(history)
+    expect(test.result.current.activity?.phase).toBe('complete')
+  })
+
+  it('retains the real deleted location when the companion confirms it after the shape has gone', async () => {
+    const document = createElement(
+      createCanvasDocument('Shared canvas'),
+      command.element,
+    )
+    let polls = 0
+    const test = fixture(
+      () =>
+        json({
+          ...emptyReply,
+          ...(polls++ === 0
+            ? { command: queued({ command: { kind: 'delete', id: 'ai-box' } }) }
+            : {
+                ackId: 'operation-1',
+                activity: {
+                  id: 'edit:session-1:operation-1',
+                  kind: 'edit',
+                  phase: 'complete',
+                  at: Date.now(),
+                  targetIds: ['ai-box'],
+                },
+              }),
+        }),
+      document,
+    )
+    await test.share()
+    const completed = test.result.current.presence
+    expect(completed).toMatchObject({
+      phase: 'complete',
+      targets: [
+        {
+          id: 'ai-box',
+          removed: true,
+          bounds: { x: 10, y: 20, width: 100, height: 80 },
+        },
+      ],
+    })
+    expect(test.getDocument().elements).toHaveLength(0)
+    await test.nextPoll()
+    expect(test.result.current.presence).toBe(completed)
+    expect(test.result.current.activities).toHaveLength(1)
+  })
+
+  it('keeps a rejected operation failed when a delayed pending snapshot is repeated', async () => {
+    const document = createElement(
+      createCanvasDocument('Shared canvas'),
+      command.element,
+    )
+    let polls = 0
+    const test = fixture(
+      () =>
+        json({
+          ...emptyReply,
+          activity: {
+            id: 'edit:session-1:operation-1',
+            kind: 'edit',
+            phase: polls++ < 2 ? 'working' : 'complete',
+            at: Date.now(),
+            targetIds: ['ai-box'],
+          },
+          command: queued({ sessionId: 'wrong-session' }),
+        }),
+      document,
+    )
+    await test.share()
+    expect(test.result.current.activities?.[0]).toMatchObject({
+      kind: 'error',
+      phase: 'failed',
+      summary: expect.stringContaining('Edit not applied:'),
+    })
+    await test.nextPoll()
+    expect(test.result.current.presence).toBeNull()
+    expect(test.result.current.activity).toBeNull()
+    expect(test.result.current.activities).toHaveLength(1)
+    expect(test.result.current.activities?.[0].phase).toBe('failed')
+    expect(test.execute).not.toHaveBeenCalled()
+    await test.nextPoll()
+    expect(test.result.current.presence).toBeNull()
+    expect(test.result.current.activity).toBeNull()
+    expect(test.result.current.activities?.[0].phase).toBe('failed')
+  })
+
+  it('treats an object ID that collides with a layer ID as that object when recording an ordinary edit', async () => {
+    let document = createCanvasDocument('Shared canvas')
+    document.layers.push({
+      id: 'target',
+      name: 'Other layer',
+      visible: true,
+      locked: false,
+    })
+    document = createElement(document, { ...command.element, id: 'target' })
+    document = createElement(document, {
+      ...command.element,
+      id: 'other',
+      layerId: 'target',
+    })
+    const test = fixture(
+      () =>
+        json({
+          ...emptyReply,
+          command: queued({
+            command: { kind: 'move', id: 'target', x: 90, y: 100 },
+          }),
+        }),
+      document,
+    )
+    await test.share()
+    expect(
+      test.result.current.presence?.targets.map((target) => target.id),
+    ).toEqual(['target'])
+    expect(test.result.current.activity?.targetIds).toEqual(['target'])
+    expect(
+      test.getDocument().elements.find((element) => element.id === 'other'),
+    ).toMatchObject({ x: 10, y: 20 })
+  })
+
+  it('resolves layer change result IDs to the actual member objects before displaying activity', async () => {
+    const document = createElement(
+      createCanvasDocument('Shared canvas'),
+      command.element,
+    )
+    const layerId = document.layers[0].id
+    const test = fixture(
+      () =>
+        json({
+          ...emptyReply,
+          command: queued({
+            command: {
+              kind: 'update_layer',
+              id: layerId,
+              patch: { name: 'Renamed' },
+            },
+          }),
+        }),
+      document,
+    )
+    await test.share()
+    expect(
+      test.result.current.presence?.targets.map((target) => target.id),
+    ).toEqual(['ai-box'])
+    expect(test.result.current.activity?.targetIds).toEqual(['ai-box'])
+    expect(test.execute).toHaveBeenCalledTimes(1)
+  })
+
+  it('marks a disappeared request unconfirmed without claiming it was applied or permanently busy', async () => {
+    let polls = 0
+    const activity = {
+      id: 'edit:session-1:operation-1',
+      kind: 'edit',
+      phase: 'working',
+      at: Date.now(),
+      targetIds: [],
+    }
+    const test = fixture(() =>
+      json({ ...emptyReply, activity: polls++ === 1 ? null : activity }),
+    )
+    await test.share()
+    expect(test.result.current.activities?.[0].phase).toBe('working')
+    await test.nextPoll()
+    expect(test.result.current.activities?.[0]).toMatchObject({
+      phase: 'unconfirmed',
+      summary: expect.stringContaining('confirm its outcome'),
+    })
+    expect(test.result.current.lastOperation).toBeNull()
+    expect(test.result.current.error).toBeNull()
+    await test.nextPoll()
+    expect(test.result.current.activity).toBeNull()
+    expect(test.result.current.activities?.[0].phase).toBe('unconfirmed')
+    expect(test.execute).not.toHaveBeenCalled()
+  })
+
+  it('clears work markers and labels pending history unconfirmed if the connection fails', async () => {
+    let polls = 0
+    const test = fixture(() =>
+      polls++ === 0
+        ? json({
+            ...emptyReply,
+            activity: {
+              id: 'pending',
+              kind: 'edit',
+              phase: 'working',
+              at: Date.now(),
+              targetIds: [],
+            },
+          })
+        : json({ error: 'Companion disconnected.' }, 410),
+    )
+    await test.share()
+    await test.nextPoll()
+    expect(test.result.current.status).toBe('error')
+    expect(test.result.current.presence).toBeNull()
+    expect(test.result.current.activity).toBeNull()
+    expect(test.result.current.activities?.[0]).toMatchObject({
+      phase: 'unconfirmed',
+      summary: expect.stringContaining('Connection lost'),
+    })
+    expect(test.result.current.lastOperation).toBeNull()
+  })
+
+  it('quarantines invalid activity metadata while retaining a valid operation', async () => {
+    const test = fixture(() =>
+      json({
+        ...emptyReply,
+        activity: { kind: ['edit'], at: Date.now(), targetIds: ['secret'] },
+        command: queued(),
+      }),
+    )
+    await test.share()
+    expect(test.execute).toHaveBeenCalledTimes(1)
+    expect(test.result.current.activities).toHaveLength(1)
+    expect(test.result.current.activities?.[0]).toMatchObject({
+      phase: 'complete',
+      kind: 'edit',
+    })
+    expect(
+      test.result.current.presence?.targets.map((target) => target.id),
+    ).toEqual(['ai-box'])
+  })
+
+  it('clears activity locations and history when sharing stops or changes to another file', async () => {
+    const test = fixture(() =>
+      json({
+        ...emptyReply,
+        activity: { id: 'read', kind: 'read', at: Date.now() },
+      }),
+    )
+    await test.share()
+    expect(test.result.current.activities).toHaveLength(1)
+    act(() => test.result.current.disconnect())
+    expect(test.result.current.activities).toEqual([])
+    expect(test.result.current.presence).toBeNull()
+    await test.share()
+    test.rerender({ fileId: 'other-file', baseUrl: undefined })
+    expect(test.result.current.activities).toEqual([])
+    expect(test.result.current.presence).toBeNull()
+    expect(test.result.current.status).toBe('idle')
   })
 
   it('discovers its packaged companion only after an explicit Share action', async () => {

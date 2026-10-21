@@ -19,7 +19,7 @@ The screenshot uses the [included sample canvas](examples/portfolio-demo.CLF), w
 - Add images, GIFs, audio, video, websites and supported documents. Pause or minimize embeds; website interactivity depends on the provider's framing policy.
 - Save and recover local work using individual native records and automatic project/workspace folders. Import/export validated `.CLF`, `.CLP` and `.CLW` files, and copy exact/latest local workspace links.
 - Explicitly share canvases from separate views through 16 bounded MCP tools. Edits use the same validated operations as manual editing, and sharing continues on Home and Options.
-- Customize an interactive AI mini with its appearance, motion and status bubbles. Client logos identify reported clients; activity reflects observed MCP events.
+- Customize an interactive AI mini from Options or Workspace AI. See recent activity and colored location indicators for AI reads, requested edits and acknowledged changes. Double-click the mini to open its panel. Client logos identify reported clients; activity reflects observed MCP events.
 - Build a Windows package containing the local site, C# launchers and a verified Node runtime for the optional companion.
 
 ## Try it from source
@@ -65,7 +65,7 @@ Read the [case study](docs/CASE_STUDY.md) for the problem, tradeoffs and lessons
 
 The [timeline](docs/TIMELINE.md) links real commits and retains their timezone offsets. The [roadmap](docs/ROADMAP.md) separates delivered behavior, remaining acceptance work and future scope. Dates describe evidence and commits, not estimated effort or retroactively assigned deadlines.
 
-The October 20 refinement passed **1,205 application tests**, **71 MCP protocol tests**, and **22 isolated browser scenarios**, plus **67 new native storage checks** and **55 existing native checks**. Browser evidence includes two independent shared canvases, background AI editing, mini customization, iframe save recovery and damaged-record recovery. These are separate executions; overlapping focused runs are not added to their totals. See [refinement verification](docs/BUGS_REFINEMENTS_VERIFICATION.md) and [testing instructions](docs/TESTING.md).
+The October 21 AI presence revision passed **1,276 application tests**, **86 MCP protocol tests** and **13 isolated production browser scenarios**, including real activity locations, manual conflicts, customization and sharing isolation. See [presence verification](docs/AI_PRESENCE_VERIFICATION.md). The preceding [October 20 refinement](docs/BUGS_REFINEMENTS_VERIFICATION.md) separately records durable-library, recovery and native-storage checks; native code is unchanged in this revision. Focused runs overlap with full suites and are not added to their totals. See [testing instructions](docs/TESTING.md).
 
 ```sh
 npm run check

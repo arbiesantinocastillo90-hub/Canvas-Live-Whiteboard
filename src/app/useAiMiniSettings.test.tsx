@@ -84,6 +84,56 @@ describe('AI mini settings', () => {
     expect(() => aiMiniStorageKey('../bad\n')).toThrow()
   })
 
+  it('keeps existing version-one characters while adding bounded indicator defaults', () => {
+    const legacy = normalizeAiMiniSettings({
+      version: 1,
+      name: 'Miku',
+      preset: 'custom',
+      imageAssetId: 'a'.repeat(64),
+      imageMime: 'image/gif',
+      x: 0.2,
+    })
+    expect(legacy).toMatchObject({
+      name: 'Miku',
+      preset: 'custom',
+      imageAssetId: 'a'.repeat(64),
+      imageMime: 'image/gif',
+      x: 0.2,
+      showCanvasActivity: true,
+      presenceAnimation: 'pulse',
+      presenceDuration: 5,
+      presenceLabels: true,
+    })
+    expect(
+      normalizeAiMiniSettings({
+        ...legacy,
+        showCanvasActivity: 'true',
+        presenceReadColor: 'url(https://bad.test)',
+        presenceWorkingColor: '#abcdef',
+        presenceCompleteColor: '#123',
+        presenceDuration: 900,
+        presenceAnimation: 'external()',
+        presenceLabels: false,
+      }),
+    ).toMatchObject({
+      showCanvasActivity: true,
+      presenceReadColor: DEFAULT_AI_MINI_SETTINGS.presenceReadColor,
+      presenceWorkingColor: '#abcdef',
+      presenceCompleteColor: DEFAULT_AI_MINI_SETTINGS.presenceCompleteColor,
+      presenceDuration: 15,
+      presenceAnimation: 'pulse',
+      presenceLabels: false,
+    })
+    expect(
+      normalizeAiMiniSettings({ ...legacy, presenceDuration: NaN })
+        .presenceDuration,
+    ).toBe(5)
+    expect(
+      normalizeAiMiniSettings({ ...legacy, presenceDuration: -1 })
+        .presenceDuration,
+    ).toBe(2)
+  })
+
   it('saves and reloads browser-only settings', async () => {
     const fake = client()
     Object.defineProperty(fake.api, 'available', { value: false })
@@ -137,6 +187,129 @@ describe('AI mini settings', () => {
       color: '#445566',
       size: 88,
     })
+  })
+
+  it('syncs Options and the hidden mini in the same page without extra portable writes or crossing workspaces', async () => {
+    const fake = client()
+    const options = renderHook(() =>
+      useAiMiniSettings('work-a', { client: fake.api }),
+    )
+    const mini = renderHook(() =>
+      useAiMiniSettings('work-a', { client: fake.api }),
+    )
+    const other = renderHook(() =>
+      useAiMiniSettings('work-b', { client: fake.api }),
+    )
+    await waitFor(() =>
+      expect(
+        [options, mini, other].every((view) => !view.result.current.loading),
+      ).toBe(true),
+    )
+    act(() =>
+      options.result.current.update({
+        name: 'Shared buddy',
+        presenceReadColor: '#112233',
+        presenceAnimation: 'ripple',
+      }),
+    )
+    expect(mini.result.current.settings).toMatchObject({
+      name: 'Shared buddy',
+      presenceReadColor: '#112233',
+      presenceAnimation: 'ripple',
+    })
+    expect(other.result.current.settings).toEqual(DEFAULT_AI_MINI_SETTINGS)
+    await waitFor(() => expect(fake.transform).toHaveBeenCalledTimes(1))
+    act(() => mini.result.current.update({ x: 0.3, presenceLabels: false }))
+    await waitFor(() => expect(fake.transform).toHaveBeenCalledTimes(2))
+    expect(options.result.current.settings).toMatchObject({
+      name: 'Shared buddy',
+      x: 0.3,
+      presenceLabels: false,
+    })
+    expect(fake.values.get(aiMiniLibraryKey('work-a'))).toMatchObject({
+      name: 'Shared buddy',
+      x: 0.3,
+      presenceReadColor: '#112233',
+      presenceAnimation: 'ripple',
+      presenceLabels: false,
+    })
+    expect(fake.values.has(aiMiniLibraryKey('work-b'))).toBe(false)
+  })
+
+  it('shares independent native merge results with other same-page minis', async () => {
+    const fake = client({ ...DEFAULT_AI_MINI_SETTINGS, name: 'Portable' })
+    const options = renderHook(() =>
+      useAiMiniSettings('work-a', { client: fake.api }),
+    )
+    const mini = renderHook(() =>
+      useAiMiniSettings('work-a', { client: fake.api }),
+    )
+    await waitFor(() =>
+      expect(mini.result.current.settings.name).toBe('Portable'),
+    )
+    fake.values.set(aiMiniLibraryKey('work-a'), {
+      ...DEFAULT_AI_MINI_SETTINGS,
+      name: 'Changed in another window',
+      presenceReadColor: '#aabbcc',
+    })
+    act(() => options.result.current.update({ presenceAnimation: 'ripple' }))
+    await waitFor(() =>
+      expect(mini.result.current.settings.name).toBe(
+        'Changed in another window',
+      ),
+    )
+    expect(options.result.current.settings).toEqual(
+      mini.result.current.settings,
+    )
+    expect(mini.result.current.settings).toMatchObject({
+      presenceReadColor: '#aabbcc',
+      presenceAnimation: 'ripple',
+    })
+    expect(fake.transform).toHaveBeenCalledOnce()
+  })
+
+  it('ignores malformed local notifications and protects a peer edit from a late initial load', async () => {
+    const fake = client()
+    let resolve!: (value: { revision: number; value: unknown }) => void
+    const options = renderHook(() =>
+      useAiMiniSettings('work-a', { client: fake.api }),
+    )
+    await waitFor(() => expect(options.result.current.loading).toBe(false))
+    fake.read.mockImplementationOnce(
+      () =>
+        new Promise((done) => {
+          resolve = done
+        }),
+    )
+    const mini = renderHook(() =>
+      useAiMiniSettings('work-a', { client: fake.api }),
+    )
+    act(() =>
+      options.result.current.update({
+        name: 'New appearance',
+        presenceDuration: 9,
+      }),
+    )
+    await act(async () =>
+      resolve({
+        revision: 1,
+        value: { ...DEFAULT_AI_MINI_SETTINGS, name: 'Stale initial read' },
+      }),
+    )
+    expect(mini.result.current.settings).toMatchObject({
+      name: 'New appearance',
+      presenceDuration: 9,
+    })
+    act(() => {
+      for (const settings of [null, 'invalid', { version: 99, name: 'Future' }])
+        window.dispatchEvent(
+          new CustomEvent('canvas-live:ai-mini-settings', {
+            detail: { scopeId: 'work-a', settings },
+          }),
+        )
+    })
+    expect(mini.result.current.settings.name).toBe('New appearance')
+    expect(fake.transform).toHaveBeenCalledOnce()
   })
 
   it('retains edits and an actionable error when a portable write fails', async () => {

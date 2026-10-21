@@ -1,0 +1,52 @@
+.mcp-activity-log {
+  margin-top: 12px;
+  font-size: 12px;
+}
+.mcp-activity-log > strong {
+  font-size: 12px;
+}
+.mcp-activity-log > p {
+  color: var(--muted, #adb5c7);
+}
+.mcp-activity-log ol {
+  max-height: 260px;
+  overflow-y: auto;
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+}
+.mcp-activity-log[data-compact='true'] ol {
+  max-height: 180px;
+}
+.mcp-activity-log li {
+  display: grid;
+  grid-template-columns: 7px minmax(0, 1fr) auto;
+  gap: 7px;
+  align-items: baseline;
+  padding: 7px 0;
+  border-top: 1px solid #ffffff16;
+  overflow-wrap: anywhere;
+}
+.mcp-activity-log time {
+  color: var(--muted, #adb5c7);
+  font-size: 10px;
+  white-space: nowrap;
+}
+.mcp-activity-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #8ff0d0;
+}
+.mcp-activity-log [data-kind='read'] .mcp-activity-dot {
+  background: #68b8ff;
+}
+.mcp-activity-log [data-phase='working'] .mcp-activity-dot {
+  background: #f6be4f;
+}
+.mcp-activity-log [data-kind='error'] .mcp-activity-dot {
+  background: #ff8f9b;
+}
+.mcp-activity-log [data-phase='unconfirmed'] .mcp-activity-dot {
+  background: var(--muted, #adb5c7);
+}

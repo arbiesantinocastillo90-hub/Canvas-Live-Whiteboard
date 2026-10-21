@@ -1,5 +1,6 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { useState } from 'react'
 import CanvasAiMini, { type CanvasAiMiniProps } from './CanvasAiMini'
 import { aiMiniStorageKey, DEFAULT_AI_MINI_SETTINGS } from './useAiMiniSettings'
 import { backgroundAssets } from './workspaceBackground'
@@ -128,7 +129,7 @@ describe('AI mini identity and activity', () => {
     })
     await screen.findByRole('status')
     expect(screen.getByRole('status')).toHaveTextContent(
-      'Editing the shared canvas',
+      'Requested a canvas change',
     )
     expect(document.querySelector('.ai-mini-motion')).toHaveAttribute(
       'data-animation',
@@ -159,6 +160,22 @@ describe('AI mini identity and activity', () => {
     )
     expect(document.querySelector('.ai-mini-bubble')).not.toBeInTheDocument()
   })
+  it.each([
+    ['read', 'complete', 'Read the shared canvas'],
+    ['edit', 'working', 'Requested a canvas change'],
+    ['edit', 'complete', 'Updated the shared canvas'],
+  ] as const)(
+    'reports %s %s activity without inventing ongoing work',
+    async (kind, phase, text) => {
+      mount({
+        state: { ...SHARING, activity: { kind, phase, at: Date.now() } },
+      })
+      await waitFor(() =>
+        expect(screen.getByRole('status')).toHaveTextContent(text),
+      )
+      expect(screen.getByRole('status')).not.toHaveTextContent('Editing')
+    },
+  )
   it('renders bounded remote operation strings as literal text', async () => {
     const operation = '<img src=x onerror="alert(1)">'
     const view = mount({
@@ -189,7 +206,7 @@ describe('AI mini identity and activity', () => {
     )
     act(() => vi.advanceTimersByTime(1))
     expect(screen.getByRole('status')).toHaveTextContent(
-      'Reading the shared canvas',
+      'Read the shared canvas',
     )
     act(() => vi.advanceTimersByTime(5000))
     expect(document.querySelector('.ai-mini-bubble')).not.toBeInTheDocument()
@@ -209,13 +226,40 @@ describe('AI mini identity and activity', () => {
 })
 
 describe('interactive AI mini', () => {
-  it('opens actions, minimizes, restores, and invokes connection actions', async () => {
-    const view = mount()
-    fireEvent.click(await view.avatar())
-    fireEvent.click(screen.getByRole('button', { name: 'AI panel' }))
+  it('shows activity on one click and opens Workspace AI on double-click, with connection controls kept in the panel', async () => {
+    const view = mount({
+      state: {
+        ...SHARING,
+        activities: [
+          {
+            id: 'edit-1',
+            kind: 'edit',
+            phase: 'complete',
+            at: Date.now(),
+            summary: 'Moved 2 objects.',
+          },
+        ],
+      },
+    })
+    const avatar = await view.avatar()
+    fireEvent.click(avatar, { detail: 1 })
+    expect(
+      screen.getByRole('region', { name: 'Recent AI activity' }),
+    ).toHaveTextContent('Moved 2 objects.')
+    expect(view.props.onOpenAI).not.toHaveBeenCalled()
+    expect(
+      screen.queryByRole('button', { name: 'AI panel' }),
+    ).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: 'Stop sharing' }),
+    ).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: 'Customize mini' }),
+    ).not.toBeInTheDocument()
+    fireEvent.click(avatar, { detail: 2 })
+    fireEvent.doubleClick(avatar)
     expect(view.props.onOpenAI).toHaveBeenCalledOnce()
-    fireEvent.click(screen.getByRole('button', { name: 'Stop sharing' }))
-    expect(view.props.onStopSharing).toHaveBeenCalledOnce()
+    expect(view.props.onStopSharing).not.toHaveBeenCalled()
     fireEvent.click(screen.getByRole('button', { name: 'Minimize AI mini' }))
     expect(saved().minimized).toBe(true)
     fireEvent.click(
@@ -223,8 +267,8 @@ describe('interactive AI mini', () => {
     )
     expect(saved().minimized).toBe(false)
     expect(
-      screen.getByRole('button', { name: 'Customize mini' }),
-    ).toBeInTheDocument()
+      screen.getByRole('region', { name: 'Recent AI activity' }),
+    ).toHaveTextContent('Moved 2 objects.')
   })
   it('commits one bounded drag and suppresses its synthetic click', async () => {
     const view = mount()
@@ -243,8 +287,50 @@ describe('interactive AI mini', () => {
     expect(document.querySelector('.ai-mini-bubble')).not.toBeInTheDocument()
     fireEvent.click(button)
     expect(
-      screen.getByRole('button', { name: 'Customize mini' }),
+      screen.getByRole('region', { name: 'Recent AI activity' }),
     ).toBeInTheDocument()
+  })
+  it('does not mistake a drag followed by its double-click sequence for opening Workspace AI', async () => {
+    const view = mount()
+    const avatar = await view.avatar()
+    fireEvent.pointerDown(avatar, {
+      button: 0,
+      clientX: 850,
+      clientY: 608,
+      pointerId: 1,
+    })
+    fireEvent.pointerMove(avatar, { clientX: 250, clientY: 208, pointerId: 1 })
+    fireEvent.pointerUp(avatar, { pointerId: 1 })
+    fireEvent.click(avatar, { detail: 1 })
+    fireEvent.pointerDown(avatar, {
+      button: 0,
+      clientX: 250,
+      clientY: 208,
+      pointerId: 1,
+    })
+    fireEvent.pointerUp(avatar, { pointerId: 1 })
+    fireEvent.click(avatar, { detail: 2 })
+    fireEvent.doubleClick(avatar)
+    expect(view.props.onOpenAI).not.toHaveBeenCalled()
+    expect(
+      screen.queryByRole('region', { name: 'Recent AI activity' }),
+    ).not.toBeInTheDocument()
+    fireEvent.click(avatar, { detail: 1 })
+    fireEvent.doubleClick(avatar)
+    expect(view.props.onOpenAI).toHaveBeenCalledOnce()
+  })
+  it('opens Workspace AI with Alt+Enter without bubbling the shortcut or toggling the activity box', async () => {
+    const bubbled = vi.fn()
+    const view = mount()
+    const avatar = await view.avatar()
+    document.addEventListener('keydown', bubbled)
+    fireEvent.keyDown(avatar, { key: 'Enter', altKey: true })
+    document.removeEventListener('keydown', bubbled)
+    expect(view.props.onOpenAI).toHaveBeenCalledOnce()
+    expect(bubbled).not.toHaveBeenCalled()
+    expect(
+      screen.queryByRole('region', { name: 'Recent AI activity' }),
+    ).not.toBeInTheDocument()
   })
   it.each(['pointerCancel', 'lostPointerCapture', 'Escape', 'blur'])(
     'cancels a drag on %s without persisting movement',
@@ -293,10 +379,30 @@ describe('interactive AI mini', () => {
     expect(bubbled).not.toHaveBeenCalled()
   })
   it('customizes through the dialog and restores focus when closing it', async () => {
-    const view = mount()
-    const button = await view.avatar()
-    fireEvent.click(button)
-    const customize = screen.getByRole('button', { name: 'Customize mini' })
+    function SettingsHarness() {
+      const [open, setOpen] = useState(false)
+      return (
+        <>
+          <button onClick={() => setOpen(true)}>
+            Open settings from AI panel
+          </button>
+          <CanvasAiMini
+            scopeId={scope}
+            state={SHARING}
+            reduceMotion={false}
+            onOpenAI={vi.fn()}
+            onStopSharing={vi.fn()}
+            settingsOpen={open}
+            onSettingsOpenChange={setOpen}
+          />
+        </>
+      )
+    }
+    render(<SettingsHarness />)
+    await screen.findByRole('button', { name: /Canvas buddy:/u })
+    const customize = screen.getByRole('button', {
+      name: 'Open settings from AI panel',
+    })
     customize.focus()
     fireEvent.click(customize)
     expect(screen.getByRole('dialog')).toBeInTheDocument()
