@@ -21,7 +21,8 @@ import {
 } from './useAiMiniSettings'
 import './canvas-ai-mini.css'
 import { aiMiniClientBrand } from './aiMiniClientBrand'
-function Mascot({
+import McpActivityLog from './McpActivityLog'
+export function AiMiniMascot({
   settings,
   image,
   paused,
@@ -151,6 +152,7 @@ export type CanvasAiMiniProps = {
   reduceMotion: boolean
   settingsOpen?: boolean
   onSettingsOpenChange?: (open: boolean) => void
+  onSettingsChange?: (scopeId: string, settings: AiMiniSettings) => void
 }
 export default function CanvasAiMini(props: CanvasAiMiniProps) {
   return <ScopedCanvasAiMini key={props.scopeId} {...props} />
@@ -159,10 +161,10 @@ function ScopedCanvasAiMini({
   scopeId,
   state,
   onOpenAI,
-  onStopSharing,
   reduceMotion,
   settingsOpen,
   onSettingsOpenChange,
+  onSettingsChange,
 }: CanvasAiMiniProps) {
   const preferences = useAiMiniSettings(scopeId)
   const settings = preferences.settings
@@ -179,11 +181,15 @@ function ScopedCanvasAiMini({
   )
   const drag = useRef<Drag | null>(null)
   const suppressClick = useRef(false)
+  const suppressDoubleClick = useRef(false)
   const mini = useRef<HTMLDivElement>(null)
   const dialog = useRef<HTMLDivElement>(null)
   const uploadScope = useRef(scopeId)
   const titleId = useId()
   const openSettings = settingsOpen ?? localSettingsOpen
+  useEffect(() => {
+    if (!preferences.loading) onSettingsChange?.(scopeId, settings)
+  }, [preferences.loading, scopeId, settings, onSettingsChange])
   function configure(open: boolean) {
     setLocalSettingsOpen(open)
     onSettingsOpenChange?.(open)
@@ -247,8 +253,10 @@ function ScopedCanvasAiMini({
         ? 'Waiting for an AI client'
         : working
           ? state.activity?.kind === 'edit'
-            ? 'Editing the shared canvas'
-            : 'Reading the shared canvas'
+            ? state.activity.phase === 'complete'
+              ? 'Updated the shared canvas'
+              : 'Requested a canvas change'
+            : 'Read the shared canvas'
           : 'Connected to the shared canvas'
   const size = settings.minimized ? 30 : settings.size
   const x = position?.x ?? settings.x
@@ -311,6 +319,7 @@ function ScopedCanvasAiMini({
     drag.current = null
     if (current.moved) {
       suppressClick.current = true
+      suppressDoubleClick.current = true
       if (!cancel) preferences.update({ x: current.x, y: current.y })
     }
     setPosition(null)
@@ -323,6 +332,7 @@ function ScopedCanvasAiMini({
       if (!current) return
       drag.current = null
       suppressClick.current = current.moved
+      suppressDoubleClick.current = current.moved
       setPosition(null)
       if (current.target.hasPointerCapture?.(current.pointerId))
         current.target.releasePointerCapture(current.pointerId)
@@ -336,6 +346,11 @@ function ScopedCanvasAiMini({
   }, [visible])
   function keys(event: KeyboardEvent<HTMLButtonElement>) {
     event.stopPropagation()
+    if (event.key === 'Enter' && event.altKey) {
+      event.preventDefault()
+      onOpenAI()
+      return
+    }
     if (event.key === 'Escape') {
       event.stopPropagation()
       event.preventDefault()
@@ -453,7 +468,7 @@ function ScopedCanvasAiMini({
                 : `${settings.name}: ${status}`
             }
             aria-expanded={settings.minimized ? undefined : expanded}
-            title="Click for AI actions. Drag to move, or use the arrow keys."
+            title="Click for recent AI activity. Double-click or Alt+Enter for Workspace AI. Drag to move."
             onPointerDown={down}
             onPointerMove={move}
             onPointerUp={(event) => finish(event)}
@@ -466,12 +481,22 @@ function ScopedCanvasAiMini({
                 suppressClick.current = false
                 return
               }
+              if (event.detail > 1) return
+              suppressDoubleClick.current = false
               if (settings.minimized) preferences.update({ minimized: false })
               setExpanded((value) => !value)
             }}
+            onDoubleClick={(event) => {
+              event.preventDefault()
+              event.stopPropagation()
+              if (suppressClick.current || suppressDoubleClick.current) return
+              setExpanded(true)
+              if (settings.minimized) preferences.update({ minimized: false })
+              onOpenAI()
+            }}
           >
             <span className="ai-mini-motion" data-animation={animation}>
-              <Mascot
+              <AiMiniMascot
                 settings={settings}
                 image={image}
                 paused={motionDisabled}
@@ -522,7 +547,7 @@ function ScopedCanvasAiMini({
                     ? `Reported client: ${state.mcpClient.slice(0, 80)}`
                     : 'No AI client has connected yet.'}
                 </p>
-                {state.lastOperation && (
+                {state.lastOperation && !state.activities?.length && (
                   <p className="ai-mini-operation">
                     {state.lastOperation.slice(0, 500)}
                   </p>
@@ -532,19 +557,10 @@ function ScopedCanvasAiMini({
                     {preferences.error}
                   </p>
                 )}
-                {expanded && (
-                  <div className="ai-mini-actions">
-                    <button onClick={onOpenAI}>AI panel</button>
-                    <button onClick={() => configure(true)}>
-                      Customize mini
-                    </button>
-                    <button onClick={onStopSharing}>
-                      {state.status === 'connecting'
-                        ? 'Cancel connection'
-                        : 'Stop sharing'}
-                    </button>
-                  </div>
-                )}
+                <McpActivityLog entries={state.activities} compact />
+                <p className="ai-mini-reported-client">
+                  Double-click the mini for Workspace AI.
+                </p>
               </div>
             )}
         </div>
@@ -597,7 +613,7 @@ function ScopedCanvasAiMini({
                 role="img"
                 aria-label={`${settings.name} appearance preview`}
               >
-                <Mascot
+                <AiMiniMascot
                   settings={settings}
                   image={image}
                   paused={motionDisabled}
@@ -757,6 +773,109 @@ function ScopedCanvasAiMini({
                 Show activity bubbles
               </label>
             </div>
+            <fieldset className="ai-mini-presence-settings">
+              <legend>Canvas indicators</legend>
+              <p>
+                Mark the locations of observed AI reads, requested edits and
+                completed changes.
+              </p>
+              <div className="ai-mini-settings-grid">
+                <label className="ai-mini-checkbox">
+                  <input
+                    type="checkbox"
+                    checked={settings.showCanvasActivity}
+                    onChange={(event) =>
+                      preferences.update({
+                        showCanvasActivity: event.target.checked,
+                      })
+                    }
+                  />
+                  Show activity on canvas
+                </label>
+                <label className="ai-mini-checkbox">
+                  <input
+                    type="checkbox"
+                    checked={settings.presenceLabels}
+                    onChange={(event) =>
+                      preferences.update({
+                        presenceLabels: event.target.checked,
+                      })
+                    }
+                  />
+                  Show indicator labels
+                </label>
+                <label>
+                  Read indicator color
+                  <input
+                    type="color"
+                    value={settings.presenceReadColor}
+                    onChange={(event) =>
+                      preferences.update({
+                        presenceReadColor: event.target.value,
+                      })
+                    }
+                  />
+                </label>
+                <label>
+                  Requested edit color
+                  <input
+                    type="color"
+                    value={settings.presenceWorkingColor}
+                    onChange={(event) =>
+                      preferences.update({
+                        presenceWorkingColor: event.target.value,
+                      })
+                    }
+                  />
+                </label>
+                <label>
+                  Completed edit color
+                  <input
+                    type="color"
+                    value={settings.presenceCompleteColor}
+                    onChange={(event) =>
+                      preferences.update({
+                        presenceCompleteColor: event.target.value,
+                      })
+                    }
+                  />
+                </label>
+                <label>
+                  Indicator animation
+                  <select
+                    aria-label="Indicator animation"
+                    value={settings.presenceAnimation}
+                    onChange={(event) =>
+                      preferences.update({
+                        presenceAnimation: event.target
+                          .value as AiMiniSettings['presenceAnimation'],
+                      })
+                    }
+                  >
+                    <option value="pulse">Pulse</option>
+                    <option value="ripple">Ripple</option>
+                    <option value="none">None</option>
+                  </select>
+                </label>
+                <label>
+                  Indicator duration{' '}
+                  <output>{settings.presenceDuration} seconds</output>
+                  <input
+                    type="range"
+                    aria-label="Indicator duration"
+                    min="2"
+                    max="15"
+                    step="1"
+                    value={settings.presenceDuration}
+                    onChange={(event) =>
+                      preferences.update({
+                        presenceDuration: Number(event.target.value),
+                      })
+                    }
+                  />
+                </label>
+              </div>
+            </fieldset>
             <label className="ai-mini-image-input">
               Custom image (PNG, GIF, WebP · up to 2 MiB)
               <input

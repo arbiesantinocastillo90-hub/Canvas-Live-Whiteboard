@@ -130,7 +130,18 @@ See [rich controls](RICH_CANVAS.md), [portable MCP](PORTABLE_MCP.md) and [dated 
 
 See [workspace interactions](WORKSPACE_INTERACTIONS.md) and [dated verification](WORKSPACE_INTERACTIONS_VERIFICATION.md).
 
-## Open questions as of October 18, 2026
+## 2026-10-21 — Observable AI activity and canvas presence
+
+- Keep activity separate from canvas content and Undo history. Record validated MCP reads, queued edits and successful local acknowledgments; never infer a model's private thinking or progress.
+- Resolve activity targets to actual object IDs before rendering, including explicit layer operations. Derive locations from validated local before/after documents, filter hidden objects and never move the user's camera to follow AI activity.
+- Reuse the workspace's character and settings in the floating mini and location overlay. Options supports customization without a connection or runtime key; same-page instances synchronize native merged results without duplicate writes.
+- Keep recent activity in the mini's bubble and management controls in Workspace AI. Double-click and keyboard access open that panel, while dragging keeps its independent cancellation and persistence behavior.
+- Bound metadata, geometry, history and lifetime. Completed or interrupted requests cannot return to a working state on a delayed poll; an unknown outcome stays unconfirmed rather than being presented as success.
+- Update only public frontend/companion files in the existing USB package. Preserve native storage, private settings, runtime and executable, retain old hashed assets, and create a recovery archive before replacement.
+
+See [the presence guide](AI_MINI.md) and [verification](AI_PRESENCE_VERIFICATION.md).
+
+## Open questions as of October 21, 2026
 
 - Complete a successful read/edit/save workflow through the owner's external ChatGPT account and supported secure transport. Local tests do not settle account permissions or tunnel availability.
 - Verify the portable folder on a second physical Windows computer, including the school's permitted execution/network configuration.

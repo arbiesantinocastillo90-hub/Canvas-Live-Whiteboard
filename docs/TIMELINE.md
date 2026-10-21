@@ -51,6 +51,10 @@ The portfolio branch brought the later implementation history together with that
 
 ## Verification checkpoints
 
+The October 21 [presence checkpoint](AI_PRESENCE_VERIFICATION.md) passed 1,276 application tests across 97 files, 86 MCP tests and 13 isolated browser scenarios. Types, lint, formatting, documentation/demo validation and the production build passed. The report separates the initial test-fixture correction from the final successful regression.
+
+An early preview of on-canvas AI activity locations and the activity-only mini was installed on October 20. The October 21 completion adds interrupted-request history, settings synchronization and interaction hardening, then reruns the full regression and production browser checks. See [the dated presence record](AI_PRESENCE_VERIFICATION.md). The preview installation date, checked build and later source publication are separate events.
+
 The latest October 20 [refinement checkpoint](BUGS_REFINEMENTS_VERIFICATION.md) passed 1,205 application tests across 91 files, 71 MCP tests and 22 isolated browser scenarios. Native suites of 67 new and 55 existing checks were run on October 19 against the same storage source. Focused regression runs are included in the full app/protocol totals.
 
 These are documented runs for specific builds, rather than cumulative totals. Focused tests and later full suites overlap. See [Testing](TESTING.md) for current commands and how to interpret the evidence.

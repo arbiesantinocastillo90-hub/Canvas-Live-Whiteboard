@@ -1,9 +1,11 @@
 import { randomUUID } from 'node:crypto'
 import { z } from 'zod/v4'
 import { validateCanvasDocument, type CanvasDocument } from '../src/app/lcanvas'
+import { resolveCanvasAiObjectTargets } from '../src/app/canvasAiPresenceState'
 import { applyCanvasCommand } from '../src/mcp/canvasCommands'
 import { serializedCanvasContent } from '../src/mcp/canvasRevision'
 import type {
+  BridgeActivity,
   BridgeCommand,
   BridgeRequest,
   BridgeResponse,
@@ -83,6 +85,15 @@ type Job = {
   resolve: (value: ToolOutcome) => void
   promise: Promise<ToolOutcome>
   timer: ReturnType<typeof setTimeout>
+  activityId: string
+}
+
+function declaredCreateIds(command: BridgeCommand): string[] {
+  if (command.kind === 'create')
+    return command.element.id ? [command.element.id] : []
+  if (command.kind === 'batch')
+    return command.operations.flatMap(declaredCreateIds)
+  return []
 }
 
 /** One explicitly shared canvas, one pending transaction, no filesystem access. */
@@ -93,7 +104,7 @@ class CanvasSessionBridge {
   private mcpLastSeen: number | null = null
   private mcpClient: string | null = null
   private lastOperation: { summary: string; at: number } | null = null
-  private activity: { kind: 'read' | 'edit'; at: number } | null = null
+  private activity: BridgeActivity | null = null
   private readonly leaseMs: number
   private readonly operationMs: number
   constructor(leaseMs = 5000, operationMs = 8000) {
@@ -109,6 +120,8 @@ class CanvasSessionBridge {
     job.done = true
     job.outcome = outcome
     if (this.pending === job) this.pending = null
+    if (!outcome.ok && this.activity?.id === job.activityId)
+      this.activity = null
     job.resolve(outcome)
   }
   private revoke() {
@@ -267,6 +280,7 @@ class CanvasSessionBridge {
           'The browser acknowledgment does not match its canvas revision.',
         )
     }
+    const previousDocument = owner.document
     owner.contentRevision = contentRevision
     owner.document = data.document
     owner.revision = data.revision
@@ -289,11 +303,24 @@ class CanvasSessionBridge {
               ack.error ?? 'The editor rejected this change.',
             )
         this.finish(job, outcome)
-        if (ack.ok)
+        if (ack.ok) {
           this.lastOperation = {
             summary: outcome.ok ? outcome.summary : '',
             at: Date.now(),
           }
+          this.activity = {
+            kind: 'edit',
+            at: Date.now(),
+            id: job.activityId,
+            targetIds: resolveCanvasAiObjectTargets(
+              previousDocument,
+              ack.document ?? owner.document,
+              ack.affectedIds ?? [],
+              job.request.command,
+            ),
+            phase: 'complete',
+          }
+        }
       }
       ackId = ack.requestId
     }
@@ -320,7 +347,7 @@ class CanvasSessionBridge {
       ...(this.pending ? { command: this.pending.request } : {}),
     }
   }
-  read(sessionId?: string) {
+  read(sessionId?: string, observe = true) {
     const owner = this.live()
     if (sessionId && sessionId !== owner.sessionId)
       throw new BridgeError(
@@ -328,8 +355,24 @@ class CanvasSessionBridge {
         'The selected canvas has changed. Read its current state.',
       )
     this.mcpLastSeen = Date.now()
-    this.activity = { kind: 'read', at: this.mcpLastSeen }
+    if (observe)
+      this.recordRead(owner.document.elements.map((element) => element.id))
     return { ...owner, document: structuredClone(owner.document) }
+  }
+  recordRead(targetIds: readonly string[]) {
+    const owner = this.live()
+    this.mcpLastSeen = Date.now()
+    this.activity = {
+      kind: 'read',
+      at: this.mcpLastSeen,
+      id: randomUUID(),
+      targetIds: resolveCanvasAiObjectTargets(
+        owner.document,
+        owner.document,
+        targetIds,
+      ),
+      phase: 'complete',
+    }
   }
   mutate(
     sessionId: string,
@@ -372,7 +415,9 @@ class CanvasSessionBridge {
         'BUSY',
         'Another canvas operation is waiting for the browser.',
       )
-    if (!historyCommand) applyCanvasCommand(owner.document, command)
+    const preflight = historyCommand
+      ? null
+      : applyCanvasCommand(owner.document, command)
     if (this.jobs.size >= 128)
       throw new BridgeError(
         'SESSION_LIMIT',
@@ -407,10 +452,29 @@ class CanvasSessionBridge {
           ),
         )
       }, this.operationMs),
+      activityId: `edit:${sessionId}:${operationId}`,
     }
     this.jobs.set(operationId, job)
     this.pending = job
-    this.activity = { kind: 'edit', at: Date.now() }
+    const stableTargetIds = new Set([
+      ...owner.document.elements.map((element) => element.id),
+      ...declaredCreateIds(command),
+    ])
+    this.activity = {
+      kind: 'edit',
+      at: Date.now(),
+      id: job.activityId,
+      // Server-generated create IDs are provisional until the browser applies it.
+      targetIds: preflight
+        ? resolveCanvasAiObjectTargets(
+            owner.document,
+            preflight.document,
+            preflight.affectedIds,
+            command,
+          ).filter((id) => stableTargetIds.has(id))
+        : [],
+      phase: 'working',
+    }
     return promise
   }
 }
@@ -494,12 +558,15 @@ export class CanvasBridge {
     const data = pollSchema.parse(input)
     return this.selected(data.sessionId).poll(data)
   }
-  read(sessionId?: string) {
-    return this.selected(sessionId).read(sessionId)
+  read(sessionId?: string, observe = true) {
+    return this.selected(sessionId).read(sessionId, observe)
+  }
+  recordRead(sessionId: string, targetIds: readonly string[]) {
+    this.selected(sessionId).recordRead(targetIds)
   }
   list() {
     return this.liveSessions().map((bridge) => {
-      const owner = bridge.read()
+      const owner = bridge.current()!
       return {
         sessionId: owner.sessionId,
         revision: owner.revision,

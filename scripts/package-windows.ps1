@@ -27,6 +27,10 @@ Copy-Item -LiteralPath (Join-Path $taskRoot 'dist-mcp/server.mjs') -Destination 
 Copy-Item -LiteralPath (Join-Path $taskRoot 'launcher/Start Canvas Live MCP.cmd') -Destination $taskStage
 Copy-Item -LiteralPath (Join-Path $taskRoot 'docs/CHATGPT_MCP.md') -Destination (Join-Path $taskStage 'CHATGPT_MCP.md')
 Copy-Item -LiteralPath (Join-Path $taskRoot 'docs/PORTABLE_MCP.md') -Destination (Join-Path $taskStage 'PORTABLE_MCP.md')
+Copy-Item -LiteralPath (Join-Path $taskRoot 'docs/AI_MINI.md') -Destination (Join-Path $taskStage 'AI_MINI.md')
+Copy-Item -LiteralPath (Join-Path $taskRoot 'docs/AI_PRESENCE_VERIFICATION.md') -Destination (Join-Path $taskStage 'AI_PRESENCE_VERIFICATION.md')
+New-Item -ItemType Directory -Path (Join-Path $taskStage 'assets') | Out-Null
+Copy-Item -LiteralPath (Join-Path $taskRoot 'docs/assets/ai-mini-preview.png'), (Join-Path $taskRoot 'docs/assets/ai-presence.png') -Destination (Join-Path $taskStage 'assets')
 & (Join-Path $PSScriptRoot 'package-mcp-runtime.ps1') -Destination (Join-Path $taskStage 'runtime')
 Copy-Item -LiteralPath (Join-Path $taskRoot 'scripts/start-chatgpt-tunnel.ps1') -Destination $taskStage
 Copy-Item -LiteralPath (Join-Path $taskRoot 'plugins/canvas-live') -Destination (Join-Path $taskStage 'plugin') -Recurse

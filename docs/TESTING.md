@@ -37,6 +37,8 @@ Windows checks create disposable packages and manage their own processes. Read t
 
 ## Latest dated evidence
 
+The October 21 [AI presence revision](AI_PRESENCE_VERIFICATION.md) passed **1,276 application tests across 97 files**, **86 MCP tests** and **13 isolated production browser scenarios**. Types, lint, formatting, docs/demo validation and the production build pass. Its report records the initial fixture correction, final artifact hashes and remaining acceptance. Native source is unchanged; older native totals are not counted as new runs.
+
 The October 20 [durable-library and AI refinement](BUGS_REFINEMENTS_VERIFICATION.md) passed 1,205 application tests across 91 test files, 71 MCP tests and 22 isolated production-browser scenarios. The same native source passed 67 new storage checks and 55 existing native library/media checks. Types, lint, formatting, the production build and documentation/demo validation also passed. The report records the build identity and distinguishes installation from cloud-account acceptance.
 
 The earlier October 19 [endpoint revision](RELATIONSHIP_ENDPOINTS_VERIFICATION.md) records 1,096 application tests and 21 browser scenarios for endpoint dragging and cancellation.
@@ -63,6 +65,7 @@ Historical results remain in the [documentation index](README.md). Dates, enviro
 - Explicit sharing, revocation, separate credentials and HTTP Host/origin/body restrictions.
 - File/save lifecycles, failed-write recovery, workspace scope and native optimistic revisions.
 - Actual browser geometry and gestures for the scenarios described in each report.
+- Actual AI activity targets, queued/completed/unconfirmed history, bounded expiry, hidden-object exclusion, drag/double-click separation, reduced motion and workspace-scoped settings synchronization. See [presence verification](AI_PRESENCE_VERIFICATION.md).
 
 ## What remains unverified
 
@@ -75,6 +78,8 @@ Historical results remain in the [documentation index](README.md). Dates, enviro
 [GitHub Actions](../.github/workflows/ci.yml) installs the lockfile with Node 24, runs types/lint/format, application/protocol tests, documentation/demo validation and the build on Linux. It does not exercise Windows tray controls, native dialogs or an external AI account.
 
 To reproduce browser behavior, import [the sanitized demo](../examples/README.md), change a label or layer, Undo, save, reload and export. For MCP, explicitly share that disposable canvas, read it first and use its session/revision for an edit. Stop sharing afterward. See [MCP setup](CHATGPT_MCP.md) for transport and credentials.
+
+For AI presence, choose **Options → AI presence** to preview the character and marker colors before connecting. Share the disposable canvas, call `get_shape` for one object and then move it through MCP. Check that read and acknowledged-edit markers follow its real position without changing selection or camera. Click the mini for recent activity; double-click to open Workspace AI. Pan/zoom, enable reduced motion, stop sharing and switch canvases to verify the corresponding alignment, static cues and cleanup. A queued marker can be too brief to observe on a fast local connection; the dated browser procedure documents its controlled command-delivery test.
 
 ## Troubleshooting
 
